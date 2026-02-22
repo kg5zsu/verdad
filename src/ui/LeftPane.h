@@ -1,0 +1,83 @@
+#ifndef VERDAD_LEFT_PANE_H
+#define VERDAD_LEFT_PANE_H
+
+#include <FL/Fl_Group.H>
+#include <FL/Fl_Tabs.H>
+#include <FL/Fl_Input.H>
+#include <FL/Fl_Button.H>
+#include <string>
+
+namespace verdad {
+
+class VerdadApp;
+class ModulePanel;
+class SearchPanel;
+class BookmarkPanel;
+class TagPanel;
+class HtmlWidget;
+
+/// Left pane with search box, tabs (modules/search/bookmarks/tags),
+/// and a preview area at the bottom.
+class LeftPane : public Fl_Group {
+public:
+    LeftPane(VerdadApp* app, int X, int Y, int W, int H);
+    ~LeftPane() override;
+
+    /// Execute a search
+    void doSearch(const std::string& query);
+
+    /// Switch to the search results tab
+    void showSearchTab();
+
+    /// Switch to the module list tab
+    void showModuleTab();
+
+    /// Switch to the bookmarks tab
+    void showBookmarkTab();
+
+    /// Switch to the tags tab
+    void showTagTab();
+
+    /// Update the preview area with text
+    void setPreviewText(const std::string& html);
+
+    /// Refresh all tabs
+    void refresh();
+
+    /// Get module panel
+    ModulePanel* modulePanel() { return modulePanel_; }
+
+    /// Get search panel
+    SearchPanel* searchPanel() { return searchPanel_; }
+
+    /// Get bookmark panel
+    BookmarkPanel* bookmarkPanel() { return bookmarkPanel_; }
+
+    /// Get tag panel
+    TagPanel* tagPanel() { return tagPanel_; }
+
+private:
+    VerdadApp* app_;
+
+    // Search box (always visible at top)
+    Fl_Input* searchInput_;
+    Fl_Button* searchButton_;
+
+    // Tabbed area
+    Fl_Tabs* tabs_;
+    ModulePanel* modulePanel_;
+    SearchPanel* searchPanel_;
+    BookmarkPanel* bookmarkPanel_;
+    TagPanel* tagPanel_;
+
+    // Preview area at bottom
+    HtmlWidget* previewWidget_;
+
+    // Callbacks
+    static void onSearch(Fl_Widget* w, void* data);
+    static void onSearchInput(Fl_Widget* w, void* data);
+};
+
+} // namespace verdad
+
+#endif // VERDAD_LEFT_PANE_H
