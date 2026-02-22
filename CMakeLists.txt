@@ -16,10 +16,9 @@ if(NOT FLTK_CONFIG_SCRIPT)
     message(FATAL_ERROR "fltk-config not found. Install FLTK development packages.")
 endif()
 
-execute_process(COMMAND ${FLTK_CONFIG_SCRIPT} --cxxflags
-    OUTPUT_VARIABLE FLTK_CXX_FLAGS OUTPUT_STRIP_TRAILING_WHITESPACE)
 execute_process(COMMAND ${FLTK_CONFIG_SCRIPT} --use-images --ldflags
     OUTPUT_VARIABLE FLTK_LDFLAGS OUTPUT_STRIP_TRAILING_WHITESPACE)
+separate_arguments(FLTK_LDFLAGS)
 execute_process(COMMAND ${FLTK_CONFIG_SCRIPT} --includedir
     OUTPUT_VARIABLE FLTK_INCLUDE_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
 
