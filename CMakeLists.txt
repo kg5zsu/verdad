@@ -25,7 +25,7 @@ if(NOT SWORD_FOUND)
 endif()
 
 # litehtml (built as submodule)
-set(LITEHTML_BUILD_TESTING OFF CACHE BOOL "Disable litehtml tests" FORCE)
+set(LITEHTML_BUILD_TESTING OFF CACHE BOOL "Disable litehtml tests")
 add_subdirectory(libs/litehtml)
 
 # X11 and other system libraries (for Linux/FLTK)
