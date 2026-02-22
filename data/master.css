@@ -1,0 +1,195 @@
+/* Verdad master CSS - default styles for Bible text rendering */
+
+body {
+    font-family: "DejaVu Serif", "Liberation Serif", Georgia, serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #2c2c2c;
+    background-color: #fefefe;
+    margin: 4px;
+    padding: 0;
+}
+
+/* Verse numbers */
+sup.versenum {
+    font-size: 0.7em;
+    font-weight: bold;
+    color: #1a5276;
+    padding: 0 2px;
+    cursor: pointer;
+}
+
+/* Chapter numbers */
+span.chapnum {
+    font-size: 1.8em;
+    font-weight: bold;
+    color: #1a5276;
+    float: left;
+    margin-right: 4px;
+    line-height: 1.0;
+}
+
+/* Words of Christ in red */
+span.wordsofchrist, .jesusWords {
+    color: #cc0000;
+}
+
+/* Strong's number links */
+a.strongs, span.strongs {
+    text-decoration: none;
+    color: inherit;
+    border-bottom: 1px dotted #888;
+    cursor: pointer;
+}
+
+a.strongs:hover, span.strongs:hover {
+    background-color: #e8e8ff;
+    border-bottom-color: #1a5276;
+}
+
+/* Morphology tags */
+span.morph {
+    font-size: 0.8em;
+    color: #666;
+    font-style: italic;
+}
+
+/* Footnotes */
+a.footnote {
+    font-size: 0.7em;
+    color: #1a5276;
+    vertical-align: super;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+a.footnote:hover {
+    text-decoration: underline;
+}
+
+/* Headings */
+div.sechead, .sectionhead {
+    font-size: 1.1em;
+    font-weight: bold;
+    color: #333;
+    margin: 12px 0 6px 0;
+}
+
+/* Titles */
+div.title {
+    font-size: 1.3em;
+    font-weight: bold;
+    color: #1a5276;
+    text-align: center;
+    margin: 16px 0 8px 0;
+}
+
+/* Poetry/Psalm formatting */
+div.poetry, .line {
+    margin-left: 20px;
+    font-style: italic;
+}
+
+div.indented, .indent1 {
+    margin-left: 40px;
+}
+
+.indent2 {
+    margin-left: 60px;
+}
+
+/* Parallel Bible columns */
+table.parallel {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+table.parallel td {
+    vertical-align: top;
+    padding: 4px 8px;
+    border-right: 1px solid #ddd;
+}
+
+table.parallel td:last-child {
+    border-right: none;
+}
+
+table.parallel th {
+    background-color: #f0f0f0;
+    padding: 4px 8px;
+    font-weight: bold;
+    border-bottom: 2px solid #ccc;
+    border-right: 1px solid #ddd;
+}
+
+table.parallel th:last-child {
+    border-right: none;
+}
+
+/* Search result highlighting */
+span.searchhit, .highlight {
+    background-color: #ffff80;
+    padding: 1px 2px;
+    border-radius: 2px;
+}
+
+/* Tooltip styles */
+div.tooltip {
+    font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif;
+    font-size: 12px;
+    line-height: 1.4;
+    padding: 6px 10px;
+    max-width: 350px;
+}
+
+div.tooltip .strongs-label {
+    font-weight: bold;
+    color: #1a5276;
+}
+
+div.tooltip .morph-label {
+    font-weight: bold;
+    color: #555;
+}
+
+div.tooltip .definition {
+    margin-top: 4px;
+    color: #333;
+}
+
+/* Commentary text */
+div.commentary {
+    font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* Dictionary entries */
+div.dictionary {
+    font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif;
+    font-size: 13px;
+}
+
+div.dictionary .entry-key {
+    font-size: 1.2em;
+    font-weight: bold;
+    color: #1a5276;
+    margin-bottom: 6px;
+}
+
+/* Verse tags */
+span.verse-tag {
+    display: inline-block;
+    font-size: 0.75em;
+    background-color: #e0e8f0;
+    color: #1a5276;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 4px;
+    cursor: pointer;
+}
+
+span.verse-tag:hover {
+    background-color: #c0d0e0;
+}

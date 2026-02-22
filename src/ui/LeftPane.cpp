@@ -1,0 +1,150 @@
+#include "ui/LeftPane.h"
+#include "app/VerdadApp.h"
+#include "ui/ModulePanel.h"
+#include "ui/SearchPanel.h"
+#include "ui/BookmarkPanel.h"
+#include "ui/TagPanel.h"
+#include "ui/HtmlWidget.h"
+#include "ui/MainWindow.h"
+
+#include <FL/Fl.H>
+#include <FL/fl_ask.H>
+
+namespace verdad {
+
+LeftPane::LeftPane(VerdadApp* app, int X, int Y, int W, int H)
+    : Fl_Group(X, Y, W, H)
+    , app_(app) {
+
+    begin();
+
+    int padding = 2;
+    int searchH = 30;
+    int previewH = 150;
+    int buttonW = 60;
+
+    // Search box at top (always visible)
+    Fl_Group* searchGroup = new Fl_Group(X + padding, Y + padding,
+                                          W - 2 * padding, searchH);
+    searchGroup->begin();
+
+    searchInput_ = new Fl_Input(X + padding, Y + padding,
+                                 W - 2 * padding - buttonW - 2, searchH);
+    searchInput_->when(FL_WHEN_ENTER_KEY);
+    searchInput_->callback(onSearchInput, this);
+    searchInput_->tooltip("Enter search text and press Enter");
+
+    searchButton_ = new Fl_Button(X + W - padding - buttonW, Y + padding,
+                                   buttonW, searchH, "Search");
+    searchButton_->callback(onSearch, this);
+
+    searchGroup->end();
+    searchGroup->resizable(searchInput_);
+
+    // Tabbed area in the middle
+    int tabY = Y + padding + searchH + padding;
+    int tabH = H - searchH - previewH - 4 * padding;
+
+    tabs_ = new Fl_Tabs(X + padding, tabY, W - 2 * padding, tabH);
+    tabs_->begin();
+
+    // Modules tab
+    modulePanel_ = new ModulePanel(app_, X + padding, tabY + 25,
+                                    W - 2 * padding, tabH - 25);
+    modulePanel_->label("Modules");
+
+    // Search results tab
+    searchPanel_ = new SearchPanel(app_, X + padding, tabY + 25,
+                                    W - 2 * padding, tabH - 25);
+    searchPanel_->label("Search");
+
+    // Bookmarks tab
+    bookmarkPanel_ = new BookmarkPanel(app_, X + padding, tabY + 25,
+                                        W - 2 * padding, tabH - 25);
+    bookmarkPanel_->label("Bookmarks");
+
+    // Tags tab
+    tagPanel_ = new TagPanel(app_, X + padding, tabY + 25,
+                              W - 2 * padding, tabH - 25);
+    tagPanel_->label("Tags");
+
+    tabs_->end();
+    tabs_->value(modulePanel_); // Default to modules tab
+
+    // Preview area at bottom
+    int previewY = tabY + tabH + padding;
+    previewWidget_ = new HtmlWidget(X + padding, previewY,
+                                     W - 2 * padding, previewH);
+
+    end();
+    resizable(tabs_);
+}
+
+LeftPane::~LeftPane() = default;
+
+void LeftPane::doSearch(const std::string& query) {
+    searchInput_->value(query.c_str());
+    if (searchPanel_) {
+        searchPanel_->search(query);
+        showSearchTab();
+    }
+}
+
+void LeftPane::showSearchTab() {
+    if (tabs_ && searchPanel_) {
+        tabs_->value(searchPanel_);
+        tabs_->redraw();
+    }
+}
+
+void LeftPane::showModuleTab() {
+    if (tabs_ && modulePanel_) {
+        tabs_->value(modulePanel_);
+        tabs_->redraw();
+    }
+}
+
+void LeftPane::showBookmarkTab() {
+    if (tabs_ && bookmarkPanel_) {
+        tabs_->value(bookmarkPanel_);
+        tabs_->redraw();
+    }
+}
+
+void LeftPane::showTagTab() {
+    if (tabs_ && tagPanel_) {
+        tabs_->value(tagPanel_);
+        tabs_->redraw();
+    }
+}
+
+void LeftPane::setPreviewText(const std::string& html) {
+    if (previewWidget_) {
+        previewWidget_->setHtml(html);
+    }
+}
+
+void LeftPane::refresh() {
+    if (modulePanel_) modulePanel_->refresh();
+    if (bookmarkPanel_) bookmarkPanel_->refresh();
+    if (tagPanel_) tagPanel_->refresh();
+}
+
+void LeftPane::onSearch(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<LeftPane*>(data);
+    const char* text = self->searchInput_->value();
+    if (text && text[0]) {
+        self->doSearch(text);
+    }
+}
+
+void LeftPane::onSearchInput(Fl_Widget* /*w*/, void* data) {
+    // Enter key pressed in search input
+    auto* self = static_cast<LeftPane*>(data);
+    const char* text = self->searchInput_->value();
+    if (text && text[0]) {
+        self->doSearch(text);
+    }
+}
+
+} // namespace verdad
