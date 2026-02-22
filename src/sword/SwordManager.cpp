@@ -139,18 +139,17 @@ std::string SwordManager::getChapterText(const std::string& moduleName,
 
     // Choose element tag based on display mode:
     // verse-per-line (default) uses <div>, paragraph mode uses <span>
-    const char* openTag = paragraphMode ? "span" : "div";
-    const char* closeTag = paragraphMode ? "span" : "div";
+    const char* verseTag = paragraphMode ? "span" : "div";
 
     while (!mod->popError() && vk->getChapter() == currentChapter) {
         int verse = vk->getVerse();
         std::string verseText = std::string(mod->renderText().c_str());
 
         if (!verseText.empty()) {
-            html << "<" << openTag << " class=\"verse\" id=\"v" << verse << "\">";
+            html << "<" << verseTag << " class=\"verse\" id=\"v" << verse << "\">";
             html << "<sup class=\"versenum\">" << verse << "</sup> ";
             html << verseText;
-            html << "</" << closeTag << ">\n";
+            html << "</" << verseTag << ">\n";
         }
 
         (*mod)++;  // Advance to next verse
