@@ -697,7 +697,7 @@ std::string SwordManager::postProcessHtml(const std::string& html) const {
     //    Matches a word followed by one or more <small><em> blocks.
     {
         std::regex wordBlockRe(
-            R"(([\w']+))"          // Group 1: the word
+            R"(([\w'\-]+))"        // Group 1: the word (including hyphens)
             R"((\s*(?:)" + smallEmBlock + R"(\s*)+))",  // Group 2: block(s)
             std::regex::icase);
 
