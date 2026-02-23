@@ -268,6 +268,20 @@ int HtmlWidget::handle(int event) {
         return 1;
     }
 
+    case FL_ENTER:
+        return 1;
+
+    case FL_LEAVE:
+        if (hoverCallback_ && (!lastHoverWord_.empty() || !lastHoverHref_.empty() ||
+                                !lastHoverStrong_.empty() || !lastHoverMorph_.empty())) {
+            lastHoverWord_.clear();
+            lastHoverHref_.clear();
+            lastHoverStrong_.clear();
+            lastHoverMorph_.clear();
+            hoverCallback_("", "", "", "", 0, 0);
+        }
+        return 1;
+
     case FL_FOCUS:
     case FL_UNFOCUS:
         return 1;
