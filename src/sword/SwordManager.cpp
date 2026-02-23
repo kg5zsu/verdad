@@ -201,15 +201,19 @@ std::string SwordManager::getParallelText(
     // Use div-based float layout for reliable column rendering in litehtml
     int numCols = static_cast<int>(moduleNames.size());
     int colWidth = 100 / numCols;
+    int lastColWidth = 100 - colWidth * (numCols - 1);
 
     std::ostringstream html;
     html << "<div class=\"parallel\">\n";
 
     // Header row
     html << "<div class=\"parallel-row\">\n";
-    for (const auto& modName : moduleNames) {
-        html << "<div style=\"float: left; width: " << colWidth << "%;\">"
-             << "<div class=\"parallel-header\">" << modName << "</div>"
+    for (size_t i = 0; i < moduleNames.size(); ++i) {
+        bool isLast = (i == moduleNames.size() - 1);
+        int w = isLast ? lastColWidth : colWidth;
+        const char* cellClass = isLast ? "parallel-header-last" : "parallel-header";
+        html << "<div style=\"float: left; width: " << w << "%;\">"
+             << "<div class=\"" << cellClass << "\">" << moduleNames[i] << "</div>"
              << "</div>\n";
     }
     html << "<div style=\"clear: both;\"></div>\n";
@@ -218,10 +222,13 @@ std::string SwordManager::getParallelText(
     // Verse rows
     for (int v = 1; v <= verseCount; ++v) {
         html << "<div class=\"parallel-row\">\n";
-        for (const auto& modName : moduleNames) {
-            sword::SWModule* mod = getModule(modName);
-            html << "<div style=\"float: left; width: " << colWidth << "%;\">"
-                 << "<div class=\"parallel-cell\">";
+        for (size_t i = 0; i < moduleNames.size(); ++i) {
+            bool isLast = (i == moduleNames.size() - 1);
+            int w = isLast ? lastColWidth : colWidth;
+            const char* cellClass = isLast ? "parallel-cell-last" : "parallel-cell";
+            sword::SWModule* mod = getModule(moduleNames[i]);
+            html << "<div style=\"float: left; width: " << w << "%;\">"
+                 << "<div class=\"" << cellClass << "\">";
             if (mod) {
                 std::string ref = book + " " + std::to_string(chapter)
                                   + ":" + std::to_string(v);

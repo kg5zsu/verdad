@@ -124,9 +124,20 @@ div.parallel-header {
     border-right: 1px solid #ddd;
 }
 
+div.parallel-header-last {
+    font-weight: bold;
+    background-color: #f0f0f0;
+    padding: 4px 8px;
+    border-bottom: 2px solid #ccc;
+}
+
 div.parallel-cell {
     padding: 4px 8px;
     border-right: 1px solid #ddd;
+}
+
+div.parallel-cell-last {
+    padding: 4px 8px;
 }
 
 /* Search result highlighting */
