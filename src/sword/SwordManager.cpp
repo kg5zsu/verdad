@@ -195,22 +195,963 @@ std::string readLexiconEntry(sword::SWModule* lex, const std::string& key) {
     return cleanupLexiconText(lex->stripText());
 }
 
-template <typename Formatter>
-std::string regexReplaceAll(const std::string& str,
-                            const std::regex& re,
-                            Formatter&& fmt) {
-    std::string out;
-    out.reserve(str.size() + 16);
-    std::sregex_iterator it(str.begin(), str.end(), re);
-    std::sregex_iterator end;
-    size_t lastEnd = 0;
-    for (; it != end; ++it) {
-        const auto& m = *it;
-        out.append(str, lastEnd, static_cast<size_t>(m.position()) - lastEnd);
-        out += fmt(m);
-        lastEnd = static_cast<size_t>(m.position()) + static_cast<size_t>(m.length());
+char toLowerAsciiChar(char c) {
+    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+}
+
+bool equalsNoCase(char a, char b) {
+    return toLowerAsciiChar(a) == toLowerAsciiChar(b);
+}
+
+std::string toLowerAscii(const std::string& s) {
+    std::string out = s;
+    for (char& c : out) c = toLowerAsciiChar(c);
+    return out;
+}
+
+bool containsNoCase(const std::string& haystack, const std::string& needle) {
+    if (needle.empty()) return true;
+    if (needle.size() > haystack.size()) return false;
+
+    for (size_t i = 0; i + needle.size() <= haystack.size(); ++i) {
+        bool match = true;
+        for (size_t j = 0; j < needle.size(); ++j) {
+            if (!equalsNoCase(haystack[i + j], needle[j])) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return true;
     }
-    out.append(str, lastEnd, std::string::npos);
+    return false;
+}
+
+size_t findNoCase(const std::string& haystack,
+                  const std::string& needle,
+                  size_t start = 0) {
+    if (needle.empty()) return start <= haystack.size() ? start : std::string::npos;
+    if (needle.size() > haystack.size() || start >= haystack.size()) return std::string::npos;
+
+    for (size_t i = start; i + needle.size() <= haystack.size(); ++i) {
+        bool match = true;
+        for (size_t j = 0; j < needle.size(); ++j) {
+            if (!equalsNoCase(haystack[i + j], needle[j])) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return i;
+    }
+    return std::string::npos;
+}
+
+size_t findTagEnd(const std::string& html, size_t tagStart) {
+    if (tagStart >= html.size() || html[tagStart] != '<') return std::string::npos;
+    bool inQuote = false;
+    char quote = 0;
+    for (size_t i = tagStart + 1; i < html.size(); ++i) {
+        char c = html[i];
+        if (inQuote) {
+            if (c == quote) {
+                inQuote = false;
+            }
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            inQuote = true;
+            quote = c;
+            continue;
+        }
+        if (c == '>') return i;
+    }
+    return std::string::npos;
+}
+
+bool parseTag(const std::string& html,
+              size_t tagStart,
+              size_t& tagEnd,
+              std::string& tagName,
+              bool& isClosing,
+              bool& isSelfClosing) {
+    tagEnd = findTagEnd(html, tagStart);
+    if (tagEnd == std::string::npos) return false;
+
+    size_t i = tagStart + 1;
+    while (i < tagEnd && std::isspace(static_cast<unsigned char>(html[i]))) ++i;
+
+    isClosing = false;
+    if (i < tagEnd && html[i] == '/') {
+        isClosing = true;
+        ++i;
+        while (i < tagEnd && std::isspace(static_cast<unsigned char>(html[i]))) ++i;
+    }
+
+    size_t nameStart = i;
+    while (i < tagEnd) {
+        unsigned char c = static_cast<unsigned char>(html[i]);
+        if (std::isalnum(c) || c == '_' || c == '-' || c == ':') {
+            ++i;
+            continue;
+        }
+        break;
+    }
+    if (i == nameStart) return false;
+
+    tagName = toLowerAscii(html.substr(nameStart, i - nameStart));
+
+    isSelfClosing = false;
+    if (tagEnd > tagStart + 1) {
+        size_t back = tagEnd;
+        while (back > tagStart + 1 &&
+               std::isspace(static_cast<unsigned char>(html[back - 1]))) {
+            --back;
+        }
+        if (back > tagStart + 1 && html[back - 1] == '/') isSelfClosing = true;
+    }
+
+    return true;
+}
+
+bool extractAttributeValue(const std::string& tag,
+                           const std::string& attrName,
+                           std::string& valueOut) {
+    valueOut.clear();
+    if (tag.size() < 3) return false;
+
+    std::string attrLower = toLowerAscii(attrName);
+
+    size_t i = 1;
+    while (i < tag.size() && tag[i] != '>' &&
+           !std::isspace(static_cast<unsigned char>(tag[i]))) {
+        ++i;
+    }
+
+    while (i < tag.size()) {
+        while (i < tag.size() &&
+               std::isspace(static_cast<unsigned char>(tag[i]))) {
+            ++i;
+        }
+        if (i >= tag.size() || tag[i] == '>' || tag[i] == '/') break;
+
+        size_t nameStart = i;
+        while (i < tag.size()) {
+            unsigned char c = static_cast<unsigned char>(tag[i]);
+            if (std::isalnum(c) || c == '_' || c == '-' || c == ':') {
+                ++i;
+                continue;
+            }
+            break;
+        }
+        if (i == nameStart) {
+            ++i;
+            continue;
+        }
+
+        std::string name = toLowerAscii(tag.substr(nameStart, i - nameStart));
+
+        while (i < tag.size() &&
+               std::isspace(static_cast<unsigned char>(tag[i]))) {
+            ++i;
+        }
+
+        std::string val;
+        if (i < tag.size() && tag[i] == '=') {
+            ++i;
+            while (i < tag.size() &&
+                   std::isspace(static_cast<unsigned char>(tag[i]))) {
+                ++i;
+            }
+
+            if (i < tag.size() && (tag[i] == '"' || tag[i] == '\'')) {
+                char q = tag[i++];
+                size_t valStart = i;
+                while (i < tag.size() && tag[i] != q) ++i;
+                val = tag.substr(valStart, i - valStart);
+                if (i < tag.size() && tag[i] == q) ++i;
+            } else {
+                size_t valStart = i;
+                while (i < tag.size() && tag[i] != '>' &&
+                       !std::isspace(static_cast<unsigned char>(tag[i]))) {
+                    ++i;
+                }
+                val = tag.substr(valStart, i - valStart);
+            }
+        } else {
+            val.clear();
+        }
+
+        if (name == attrLower) {
+            valueOut = val;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+std::string decodeHtmlEntities(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size();) {
+        if (s[i] != '&') {
+            out.push_back(s[i++]);
+            continue;
+        }
+        if (i + 5 <= s.size() &&
+            equalsNoCase(s[i + 1], 'a') &&
+            equalsNoCase(s[i + 2], 'm') &&
+            equalsNoCase(s[i + 3], 'p') &&
+            s[i + 4] == ';') {
+            out.push_back('&');
+            i += 5;
+            continue;
+        }
+        if (i + 4 <= s.size() &&
+            equalsNoCase(s[i + 1], 'l') &&
+            equalsNoCase(s[i + 2], 't') &&
+            s[i + 3] == ';') {
+            out.push_back('<');
+            i += 4;
+            continue;
+        }
+        if (i + 4 <= s.size() &&
+            equalsNoCase(s[i + 1], 'g') &&
+            equalsNoCase(s[i + 2], 't') &&
+            s[i + 3] == ';') {
+            out.push_back('>');
+            i += 4;
+            continue;
+        }
+        if (i + 6 <= s.size() &&
+            equalsNoCase(s[i + 1], 'q') &&
+            equalsNoCase(s[i + 2], 'u') &&
+            equalsNoCase(s[i + 3], 'o') &&
+            equalsNoCase(s[i + 4], 't') &&
+            s[i + 5] == ';') {
+            out.push_back('"');
+            i += 6;
+            continue;
+        }
+        if (i + 6 <= s.size() &&
+            equalsNoCase(s[i + 1], 'a') &&
+            equalsNoCase(s[i + 2], 'p') &&
+            equalsNoCase(s[i + 3], 'o') &&
+            equalsNoCase(s[i + 4], 's') &&
+            s[i + 5] == ';') {
+            out.push_back('\'');
+            i += 6;
+            continue;
+        }
+        if (i + 5 <= s.size() && s[i + 1] == '#' &&
+            s[i + 2] == '3' && s[i + 3] == '9' && s[i + 4] == ';') {
+            out.push_back('\'');
+            i += 5;
+            continue;
+        }
+
+        out.push_back(s[i++]);
+    }
+    return out;
+}
+
+bool isHexDigit(char c) {
+    return std::isdigit(static_cast<unsigned char>(c)) ||
+           (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+int hexValue(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return 0;
+}
+
+std::string urlDecode(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size();) {
+        if (s[i] == '+') {
+            out.push_back(' ');
+            ++i;
+            continue;
+        }
+        if (s[i] == '%' && i + 2 < s.size() &&
+            isHexDigit(s[i + 1]) && isHexDigit(s[i + 2])) {
+            int hi = hexValue(s[i + 1]);
+            int lo = hexValue(s[i + 2]);
+            out.push_back(static_cast<char>((hi << 4) | lo));
+            i += 3;
+            continue;
+        }
+        out.push_back(s[i++]);
+    }
+    return out;
+}
+
+std::string extractQueryValue(const std::string& url, const std::string& key) {
+    std::string decoded = decodeHtmlEntities(url);
+    size_t q = decoded.find('?');
+    std::string query = (q == std::string::npos) ? decoded : decoded.substr(q + 1);
+    std::string keyLower = toLowerAscii(key);
+
+    size_t pos = 0;
+    while (pos <= query.size()) {
+        size_t amp = query.find('&', pos);
+        std::string part = query.substr(
+            pos, (amp == std::string::npos ? query.size() : amp) - pos);
+
+        size_t eq = part.find('=');
+        std::string name = (eq == std::string::npos) ? part : part.substr(0, eq);
+        std::string value = (eq == std::string::npos) ? "" : part.substr(eq + 1);
+
+        if (toLowerAscii(name) == keyLower) {
+            return urlDecode(value);
+        }
+
+        if (amp == std::string::npos) break;
+        pos = amp + 1;
+    }
+    return "";
+}
+
+bool isWordByte(unsigned char c) {
+    return std::isalnum(c) || c == '\'' || c == '-' || c >= 0x80;
+}
+
+struct HoverMeta {
+    std::string strong;
+    std::string morph;
+
+    bool empty() const {
+        return strong.empty() && morph.empty();
+    }
+};
+
+struct OutputTarget {
+    size_t start = 0;
+    size_t end = 0;
+    bool valid = false;
+};
+
+void splitTokens(const std::string& src,
+                 char delim,
+                 std::vector<std::string>& out) {
+    size_t i = 0;
+    while (i < src.size()) {
+        while (i < src.size() && (src[i] == delim ||
+               std::isspace(static_cast<unsigned char>(src[i])))) {
+            ++i;
+        }
+        if (i >= src.size()) break;
+
+        size_t j = i;
+        while (j < src.size() && src[j] != delim &&
+               !std::isspace(static_cast<unsigned char>(src[j]))) {
+            ++j;
+        }
+
+        std::string tok = trimCopy(src.substr(i, j - i));
+        if (!tok.empty()) out.push_back(tok);
+        i = j;
+    }
+}
+
+void appendUniqueTokens(std::string& dst, const std::string& src, char delim) {
+    std::vector<std::string> existing;
+    splitTokens(dst, delim, existing);
+
+    std::vector<std::string> incoming;
+    splitTokens(src, delim, incoming);
+
+    for (const auto& tok : incoming) {
+        bool found = false;
+        for (const auto& ex : existing) {
+            if (ex == tok) {
+                found = true;
+                break;
+            }
+        }
+        if (found) continue;
+        if (!dst.empty()) dst.push_back(delim);
+        dst += tok;
+        existing.push_back(tok);
+    }
+}
+
+void addStrongToken(HoverMeta& meta, const std::string& token) {
+    std::string norm = normalizeStrongsKey(token);
+    if (norm.empty()) return;
+    if (meta.strong.empty()) meta.strong = norm;
+    else appendUniqueTokens(meta.strong, norm, '|');
+}
+
+std::string normalizeMorph(const std::string& morphRaw) {
+    std::string morph = trimCopy(decodeHtmlEntities(morphRaw));
+    while (!morph.empty() &&
+           (morph.front() == '/' || morph.front() == '\\')) {
+        morph.erase(morph.begin());
+    }
+
+    size_t colonPos = morph.find(':');
+    if (colonPos != std::string::npos &&
+        morph.substr(0, colonPos).find(' ') == std::string::npos) {
+        morph = morph.substr(colonPos + 1);
+    }
+
+    return trimCopy(morph);
+}
+
+void addMorphToken(HoverMeta& meta, const std::string& morphRaw) {
+    std::string norm = normalizeMorph(morphRaw);
+    if (norm.empty()) return;
+    if (meta.morph.empty()) meta.morph = norm;
+    else appendUniqueTokens(meta.morph, norm, ' ');
+}
+
+std::string htmlEscapeAttr(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s) {
+        switch (c) {
+        case '&': out += "&amp;"; break;
+        case '"': out += "&quot;"; break;
+        case '<': out += "&lt;"; break;
+        case '>': out += "&gt;"; break;
+        default: out.push_back(c); break;
+        }
+    }
+    return out;
+}
+
+std::string buildWordSpanOpenTag(const HoverMeta& meta) {
+    std::string out = R"(<span class="w")";
+    if (!meta.strong.empty()) {
+        out += R"( data-strong=")";
+        out += htmlEscapeAttr(meta.strong);
+        out += '"';
+    }
+    if (!meta.morph.empty()) {
+        out += R"( data-morph=")";
+        out += htmlEscapeAttr(meta.morph);
+        out += '"';
+    }
+    out += '>';
+    return out;
+}
+
+std::string stripTags(const std::string& html) {
+    std::string out;
+    out.reserve(html.size());
+    bool inTag = false;
+    for (char c : html) {
+        if (c == '<') {
+            inTag = true;
+            continue;
+        }
+        if (c == '>') {
+            inTag = false;
+            continue;
+        }
+        if (!inTag) out.push_back(c);
+    }
+    return decodeHtmlEntities(out);
+}
+
+std::string firstStrongTokenFromText(const std::string& text) {
+    std::string t = trimCopy(decodeHtmlEntities(text));
+    if (t.empty()) return "";
+
+    for (size_t i = 0; i < t.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(t[i]);
+        bool prefix = (c == 'H' || c == 'h' || c == 'G' || c == 'g');
+        bool digitStart = std::isdigit(c);
+        if (!prefix && !digitStart) continue;
+
+        size_t j = i;
+        if (prefix) ++j;
+        size_t digitsStart = j;
+        while (j < t.size() &&
+               std::isdigit(static_cast<unsigned char>(t[j]))) {
+            ++j;
+        }
+        if (j == digitsStart) continue;
+
+        while (j < t.size() &&
+               std::isalpha(static_cast<unsigned char>(t[j]))) {
+            ++j;
+        }
+
+        std::string token = normalizeStrongsKey(t.substr(i, j - i));
+        if (!token.empty()) return token;
+    }
+
+    return "";
+}
+
+bool looksLikeStrongsDisplay(const std::string& text) {
+    std::string t = trimCopy(decodeHtmlEntities(text));
+    if (t.empty()) return true;
+
+    while (!t.empty() && (t.front() == '<' || t.front() == '(' ||
+           t.front() == '[' || std::isspace(static_cast<unsigned char>(t.front())))) {
+        t.erase(t.begin());
+    }
+    while (!t.empty() && (t.back() == '>' || t.back() == ')' ||
+           t.back() == ']' || std::isspace(static_cast<unsigned char>(t.back())))) {
+        t.pop_back();
+    }
+    if (t.empty()) return true;
+
+    std::string norm = normalizeStrongsKey(t);
+    if (!norm.empty()) return true;
+
+    bool hasDigit = false;
+    for (char c : t) {
+        if (std::isdigit(static_cast<unsigned char>(c))) hasDigit = true;
+        if (!std::isalnum(static_cast<unsigned char>(c))) return false;
+    }
+    return hasDigit;
+}
+
+bool looksLikeMorphDisplay(const std::string& text) {
+    std::string t = trimCopy(decodeHtmlEntities(text));
+    if (t.empty()) return true;
+
+    if (t.front() == '(' && t.back() == ')') {
+        t = trimCopy(t.substr(1, t.size() - 2));
+    }
+    if (t.empty()) return true;
+
+    bool hasUpper = false;
+    bool hasDash = false;
+    for (char c : t) {
+        if (std::isupper(static_cast<unsigned char>(c))) hasUpper = true;
+        if (c == '-' || c == ':' || c == '/' || c == '+') hasDash = true;
+        if (!(std::isalnum(static_cast<unsigned char>(c)) ||
+              c == '-' || c == ':' || c == '/' || c == '+' || c == '.')) {
+            return false;
+        }
+    }
+    return hasUpper || hasDash;
+}
+
+void extractLemmaStrongs(const std::string& lemmaRaw, HoverMeta& meta) {
+    std::string lemma = decodeHtmlEntities(lemmaRaw);
+    std::string lower = toLowerAscii(lemma);
+
+    size_t pos = 0;
+    while (true) {
+        size_t found = lower.find("strong:", pos);
+        if (found == std::string::npos) break;
+
+        size_t i = found + 7;
+        while (i < lemma.size() &&
+               (lemma[i] == '/' || std::isspace(static_cast<unsigned char>(lemma[i])))) {
+            ++i;
+        }
+
+        size_t start = i;
+        if (i < lemma.size() &&
+            std::isalpha(static_cast<unsigned char>(lemma[i]))) {
+            ++i;
+        }
+        size_t digitsStart = i;
+        while (i < lemma.size() &&
+               std::isdigit(static_cast<unsigned char>(lemma[i]))) {
+            ++i;
+        }
+        if (i == digitsStart) {
+            pos = found + 1;
+            continue;
+        }
+        while (i < lemma.size() &&
+               std::isalpha(static_cast<unsigned char>(lemma[i]))) {
+            ++i;
+        }
+
+        addStrongToken(meta, lemma.substr(start, i - start));
+        pos = i;
+    }
+}
+
+void extractHrefMeta(const std::string& hrefRaw,
+                     HoverMeta& meta,
+                     bool* isStrongLink = nullptr,
+                     bool* isMorphLink = nullptr) {
+    if (isStrongLink) *isStrongLink = false;
+    if (isMorphLink) *isMorphLink = false;
+
+    std::string href = trimCopy(decodeHtmlEntities(hrefRaw));
+    if (href.empty()) return;
+    std::string lower = toLowerAscii(href);
+
+    auto consumeSchemeValue = [&href](size_t prefixLen) -> std::string {
+        if (href.size() <= prefixLen) return "";
+        std::string value = href.substr(prefixLen);
+        while (!value.empty() &&
+               (value.front() == '/' || std::isspace(static_cast<unsigned char>(value.front())))) {
+            value.erase(value.begin());
+        }
+        size_t stop = 0;
+        while (stop < value.size() &&
+               !std::isspace(static_cast<unsigned char>(value[stop])) &&
+               value[stop] != '&' && value[stop] != '?' && value[stop] != '#') {
+            ++stop;
+        }
+        return value.substr(0, stop);
+    };
+
+    if (lower.rfind("strongs:", 0) == 0) {
+        if (isStrongLink) *isStrongLink = true;
+        addStrongToken(meta, consumeSchemeValue(8));
+        return;
+    }
+    if (lower.rfind("strong:", 0) == 0) {
+        if (isStrongLink) *isStrongLink = true;
+        addStrongToken(meta, consumeSchemeValue(7));
+        return;
+    }
+    if (lower.rfind("morph:", 0) == 0) {
+        if (isMorphLink) *isMorphLink = true;
+        addMorphToken(meta, consumeSchemeValue(6));
+        return;
+    }
+
+    if (!containsNoCase(lower, "passagestudy.jsp")) return;
+
+    if (containsNoCase(lower, "showstrongs")) {
+        if (isStrongLink) *isStrongLink = true;
+        std::string value = extractQueryValue(href, "value");
+        std::string type = toLowerAscii(extractQueryValue(href, "type"));
+        std::string prefix;
+        if (type.find("ebrew") != std::string::npos) prefix = "H";
+        else if (type.find("reek") != std::string::npos) prefix = "G";
+        addStrongToken(meta, prefix + value);
+    }
+
+    if (containsNoCase(lower, "showmorph")) {
+        if (isMorphLink) *isMorphLink = true;
+        addMorphToken(meta, extractQueryValue(href, "value"));
+    }
+}
+
+HoverMeta extractMetaFromWTag(const std::string& openTag) {
+    HoverMeta meta;
+
+    std::string lemma;
+    if (extractAttributeValue(openTag, "lemma", lemma)) {
+        extractLemmaStrongs(lemma, meta);
+    }
+
+    std::string morph;
+    if (extractAttributeValue(openTag, "morph", morph)) {
+        addMorphToken(meta, morph);
+    }
+
+    return meta;
+}
+
+bool parseSmallBlockMeta(const std::string& block, HoverMeta& meta) {
+    bool marker =
+        containsNoCase(block, "showstrongs") ||
+        containsNoCase(block, "showmorph") ||
+        containsNoCase(block, "class=\"strongs\"") ||
+        containsNoCase(block, "class='strongs'") ||
+        containsNoCase(block, "class=\"morph\"") ||
+        containsNoCase(block, "class='morph'") ||
+        containsNoCase(block, "strongs:") ||
+        containsNoCase(block, "morph:");
+
+    size_t pos = 0;
+    while (pos < block.size()) {
+        size_t aPos = findNoCase(block, "<a", pos);
+        if (aPos == std::string::npos) break;
+
+        size_t aEnd = std::string::npos;
+        std::string tagName;
+        bool isClosing = false;
+        bool isSelfClosing = false;
+        if (!parseTag(block, aPos, aEnd, tagName, isClosing, isSelfClosing)) {
+            pos = aPos + 2;
+            continue;
+        }
+
+        if (!isClosing && tagName == "a") {
+            std::string aTag = block.substr(aPos, aEnd - aPos + 1);
+            std::string href;
+            if (extractAttributeValue(aTag, "href", href)) {
+                bool isStrong = false;
+                bool isMorph = false;
+                extractHrefMeta(href, meta, &isStrong, &isMorph);
+                marker = marker || isStrong || isMorph;
+            }
+        }
+
+        pos = aEnd + 1;
+    }
+
+    if (marker && meta.strong.empty()) {
+        std::string token = firstStrongTokenFromText(stripTags(block));
+        if (!token.empty()) addStrongToken(meta, token);
+    }
+
+    if (marker && meta.morph.empty() &&
+        containsNoCase(block, "morph")) {
+        std::string plain = trimCopy(stripTags(block));
+        if (looksLikeMorphDisplay(plain)) addMorphToken(meta, plain);
+    }
+
+    return marker;
+}
+
+bool isInlineStrongMarkerTag(const std::string& rawTag, const std::string& tagName) {
+    if (rawTag.size() < 4 || rawTag.front() != '<' || rawTag.back() != '>') return false;
+    if (rawTag.find(' ') != std::string::npos ||
+        rawTag.find('\t') != std::string::npos ||
+        rawTag.find('\n') != std::string::npos ||
+        rawTag.find('\r') != std::string::npos) {
+        return false;
+    }
+
+    char firstRaw = rawTag[1];
+    bool prefixed = (firstRaw == 'H' || firstRaw == 'G');
+    bool digitOnly = std::isdigit(static_cast<unsigned char>(firstRaw));
+    if (!prefixed && !digitOnly) return false;
+
+    size_t i = 0;
+    if (!tagName.empty() && (tagName[0] == 'h' || tagName[0] == 'g')) i = 1;
+    size_t digits = 0;
+    while (i < tagName.size() &&
+           std::isdigit(static_cast<unsigned char>(tagName[i]))) {
+        ++i;
+        ++digits;
+    }
+    return i == tagName.size() && digits >= 1 && digits <= 6;
+}
+
+bool tryConsumeEscapedStrongMarker(const std::string& text, size_t& pos) {
+    if (pos + 4 > text.size()) return false;
+    if (!(text[pos] == '&' && equalsNoCase(text[pos + 1], 'l') &&
+          equalsNoCase(text[pos + 2], 't') && text[pos + 3] == ';')) {
+        return false;
+    }
+
+    size_t i = pos + 4;
+    if (i >= text.size()) return false;
+
+    if (text[i] == 'H' || text[i] == 'h' || text[i] == 'G' || text[i] == 'g') {
+        ++i;
+    }
+
+    size_t digitsStart = i;
+    while (i < text.size() &&
+           std::isdigit(static_cast<unsigned char>(text[i])) &&
+           (i - digitsStart) < 6) {
+        ++i;
+    }
+    if (i == digitsStart) return false;
+
+    if (i + 4 <= text.size() && text[i] == '&' &&
+        equalsNoCase(text[i + 1], 'g') &&
+        equalsNoCase(text[i + 2], 't') &&
+        text[i + 3] == ';') {
+        pos = i + 4;
+        return true;
+    }
+    return false;
+}
+
+bool tryConsumeGbfMorphMarker(const std::string& text, size_t& pos) {
+    if (pos >= text.size() || text[pos] != '(') return false;
+    size_t i = pos + 1;
+    size_t digits = 0;
+    while (i < text.size() &&
+           std::isdigit(static_cast<unsigned char>(text[i])) &&
+           digits < 5) {
+        ++i;
+        ++digits;
+    }
+    if (digits < 4 || digits > 5) return false;
+
+    if (i < text.size() &&
+        std::isalpha(static_cast<unsigned char>(text[i]))) {
+        ++i;
+    }
+    if (i < text.size() && text[i] == ')') {
+        pos = i + 1;
+        return true;
+    }
+    return false;
+}
+
+void trackLastWordInPlainText(const std::string& text,
+                              size_t outStart,
+                              OutputTarget& target) {
+    size_t i = 0;
+    while (i < text.size()) {
+        while (i < text.size() &&
+               !isWordByte(static_cast<unsigned char>(text[i]))) {
+            ++i;
+        }
+        if (i >= text.size()) break;
+        size_t start = i;
+        while (i < text.size() &&
+               isWordByte(static_cast<unsigned char>(text[i]))) {
+            ++i;
+        }
+        target.start = outStart + start;
+        target.end = outStart + i;
+        target.valid = true;
+    }
+}
+
+void trackLastWordInHtmlFragment(const std::string& html,
+                                 size_t outStart,
+                                 OutputTarget& target) {
+    bool inTag = false;
+    size_t wordStart = 0;
+    bool inWord = false;
+
+    for (size_t i = 0; i < html.size(); ++i) {
+        char c = html[i];
+        if (c == '<') {
+            if (inWord) {
+                target.start = outStart + wordStart;
+                target.end = outStart + i;
+                target.valid = true;
+                inWord = false;
+            }
+            inTag = true;
+            continue;
+        }
+        if (c == '>') {
+            inTag = false;
+            continue;
+        }
+        if (inTag) continue;
+
+        if (isWordByte(static_cast<unsigned char>(c))) {
+            if (!inWord) {
+                inWord = true;
+                wordStart = i;
+            }
+        } else if (inWord) {
+            target.start = outStart + wordStart;
+            target.end = outStart + i;
+            target.valid = true;
+            inWord = false;
+        }
+    }
+
+    if (inWord) {
+        target.start = outStart + wordStart;
+        target.end = outStart + html.size();
+        target.valid = true;
+    }
+}
+
+void appendSanitizedText(std::string& out,
+                         const std::string& text,
+                         OutputTarget& target) {
+    std::string cleaned;
+    cleaned.reserve(text.size());
+
+    for (size_t i = 0; i < text.size();) {
+        size_t cursor = i;
+        if (tryConsumeEscapedStrongMarker(text, cursor) ||
+            tryConsumeGbfMorphMarker(text, cursor)) {
+            cleaned.push_back(' ');
+            i = cursor;
+            continue;
+        }
+        cleaned.push_back(text[i]);
+        ++i;
+    }
+
+    size_t outStart = out.size();
+    out += cleaned;
+    trackLastWordInPlainText(cleaned, outStart, target);
+}
+
+void mergeMeta(HoverMeta& base, const HoverMeta& update) {
+    if (!update.strong.empty()) appendUniqueTokens(base.strong, update.strong, '|');
+    if (!update.morph.empty()) appendUniqueTokens(base.morph, update.morph, ' ');
+}
+
+void applyMetaToTarget(std::string& out,
+                       OutputTarget& target,
+                       const HoverMeta& meta) {
+    if (!target.valid || target.end <= target.start || meta.empty()) return;
+    if (target.end > out.size()) {
+        target.valid = false;
+        return;
+    }
+
+    const std::string prefix = R"(<span class="w")";
+    bool looksWrapped =
+        target.end - target.start >= prefix.size() + 7 &&
+        out.compare(target.start, prefix.size(), prefix) == 0 &&
+        out.compare(target.end - 7, 7, "</span>") == 0;
+
+    if (looksWrapped) {
+        size_t openEnd = out.find('>', target.start);
+        if (openEnd != std::string::npos && openEnd < target.end) {
+            std::string openTag = out.substr(target.start, openEnd - target.start + 1);
+            HoverMeta merged;
+            std::string existingStrong;
+            std::string existingMorph;
+            if (extractAttributeValue(openTag, "data-strong", existingStrong)) {
+                merged.strong = decodeHtmlEntities(existingStrong);
+            }
+            if (extractAttributeValue(openTag, "data-morph", existingMorph)) {
+                merged.morph = decodeHtmlEntities(existingMorph);
+            }
+            mergeMeta(merged, meta);
+
+            std::string newOpen = buildWordSpanOpenTag(merged);
+            out.replace(target.start, openEnd - target.start + 1, newOpen);
+            ptrdiff_t delta = static_cast<ptrdiff_t>(newOpen.size()) -
+                              static_cast<ptrdiff_t>(openEnd - target.start + 1);
+            target.end = static_cast<size_t>(
+                static_cast<ptrdiff_t>(target.end) + delta);
+            return;
+        }
+    }
+
+    std::string inner = out.substr(target.start, target.end - target.start);
+    std::string wrapped = buildWordSpanOpenTag(meta) + inner + "</span>";
+    out.replace(target.start, target.end - target.start, wrapped);
+    target.end = target.start + wrapped.size();
+    target.valid = true;
+}
+
+std::string collapseSpacesOutsideTags(const std::string& html) {
+    std::string out;
+    out.reserve(html.size());
+    bool inTag = false;
+    bool prevSpace = false;
+    for (char c : html) {
+        if (c == '<') {
+            inTag = true;
+            prevSpace = false;
+            out.push_back(c);
+            continue;
+        }
+        if (c == '>') {
+            inTag = false;
+            prevSpace = false;
+            out.push_back(c);
+            continue;
+        }
+        if (!inTag && c == ' ') {
+            if (prevSpace) continue;
+            prevSpace = true;
+            out.push_back(c);
+            continue;
+        }
+        prevSpace = false;
+        out.push_back(c);
+    }
     return out;
 }
 
@@ -1049,253 +1990,150 @@ std::string SwordManager::postProcessHtml(const std::string& html) const {
         return html;
     }
 
-    std::string result = html;
+    std::string out;
+    out.reserve(html.size() + 32);
+    OutputTarget lastTarget;
 
-    // --- SWORD XHTML output handling ---
-    // SWORD's XHTML filters (OSISXHTML, GBFXHTML, ThMLXHTML) output Strong's
-    // numbers and morph codes as:
-    //   <small><em class="strongs">&lt;<a class="strongs"
-    //     href="passagestudy.jsp?action=showStrongs&type=Hebrew&value=7225"
-    //     class="strongs">7225</a>&gt;</em></small>
-    //   <small><em class="morph">(<a class="morph"
-    //     href="passagestudy.jsp?action=showMorph&type=...&value=V-AAI-3S"
-    //     class="morph">V-AAI-3S</a>)</em></small>
-    //
-    // These appear AFTER the word text they annotate, e.g.:
-    //   created<small><em class="strongs">...</em></small>
-    //          <small><em class="morph">...</em></small>
+    size_t pos = 0;
+    while (pos < html.size()) {
+        if (html[pos] != '<') {
+            size_t nextTag = html.find('<', pos);
+            size_t end = (nextTag == std::string::npos) ? html.size() : nextTag;
+            appendSanitizedText(out, html.substr(pos, end - pos), lastTarget);
+            pos = end;
+            continue;
+        }
 
-    // Helper regex pattern for one <small><em ...>...</em></small> block.
-    // Content may include one <a>...</a> element surrounded by text/entities.
-    static const std::string smallEmBlock =
-        R"(<small>\s*<em\b[^>]*>[^<]*(?:<a\b[^>]*>[^<]*</a>[^<]*)?</em>\s*</small>)";
+        size_t tagEnd = std::string::npos;
+        std::string tagName;
+        bool isClosing = false;
+        bool isSelfClosing = false;
+        if (!parseTag(html, pos, tagEnd, tagName, isClosing, isSelfClosing)) {
+            appendSanitizedText(out, html.substr(pos, 1), lastTarget);
+            ++pos;
+            continue;
+        }
 
-    static const std::regex wordBlockRe(
-        std::string(R"(([\w'\-]+))") +
-            std::string(R"(((?:\s*)") + smallEmBlock + R"()+))",
-        std::regex::icase);
-    static const std::regex typeValueRe(
-        R"(type=([^&]+)&[^"]*value=([^"&]+))",
-        std::regex::icase);
-    static const std::regex oneBlockRe(
-        R"(<small>\s*<em\b([^>]*)>[^<]*(?:<a\b[^>]*>[^<]*</a>[^<]*)?</em>\s*</small>)",
-        std::regex::icase);
-    static const std::regex remainingSmallRe(smallEmBlock, std::regex::icase);
-    static const std::regex aPassageStudyRe(
-        R"re(<a\b[^>]*href="passagestudy\.jsp\?[^"]*showStrongs[^"]*type=(\w+)[^"]*value=([^"&]+)"[^>]*>([^<]*)</a>)re",
-        std::regex::icase);
-    static const std::regex aMorphPassageRe(
-        R"(<a\b[^>]*href="passagestudy\.jsp\?[^"]*showMorph[^"]*"[^>]*>[^<]*</a>)",
-        std::regex::icase);
-    static const std::regex wRe(R"(<w\b([^>]*)>([\s\S]*?)</w>)", std::regex::icase);
-    static const std::regex lemmaRe(R"re(lemma="([^"]+)")re");
-    static const std::regex strongNumRe(R"(strong:([A-Za-z]?\d+[a-z]?))");
-    static const std::regex morphRe(R"re(morph="([^"]+)")re");
-    static const std::regex aStrongsRe(
-        R"re(<a\b[^>]*href="strongs:([A-Za-z]?\d+[a-z]?)"[^>]*>([^<]*)</a>)re",
-        std::regex::icase);
-    static const std::regex aMorphRe(
-        R"(<a\b[^>]*href="morph:[^"]*"[^>]*>[^<]*</a>)",
-        std::regex::icase);
-    static const std::regex gbfStrongsRe(R"(<[HGhg]?\d{1,6}>)");
-    static const std::regex escapedRe(R"(&lt;[HGhg]?\d{1,6}&gt;)");
-    static const std::regex gbfMorphRe(R"(\(\d{4,5}[A-Za-z]?\))");
-    static const std::regex multiSpaceRe(R"( {2,})");
+        std::string rawTag = html.substr(pos, tagEnd - pos + 1);
+        if (!isClosing && isInlineStrongMarkerTag(rawTag, tagName)) {
+            pos = tagEnd + 1;
+            continue;
+        }
 
-    const bool hasSmallBlocks =
-        result.find("<small") != std::string::npos ||
-        result.find("<SMALL") != std::string::npos;
+        if (!isClosing && tagName == "w") {
+            size_t closePos = findNoCase(html, "</w", tagEnd + 1);
+            if (closePos != std::string::npos) {
+                size_t closeEnd = std::string::npos;
+                std::string closeName;
+                bool closeIsClosing = false;
+                bool closeIsSelfClosing = false;
+                if (parseTag(html, closePos, closeEnd, closeName,
+                             closeIsClosing, closeIsSelfClosing) &&
+                    closeIsClosing && closeName == "w") {
+                    std::string content =
+                        html.substr(tagEnd + 1, closePos - (tagEnd + 1));
+                    HoverMeta meta = extractMetaFromWTag(rawTag);
 
-    if (hasSmallBlocks) {
-        // 1. Transform word + SWORD Strong's/morph blocks into hoverable spans.
-        result = regexReplaceAll(result, wordBlockRe, [](const std::smatch& m) -> std::string {
-            std::string word = m[1].str();
-            std::string blocks = m[2].str();
-
-            std::string strongNums;
-            std::string morphCode;
-            auto bit = std::sregex_iterator(blocks.begin(), blocks.end(), oneBlockRe);
-            for (; bit != std::sregex_iterator(); ++bit) {
-                std::string emAttrs = (*bit)[1].str();
-                std::string blockStr = (*bit)[0].str();
-                bool isStrongs = emAttrs.find("strongs") != std::string::npos;
-                bool isMorph = emAttrs.find("morph") != std::string::npos;
-
-                std::smatch tv;
-                if (std::regex_search(blockStr, tv, typeValueRe)) {
-                    if (isStrongs) {
-                        std::string type = tv[1].str();
-                        std::string value = tv[2].str();
-                        std::string prefix;
-                        if (type.find("ebrew") != std::string::npos) prefix = "H";
-                        else if (type.find("reek") != std::string::npos) prefix = "G";
-                        if (!strongNums.empty()) strongNums += '|';
-                        strongNums += prefix + value;
-                    } else if (isMorph) {
-                        std::string value = tv[2].str();
-                        if (!morphCode.empty()) morphCode += ' ';
-                        morphCode += value;
+                    if (!meta.empty()) {
+                        size_t start = out.size();
+                        out += buildWordSpanOpenTag(meta);
+                        out += content;
+                        out += "</span>";
+                        lastTarget.start = start;
+                        lastTarget.end = out.size();
+                        lastTarget.valid = true;
+                    } else {
+                        size_t outStart = out.size();
+                        out += content;
+                        trackLastWordInHtmlFragment(content, outStart, lastTarget);
                     }
+
+                    pos = closeEnd + 1;
+                    continue;
                 }
             }
 
-            if (strongNums.empty() && morphCode.empty()) return word;
+            out += rawTag;
+            pos = tagEnd + 1;
+            continue;
+        }
 
-            std::string span = R"(<span class="w")";
-            if (!strongNums.empty()) span += R"( data-strong=")" + strongNums + '"';
-            if (!morphCode.empty()) span += R"( data-morph=")" + morphCode + '"';
-            span += '>' + word + "</span>";
-            return span;
-        });
+        if (!isClosing && tagName == "small") {
+            size_t closePos = findNoCase(html, "</small>", tagEnd + 1);
+            if (closePos != std::string::npos) {
+                size_t blockEnd = closePos + 8; // strlen("</small>")
+                std::string block = html.substr(pos, blockEnd - pos);
 
-        // 2. Strip remaining <small><em class="strongs/morph"> blocks.
-        result = std::regex_replace(result, remainingSmallRe, std::string(" "));
-    }
-
-    const bool hasPassageStudy = result.find("passagestudy.jsp") != std::string::npos;
-    if (hasPassageStudy) {
-        // 3. Handle passagestudy.jsp Strong's anchor links outside <small> blocks.
-        result = regexReplaceAll(result, aPassageStudyRe,
-            [](const std::smatch& m) -> std::string {
-            std::string type = m[1].str();
-            std::string value = m[2].str();
-            std::string text = m[3].str();
-            std::string prefix;
-            if (type.find("ebrew") != std::string::npos) prefix = "H";
-            else if (type.find("reek") != std::string::npos) prefix = "G";
-            std::string strong = prefix + value;
-
-            bool allDigits = !text.empty();
-            for (char c : text) {
-                if (!std::isdigit(static_cast<unsigned char>(c))) {
-                    allDigits = false;
-                    break;
+                HoverMeta blockMeta;
+                bool isMarkerBlock = parseSmallBlockMeta(block, blockMeta);
+                if (isMarkerBlock) {
+                    applyMetaToTarget(out, lastTarget, blockMeta);
+                } else {
+                    size_t outStart = out.size();
+                    out += block;
+                    trackLastWordInHtmlFragment(block, outStart, lastTarget);
                 }
+
+                pos = blockEnd;
+                continue;
             }
-            if (allDigits) return " ";
 
-            return R"(<span class="w" data-strong=")" + strong + "\">" + text + "</span>";
-        });
+            out += rawTag;
+            pos = tagEnd + 1;
+            continue;
+        }
 
-        // 4. Strip passagestudy.jsp morph anchor links.
-        result = std::regex_replace(result, aMorphPassageRe, std::string(" "));
-    }
+        if (!isClosing && tagName == "a") {
+            std::string href;
+            bool hasHref = extractAttributeValue(rawTag, "href", href);
+            bool isStrongLink = false;
+            bool isMorphLink = false;
+            HoverMeta linkMeta;
+            if (hasHref) {
+                extractHrefMeta(href, linkMeta, &isStrongLink, &isMorphLink);
+            }
 
-    const bool hasWTag = result.find("<w") != std::string::npos ||
-                         result.find("<W") != std::string::npos;
-    if (hasWTag) {
-        // 5. Transform OSIS <w> elements to hoverable spans.
-        result = regexReplaceAll(result, wRe, [](const std::smatch& m) -> std::string {
-            std::string attrs = m[1].str();
-            std::string content = m[2].str();
+            bool isSpecialLink = isStrongLink || isMorphLink;
+            if (isSpecialLink) {
+                size_t closePos = findNoCase(html, "</a>", tagEnd + 1);
+                if (closePos != std::string::npos) {
+                    size_t afterClose = closePos + 4; // strlen("</a>")
+                    std::string inner =
+                        html.substr(tagEnd + 1, closePos - (tagEnd + 1));
+                    std::string plainInner = trimCopy(stripTags(inner));
+                    bool codeText =
+                        (isStrongLink && looksLikeStrongsDisplay(plainInner)) ||
+                        (isMorphLink && looksLikeMorphDisplay(plainInner));
 
-            std::string strong;
-            std::smatch lm;
-            if (std::regex_search(attrs, lm, lemmaRe)) {
-                std::string lemmaVal = lm[1].str();
-                auto sit = std::sregex_iterator(lemmaVal.begin(), lemmaVal.end(), strongNumRe);
-                for (; sit != std::sregex_iterator(); ++sit) {
-                    std::string s = (*sit)[1].str();
-                    if (!s.empty()) {
-                        if (std::islower(static_cast<unsigned char>(s[0]))) {
-                            s[0] = static_cast<char>(
-                                std::toupper(static_cast<unsigned char>(s[0])));
+                    if (!linkMeta.empty() && !inner.empty() && !codeText) {
+                        size_t start = out.size();
+                        out += buildWordSpanOpenTag(linkMeta);
+                        out += inner;
+                        out += "</span>";
+                        lastTarget.start = start;
+                        lastTarget.end = out.size();
+                        lastTarget.valid = true;
+                    } else {
+                        if (!linkMeta.empty()) {
+                            applyMetaToTarget(out, lastTarget, linkMeta);
+                        } else if (!inner.empty() && !codeText) {
+                            size_t outStart = out.size();
+                            out += inner;
+                            trackLastWordInHtmlFragment(inner, outStart, lastTarget);
                         }
-                        if (!strong.empty()) strong += '|';
-                        strong += s;
                     }
+
+                    pos = afterClose;
+                    continue;
                 }
             }
+        }
 
-            std::string morph;
-            std::smatch mm;
-            if (std::regex_search(attrs, mm, morphRe)) {
-                morph = mm[1].str();
-                auto colonPos = morph.find(':');
-                if (colonPos != std::string::npos &&
-                    morph.substr(0, colonPos).find(' ') == std::string::npos) {
-                    morph = morph.substr(colonPos + 1);
-                }
-            }
-
-            if (strong.empty() && morph.empty()) return content;
-
-            std::string span = R"(<span class="w")";
-            if (!strong.empty()) span += R"( data-strong=")" + strong + '"';
-            if (!morph.empty()) span += R"( data-morph=")" + morph + '"';
-            span += '>' + content + "</span>";
-            return span;
-        });
+        out += rawTag;
+        pos = tagEnd + 1;
     }
 
-    // 6. Transform anchor Strong's links (strongs: scheme).
-    if (result.find("strongs:") != std::string::npos ||
-        result.find("STRONGS:") != std::string::npos) {
-        result = regexReplaceAll(result, aStrongsRe, [](const std::smatch& m) -> std::string {
-            std::string strong = m[1].str();
-            std::string text = m[2].str();
-
-            if (!strong.empty() && std::islower(static_cast<unsigned char>(strong[0]))) {
-                strong[0] = static_cast<char>(
-                    std::toupper(static_cast<unsigned char>(strong[0])));
-            }
-
-            bool textIsNumber = !text.empty();
-            for (size_t i = 0; i < text.size(); ++i) {
-                unsigned char c = static_cast<unsigned char>(text[i]);
-                if (i == 0 && std::isalpha(c)) continue;
-                if (!std::isdigit(c)) {
-                    textIsNumber = false;
-                    break;
-                }
-            }
-            if (textIsNumber || text.empty()) return " ";
-
-            return R"(<span class="w" data-strong=")" + strong + "\">" + text + "</span>";
-        });
-    }
-
-    // 7. Strip anchor morph links (morph: scheme).
-    if (result.find("morph:") != std::string::npos ||
-        result.find("MORPH:") != std::string::npos) {
-        result = std::regex_replace(result, aMorphRe, std::string(" "));
-    }
-
-    // 8. Strip GBF-style inline Strong's markers: <H0776>, <G123>, or <0776>.
-    const bool hasInlineMarker =
-        result.find("<H") != std::string::npos ||
-        result.find("<G") != std::string::npos ||
-        result.find("<h") != std::string::npos ||
-        result.find("<g") != std::string::npos ||
-        result.find("<0") != std::string::npos ||
-        result.find("<1") != std::string::npos ||
-        result.find("<2") != std::string::npos ||
-        result.find("<3") != std::string::npos ||
-        result.find("<4") != std::string::npos ||
-        result.find("<5") != std::string::npos ||
-        result.find("<6") != std::string::npos ||
-        result.find("<7") != std::string::npos ||
-        result.find("<8") != std::string::npos ||
-        result.find("<9") != std::string::npos;
-    if (hasInlineMarker) {
-        result = std::regex_replace(result, gbfStrongsRe, std::string(" "));
-    }
-
-    // 9. Strip escaped GBF Strong's markers.
-    if (result.find("&lt;") != std::string::npos) {
-        result = std::regex_replace(result, escapedRe, std::string(" "));
-    }
-
-    // 10. Strip GBF morph codes in parentheses.
-    if (result.find('(') != std::string::npos) {
-        result = std::regex_replace(result, gbfMorphRe, std::string(" "));
-    }
-
-    // 11. Collapse multiple consecutive spaces into a single space.
-    if (result.find("  ") != std::string::npos) {
-        result = std::regex_replace(result, multiSpaceRe, std::string(" "));
-    }
-
+    std::string result = collapseSpacesOutsideTags(out);
     cacheStore(html, result);
     return result;
 }
