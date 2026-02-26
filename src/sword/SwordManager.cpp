@@ -1541,7 +1541,7 @@ std::string SwordManager::getParallelText(
 
     if (verseCount == 0) verseCount = 31; // fallback
 
-    // Float-based column layout for reliable litehtml rendering.
+    // Column width split for inline-block parallel layout.
     int numCols = static_cast<int>(moduleNames.size());
     int colWidth = 100 / numCols;
     int lastColWidth = 100 - colWidth * (numCols - 1);
@@ -1620,7 +1620,6 @@ std::string SwordManager::getParallelText(
             }
             html << "</div></div>\n";
         }
-        html << "<div class=\"parallel-clear\"></div>\n";
         html << "</div>\n";
     }
 
