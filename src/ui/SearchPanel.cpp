@@ -268,6 +268,8 @@ SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
     // Result list
     resultBrowser_ = new Fl_Hold_Browser(X + padding, cy,
                                      W - 2 * padding, H - (cy - Y) - padding);
+    static int widths[] = { 100, 0 };  // widths for each column
+    resultBrowser_->column_widths(widths); // assign array to widget
     //resultBrowser_->type(FL_HOLD_BROWSER);
     resultBrowser_->callback(onResultSelect, this);
     //resultBrowser_->when(FL_WHEN_RELEASE);
@@ -392,9 +394,11 @@ void SearchPanel::search(const std::string& query) {
         if (snippet.size() > 36) {
             snippet = snippet.substr(0, 36) + "...";
         }
-        std::string line = r.key;
+        const std::string& resultModule = r.module.empty() ? moduleName : r.module;
+        std::string shortKey = app_->swordManager().getShortReference(resultModule, r.key);
+        std::string line = shortKey.empty() ? r.key : shortKey;
         if (!snippet.empty()) {
-            line += " \t- " + snippet;
+            line += " \t " + snippet;
         }
         resultBrowser_->add(line.c_str());
     }

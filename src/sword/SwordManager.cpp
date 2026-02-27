@@ -2054,6 +2054,38 @@ SwordManager::VerseRef SwordManager::parseVerseRef(const std::string& ref) {
     return result;
 }
 
+std::string SwordManager::getShortReference(const std::string& moduleName,
+                                            const std::string& reference) const {
+    std::string ref = trimCopy(reference);
+    if (ref.empty()) return "";
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    sword::VerseKey vk;
+    vk.setAutoNormalize(true);
+
+    sword::SWModule* mod = moduleName.empty() ? nullptr : getModule(moduleName);
+    if (mod) {
+        const char* v11n = mod->getConfigEntry("Versification");
+        if (v11n && *v11n) {
+            vk.setVersificationSystem(v11n);
+        }
+    }
+
+    vk.setText(ref.c_str());
+    if (vk.popError()) {
+        return ref;
+    }
+
+    const char* shortText = vk.getShortText();
+    if (shortText && *shortText) return shortText;
+
+    const char* longText = vk.getText();
+    if (longText && *longText) return longText;
+
+    return ref;
+}
+
 std::map<std::string, std::map<std::string, std::string>>
 SwordManager::getEntryAttributes(const std::string& moduleName) {
     std::lock_guard<std::mutex> lock(mutex_);

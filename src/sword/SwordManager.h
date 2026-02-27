@@ -172,6 +172,11 @@ public:
     };
     static VerseRef parseVerseRef(const std::string& ref);
 
+    /// Convert a verse reference into SWORD short form (e.g. "Genesis 1:1" -> "Gen 1:1").
+    /// Uses module versification when available.
+    std::string getShortReference(const std::string& moduleName,
+                                  const std::string& reference) const;
+
     /// Get all entry attributes for the last rendered verse
     /// Used for extracting Strong's and morph data from rendered text
     std::map<std::string, std::map<std::string, std::string>>

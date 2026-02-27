@@ -162,7 +162,7 @@ private:
     void activateStudyTab(int index);
 
     /// Build a label like "KJV:Gen 1:1" for the given tab state.
-    static std::string studyTabLabel(const StudyTabState& state);
+    std::string studyTabLabel(const StudyTabState& state) const;
 
     /// Capture current shared pane state into the active tab context.
     void captureActiveTabState();

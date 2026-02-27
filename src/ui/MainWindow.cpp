@@ -14,7 +14,6 @@
 #include <cctype>
 #include <regex>
 #include <sstream>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -123,64 +122,6 @@ std::vector<std::string> extractStrongsTokens(const std::string& strongs) {
         return prefixed;
     }
     return numeric;
-}
-
-std::string abbreviateBookName(const std::string& bookName) {
-    static const std::unordered_map<std::string, std::string> kBookAbbrev = {
-        {"Genesis", "Gen"}, {"Exodus", "Exod"}, {"Leviticus", "Lev"},
-        {"Numbers", "Num"}, {"Deuteronomy", "Deut"}, {"Joshua", "Josh"},
-        {"Judges", "Judg"}, {"Ruth", "Ruth"}, {"1 Samuel", "1Sam"},
-        {"2 Samuel", "2Sam"}, {"1 Kings", "1Kgs"}, {"2 Kings", "2Kgs"},
-        {"1 Chronicles", "1Chr"}, {"2 Chronicles", "2Chr"}, {"Ezra", "Ezra"},
-        {"Nehemiah", "Neh"}, {"Esther", "Esth"}, {"Job", "Job"},
-        {"Psalms", "Ps"}, {"Psalm", "Ps"}, {"Proverbs", "Prov"},
-        {"Ecclesiastes", "Eccl"}, {"Song of Solomon", "Song"},
-        {"Song of Songs", "Song"}, {"Isaiah", "Isa"}, {"Jeremiah", "Jer"},
-        {"Lamentations", "Lam"}, {"Ezekiel", "Ezek"}, {"Daniel", "Dan"},
-        {"Hosea", "Hos"}, {"Joel", "Joel"}, {"Amos", "Amos"},
-        {"Obadiah", "Obad"}, {"Jonah", "Jonah"}, {"Micah", "Mic"},
-        {"Nahum", "Nah"}, {"Habakkuk", "Hab"}, {"Zephaniah", "Zeph"},
-        {"Haggai", "Hag"}, {"Zechariah", "Zech"}, {"Malachi", "Mal"},
-        {"Matthew", "Matt"}, {"Mark", "Mark"}, {"Luke", "Luke"},
-        {"John", "John"}, {"Acts", "Acts"}, {"Romans", "Rom"},
-        {"1 Corinthians", "1Cor"}, {"2 Corinthians", "2Cor"},
-        {"Galatians", "Gal"}, {"Ephesians", "Eph"}, {"Philippians", "Phil"},
-        {"Colossians", "Col"}, {"1 Thessalonians", "1Thess"},
-        {"2 Thessalonians", "2Thess"}, {"1 Timothy", "1Tim"},
-        {"2 Timothy", "2Tim"}, {"Titus", "Titus"}, {"Philemon", "Phlm"},
-        {"Hebrews", "Heb"}, {"James", "Jas"}, {"1 Peter", "1Pet"},
-        {"2 Peter", "2Pet"}, {"1 John", "1John"}, {"2 John", "2John"},
-        {"3 John", "3John"}, {"Jude", "Jude"}, {"Revelation", "Rev"}
-    };
-
-    auto it = kBookAbbrev.find(bookName);
-    if (it != kBookAbbrev.end()) return it->second;
-
-    // Fallback for non-canonical names: keep numeric prefix and first 3 letters.
-    std::istringstream ss(bookName);
-    std::string first;
-    std::string second;
-    ss >> first;
-    ss >> second;
-    if (first.empty()) return "Gen";
-
-    if (!first.empty() && std::isdigit(static_cast<unsigned char>(first[0])) &&
-        !second.empty()) {
-        std::string out = first;
-        std::string stem = second.substr(0, std::min<size_t>(3, second.size()));
-        if (!stem.empty()) {
-            stem[0] = static_cast<char>(std::toupper(
-                static_cast<unsigned char>(stem[0])));
-            for (size_t i = 1; i < stem.size(); ++i) {
-                stem[i] = static_cast<char>(std::tolower(
-                    static_cast<unsigned char>(stem[i])));
-            }
-        }
-        return out + stem;
-    }
-
-    if (first.size() <= 4) return first;
-    return first.substr(0, 4);
 }
 
 } // namespace
@@ -462,15 +403,23 @@ void MainWindow::layoutStudyTabHeader() {
     studyTabsWidget_->redraw();
 }
 
-std::string MainWindow::studyTabLabel(const StudyTabState& state) {
+std::string MainWindow::studyTabLabel(const StudyTabState& state) const {
     std::string module = state.module;
     if (module.empty()) module = "Bible";
     std::string book = state.book;
     if (book.empty()) book = "Genesis";
     int chapter = std::max(1, state.chapter);
     int verse = std::max(1, state.verse);
-    return module + ":" + abbreviateBookName(book) + " " +
-           std::to_string(chapter) + ":" + std::to_string(verse);
+
+    std::string reference = book + " " + std::to_string(chapter) +
+                            ":" + std::to_string(verse);
+    std::string shortRef = app_ ? app_->swordManager().getShortReference(module, reference)
+                                : reference;
+    if (shortRef.empty()) {
+        shortRef = reference;
+    }
+
+    return module + ":" + shortRef;
 }
 
 void MainWindow::updateActiveStudyTabLabel() {
