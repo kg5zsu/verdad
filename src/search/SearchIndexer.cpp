@@ -192,6 +192,23 @@ void SearchIndexer::applyPragmas(sqlite3* db) {
 bool SearchIndexer::ensureSchema(sqlite3* db) {
     if (!db) return false;
 
+    int userVersion = 0;
+    {
+        sqlite3_stmt* verStmt = nullptr;
+        if (sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &verStmt, nullptr) == SQLITE_OK) {
+            if (sqlite3_step(verStmt) == SQLITE_ROW) {
+                userVersion = sqlite3_column_int(verStmt, 0);
+            }
+        }
+        if (verStmt) sqlite3_finalize(verStmt);
+    }
+
+    // Rebuild old indexes so plain_text no longer contains legacy Strong's/notes artifacts.
+    if (userVersion < 3) {
+        sqlite3_exec(db, "DROP TABLE IF EXISTS verse_index;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db, "DROP TABLE IF EXISTS indexed_modules;", nullptr, nullptr, nullptr);
+    }
+
     const char* sql = R"SQL(
         CREATE TABLE IF NOT EXISTS indexed_modules (
             module_name TEXT PRIMARY KEY,
@@ -219,6 +236,8 @@ bool SearchIndexer::ensureSchema(sqlite3* db) {
         return false;
     }
     if (err) sqlite3_free(err);
+
+    sqlite3_exec(db, "PRAGMA user_version = 3;", nullptr, nullptr, nullptr);
     return true;
 }
 
@@ -620,7 +639,21 @@ void SearchIndexer::indexModuleNow(const std::string& moduleName) {
                 mod->setKey(vk);
                 if (mod->popError()) continue;
 
-                std::string plain = std::string(mod->stripText());
+                // Keep plain_text index free of Strong's/morph tags and notes/cross refs.
+                mgr->setGlobalOption("Strong's Numbers", "Off");
+                mgr->setGlobalOption("Morphological Tags", "Off");
+                mgr->setGlobalOption("Footnotes", "Off");
+                mgr->setGlobalOption("Cross-references", "Off");
+                mgr->setGlobalOption("Headings", "Off");
+                const char* plainRaw = mod->stripText();
+                std::string plain = plainRaw ? plainRaw : "";
+
+                // Keep strongs_text index with tag-rich XHTML for lemma searches.
+                mgr->setGlobalOption("Strong's Numbers", "On");
+                mgr->setGlobalOption("Morphological Tags", "On");
+                mgr->setGlobalOption("Footnotes", "On");
+                mgr->setGlobalOption("Cross-references", "On");
+                mgr->setGlobalOption("Headings", "On");
                 std::string xhtml = std::string(mod->renderText().c_str());
 
                 if (plain.empty() && xhtml.empty()) continue;

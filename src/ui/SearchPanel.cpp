@@ -8,10 +8,14 @@
 
 #include <FL/Fl.H>
 #include <FL/fl_ask.H>
+#include <FL/Fl_Hold_Browser.H>
+
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
 #include <regex>
+#include <unordered_map>
 
 namespace verdad {
 namespace {
@@ -79,6 +83,150 @@ int findChoiceIndexByLabel(Fl_Choice* choice, const std::string& label) {
     return -1;
 }
 
+std::string normalizeBookKey(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (char c : in) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (std::isalnum(uc)) {
+            out.push_back(static_cast<char>(std::tolower(uc)));
+        }
+    }
+    return out;
+}
+
+std::string collapseWhitespace(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    bool lastWasSpace = true;
+    for (char c : in) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (std::isspace(uc)) {
+            if (!lastWasSpace) {
+                out.push_back(' ');
+                lastWasSpace = true;
+            }
+        } else {
+            out.push_back(c);
+            lastWasSpace = false;
+        }
+    }
+
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    size_t start = 0;
+    while (start < out.size() && out[start] == ' ') ++start;
+    return (start == 0) ? out : out.substr(start);
+}
+
+std::string stripSimpleHtmlTags(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    bool inTag = false;
+    for (char c : in) {
+        if (c == '<') {
+            inTag = true;
+            continue;
+        }
+        if (c == '>') {
+            inTag = false;
+            continue;
+        }
+        if (!inTag) out.push_back(c);
+    }
+    return out;
+}
+
+bool parseReferenceKey(const std::string& key, SwordManager::VerseRef& out) {
+    out = SwordManager::VerseRef{};
+    try {
+        out = SwordManager::parseVerseRef(key);
+    } catch (...) {
+        out = SwordManager::VerseRef{};
+    }
+
+    if (!out.book.empty() && out.chapter > 0 && out.verse > 0) {
+        return true;
+    }
+
+    static const std::regex fallbackRe(R"(^\s*(.+?)\s+(\d+):(\d+)(?:-\d+)?\s*$)");
+    std::smatch m;
+    if (!std::regex_match(key, m, fallbackRe)) return false;
+
+    out.book = trimCopy(m[1].str());
+    try {
+        out.chapter = std::stoi(m[2].str());
+        out.verse = std::stoi(m[3].str());
+    } catch (...) {
+        return false;
+    }
+    return !out.book.empty() && out.chapter > 0 && out.verse > 0;
+}
+
+void sortSearchResultsCanonical(SwordManager& swordMgr,
+                                const std::string& moduleName,
+                                std::vector<SearchResult>& results) {
+    if (results.size() < 2 || moduleName.empty()) return;
+
+    std::unordered_map<std::string, int> bookOrder;
+    const auto books = swordMgr.getBookNames(moduleName);
+    for (size_t i = 0; i < books.size(); ++i) {
+        std::string key = normalizeBookKey(books[i]);
+        if (!key.empty() && bookOrder.find(key) == bookOrder.end()) {
+            bookOrder.emplace(key, static_cast<int>(i));
+        }
+    }
+
+    struct SortKey {
+        bool parsed = false;
+        int bookRank = std::numeric_limits<int>::max();
+        int chapter = std::numeric_limits<int>::max();
+        int verse = std::numeric_limits<int>::max();
+        std::string normBook;
+    };
+
+    std::unordered_map<std::string, SortKey> cache;
+    cache.reserve(results.size());
+
+    auto getSortKey = [&](const std::string& ref) -> const SortKey& {
+        auto it = cache.find(ref);
+        if (it != cache.end()) return it->second;
+
+        SortKey k;
+        SwordManager::VerseRef parsed;
+        if (parseReferenceKey(ref, parsed)) {
+            k.parsed = true;
+            k.chapter = parsed.chapter;
+            k.verse = parsed.verse;
+            k.normBook = normalizeBookKey(parsed.book);
+            auto bi = bookOrder.find(k.normBook);
+            if (bi != bookOrder.end()) {
+                k.bookRank = bi->second;
+            }
+        }
+
+        auto inserted = cache.emplace(ref, std::move(k));
+        return inserted.first->second;
+    };
+
+    std::stable_sort(results.begin(), results.end(),
+                     [&](const SearchResult& a, const SearchResult& b) {
+        const SortKey& ka = getSortKey(a.key);
+        const SortKey& kb = getSortKey(b.key);
+
+        if (ka.parsed != kb.parsed) return ka.parsed > kb.parsed;
+        if (!ka.parsed && !kb.parsed) return a.key < b.key;
+
+        if (ka.bookRank != kb.bookRank) return ka.bookRank < kb.bookRank;
+        if (ka.bookRank == std::numeric_limits<int>::max() &&
+            ka.normBook != kb.normBook) {
+            return ka.normBook < kb.normBook;
+        }
+        if (ka.chapter != kb.chapter) return ka.chapter < kb.chapter;
+        if (ka.verse != kb.verse) return ka.verse < kb.verse;
+        return a.key < b.key;
+    });
+}
+
 } // namespace
 
 SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
@@ -118,11 +266,11 @@ SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
     cy += 17;
 
     // Result list
-    resultBrowser_ = new Fl_Browser(X + padding, cy,
+    resultBrowser_ = new Fl_Hold_Browser(X + padding, cy,
                                      W - 2 * padding, H - (cy - Y) - padding);
-    resultBrowser_->type(FL_HOLD_BROWSER);
+    //resultBrowser_->type(FL_HOLD_BROWSER);
     resultBrowser_->callback(onResultSelect, this);
-    resultBrowser_->when(FL_WHEN_CHANGED | FL_WHEN_RELEASE);
+    //resultBrowser_->when(FL_WHEN_RELEASE);
 
     end();
     resizable(resultBrowser_);
@@ -236,15 +384,17 @@ void SearchPanel::search(const std::string& query) {
         updateIndexingIndicator();
     }
 
+    sortSearchResultsCanonical(app_->swordManager(), moduleName, results_);
+
     // Populate result browser
     for (const auto& r : results_) {
-        std::string snippet = r.text;
-        if (snippet.size() > 90) {
-            snippet = snippet.substr(0, 90) + "...";
+        std::string snippet = collapseWhitespace(stripSimpleHtmlTags(r.text));
+        if (snippet.size() > 36) {
+            snippet = snippet.substr(0, 36) + "...";
         }
         std::string line = r.key;
         if (!snippet.empty()) {
-            line += " - " + snippet;
+            line += " \t- " + snippet;
         }
         resultBrowser_->add(line.c_str());
     }
@@ -279,7 +429,7 @@ void SearchPanel::clear() {
 const SearchResult* SearchPanel::selectedResult() const {
     int idx = resultBrowser_->value();
     if (idx > 0 && idx <= static_cast<int>(results_.size())) {
-        return &results_[idx - 1]; // Browser is 1-indexed
+        return &results_[idx - 1];
     }
     return nullptr;
 }
@@ -388,7 +538,9 @@ void SearchPanel::onResultSelect(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<SearchPanel*>(data);
 
     const SearchResult* result = self->selectedResult();
-    if (!result) return;
+    if (!result) {
+        return;
+    }
 
     // Update preview in left pane
     if (self->app_->mainWindow() && self->app_->mainWindow()->leftPane()) {
@@ -397,9 +549,15 @@ void SearchPanel::onResultSelect(Fl_Widget* /*w*/, void* data) {
         self->app_->mainWindow()->leftPane()->setPreviewText(html);
     }
 
-    // On double-click, navigate to the verse
-    if (Fl::event_clicks() > 0) {
-        onResultDoubleClick(nullptr, data);
+    if (!self->app_->mainWindow()) return;
+    int button = Fl::event_button();
+    if (button == FL_MIDDLE_MOUSE) {
+        self->app_->mainWindow()->openInNewStudyTab(result->module, result->key);
+        return;
+    }
+
+    if (button == FL_LEFT_MOUSE && Fl::event_clicks() > 0) {
+        self->app_->mainWindow()->navigateTo(result->module, result->key);
     }
 }
 

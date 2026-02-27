@@ -1399,7 +1399,28 @@ std::string SwordManager::getVerseText(const std::string& moduleName,
         return "<p><i>No text available for " + key + "</i></p>";
     }
 
-    return text;
+    text = postProcessHtml(text);
+
+    VerseRef ref;
+    try {
+        ref = parseVerseRef(key);
+    } catch (...) {
+        ref = VerseRef{};
+    }
+
+    std::ostringstream html;
+    html << "<div class=\"chapter\">\n";
+    if (ref.verse > 0) {
+        html << "<div class=\"verse\" id=\"v" << ref.verse << "\">";
+        html << "<a class=\"versenum-link\" href=\"verse:" << ref.verse << "\">"
+             << "<sup class=\"versenum\">" << ref.verse << "</sup></a> ";
+    } else {
+        html << "<div class=\"verse\">";
+    }
+    html << text;
+    html << "</div>\n</div>\n";
+
+    return html.str();
 }
 
 std::string SwordManager::getChapterText(const std::string& moduleName,

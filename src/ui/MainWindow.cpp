@@ -193,6 +193,7 @@ MainWindow::MainWindow(VerdadApp* app, int W, int H, const char* title)
     , leftPane_(nullptr)
     , studyArea_(nullptr)
     , newStudyTabButton_(nullptr)
+    , closeStudyTabButton_(nullptr)
     , studyTabsWidget_(nullptr)
     , contentTile_(nullptr)
     , biblePane_(nullptr)
@@ -214,22 +215,29 @@ MainWindow::MainWindow(VerdadApp* app, int W, int H, const char* title)
     int studyX = leftW;
     int studyW = W - leftW;
     const int newTabButtonW = 24;
-    const int newTabButtonPad = 2;
+    const int closeTabButtonW = 24;
+    const int tabButtonPad = 2;
     const int tabsHeaderH = 25;
     studyArea_ = new Fl_Group(studyX, menuH, studyW, H - menuH);
     studyArea_->box(FL_FLAT_BOX);
     studyArea_->begin();
 
-    newStudyTabButton_ = new Fl_Button(studyX + newTabButtonPad,
-                                       menuH + newTabButtonPad,
+    newStudyTabButton_ = new Fl_Button(studyX + tabButtonPad,
+                                       menuH + tabButtonPad,
                                        newTabButtonW, 21, "+");
     newStudyTabButton_->callback(onViewNewStudyTab, this);
     newStudyTabButton_->tooltip("Duplicate current study tab");
 
+    closeStudyTabButton_ = new Fl_Button(studyX + studyW - closeTabButtonW - tabButtonPad,
+                                         menuH + tabButtonPad,
+                                         closeTabButtonW, 21, "x");
+    closeStudyTabButton_->callback(onViewCloseStudyTab, this);
+    closeStudyTabButton_->tooltip("Close current study tab");
+
     studyTabsWidget_ = new AutoRedrawTabs(
-        studyX + newTabButtonW + (newTabButtonPad * 2),
+        studyX + newTabButtonW + (tabButtonPad * 2),
         menuH,
-        studyW - newTabButtonW - (newTabButtonPad * 2),
+        studyW - newTabButtonW - closeTabButtonW - (tabButtonPad * 4),
         tabsHeaderH);
     //studyTabsWidget_->box(FL_FLAT_BOX);
     studyTabsWidget_->selection_color(studyTabsWidget_->color());
@@ -258,6 +266,7 @@ MainWindow::MainWindow(VerdadApp* app, int W, int H, const char* title)
     end();
 
     addStudyTab("", "Genesis", 1, 1);
+    layoutStudyTabHeader();
 }
 
 MainWindow::~MainWindow() {
@@ -347,6 +356,41 @@ void MainWindow::duplicateActiveStudyTab() {
     int idx = static_cast<int>(studyTabs_.size()) - 1;
     studyTabsWidget_->value(studyTabs_[idx].tabGroup);
     activateStudyTab(idx);
+    layoutStudyTabHeader();
+}
+
+void MainWindow::closeActiveStudyTab() {
+    if (!studyTabsWidget_ || studyTabs_.size() <= 1) {
+        layoutStudyTabHeader();
+        return;
+    }
+    if (activeStudyTab_ < 0 || activeStudyTab_ >= static_cast<int>(studyTabs_.size())) {
+        layoutStudyTabHeader();
+        return;
+    }
+
+    captureActiveTabState();
+    int closeIndex = activeStudyTab_;
+    StudyContext ctx = studyTabs_[closeIndex];
+
+    if (ctx.tabGroup) {
+        studyTabsWidget_->remove(ctx.tabGroup);
+        delete ctx.tabGroup;
+    }
+    studyTabs_.erase(studyTabs_.begin() + closeIndex);
+
+    if (studyTabs_.empty()) {
+        activeStudyTab_ = -1;
+        addStudyTab("", "Genesis", 1, 1);
+        layoutStudyTabHeader();
+        return;
+    }
+
+    int nextIndex = std::min(closeIndex, static_cast<int>(studyTabs_.size()) - 1);
+    studyTabsWidget_->value(studyTabs_[nextIndex].tabGroup);
+    activeStudyTab_ = -1;
+    activateStudyTab(nextIndex);
+    layoutStudyTabHeader();
 }
 
 void MainWindow::clearStudyTabs() {
@@ -362,6 +406,7 @@ void MainWindow::clearStudyTabs() {
     studyTabs_.clear();
     activeStudyTab_ = -1;
     studyTabsWidget_->redraw();
+    layoutStudyTabHeader();
 }
 
 void MainWindow::activateStudyTab(int index) {
@@ -376,6 +421,45 @@ void MainWindow::activateStudyTab(int index) {
     activeStudyTab_ = index;
     applyTabState(index);
     updateActiveStudyTabLabel();
+    layoutStudyTabHeader();
+}
+
+void MainWindow::layoutStudyTabHeader() {
+    if (!studyArea_ || !studyTabsWidget_ || !newStudyTabButton_ || !closeStudyTabButton_) {
+        return;
+    }
+
+    const int tabButtonPad = 2;
+    const int newW = newStudyTabButton_->w();
+    const int closeW = closeStudyTabButton_->w();
+
+    int headerY = studyArea_->y();
+    int headerW = studyArea_->w();
+    int tabsH = studyTabsWidget_->h();
+
+    newStudyTabButton_->resize(studyArea_->x() + tabButtonPad,
+                               headerY + tabButtonPad,
+                               newW,
+                               newStudyTabButton_->h());
+
+    closeStudyTabButton_->resize(studyArea_->x() + headerW - closeW - tabButtonPad,
+                                 headerY + tabButtonPad,
+                                 closeW,
+                                 closeStudyTabButton_->h());
+
+    int tabsX = studyArea_->x() + newW + (tabButtonPad * 2);
+    int tabsW = headerW - newW - closeW - (tabButtonPad * 4);
+    studyTabsWidget_->resize(tabsX, headerY, std::max(40, tabsW), tabsH);
+
+    if (studyTabs_.size() > 1 && activeStudyTab_ >= 0 &&
+        activeStudyTab_ < static_cast<int>(studyTabs_.size())) {
+        closeStudyTabButton_->activate();
+    } else {
+        closeStudyTabButton_->deactivate();
+    }
+    closeStudyTabButton_->redraw();
+    newStudyTabButton_->redraw();
+    studyTabsWidget_->redraw();
 }
 
 std::string MainWindow::studyTabLabel(const StudyTabState& state) {
@@ -476,6 +560,33 @@ void MainWindow::navigateTo(const std::string& module, const std::string& refere
     if (biblePane_) {
         biblePane_->setModule(module);
         biblePane_->navigateToReference(reference);
+    }
+}
+
+void MainWindow::openInNewStudyTab(const std::string& module,
+                                   const std::string& reference) {
+    std::string refText = trimCopy(reference);
+    std::string mod = trimCopy(module);
+    if (refText.empty()) return;
+
+    SwordManager::VerseRef parsed;
+    bool parsedOk = false;
+    try {
+        parsed = SwordManager::parseVerseRef(refText);
+        parsedOk = (!parsed.book.empty() && parsed.chapter > 0 && parsed.verse > 0);
+    } catch (...) {
+        parsed = SwordManager::VerseRef{};
+    }
+
+    std::string book = parsedOk ? parsed.book : "Genesis";
+    int chapter = parsedOk ? parsed.chapter : 1;
+    int verse = parsedOk ? parsed.verse : 1;
+
+    addStudyTab(mod, book, chapter, verse);
+    if (!mod.empty()) {
+        navigateTo(mod, refText);
+    } else {
+        navigateTo(refText);
     }
 }
 
@@ -650,18 +761,9 @@ void MainWindow::restoreSessionState(const SessionState& state) {
             leftPane_->setPreviewHeight(state.leftPanePreviewHeight);
         }
 
-        if (newStudyTabButton_ && studyTabsWidget_) {
-            const int newTabButtonPad = 2;
-            const int newTabButtonW = newStudyTabButton_->w();
+        if (studyTabsWidget_) {
             const int tabsHeaderH = studyTabsWidget_->h();
-            newStudyTabButton_->resize(studyArea_->x() + newTabButtonPad,
-                                       studyArea_->y() + newTabButtonPad,
-                                       newTabButtonW,
-                                       newStudyTabButton_->h());
-            studyTabsWidget_->resize(studyArea_->x() + newTabButtonW + (newTabButtonPad * 2),
-                                     studyArea_->y(),
-                                     std::max(40, studyArea_->w() - newTabButtonW - (newTabButtonPad * 2)),
-                                     tabsHeaderH);
+            layoutStudyTabHeader();
             if (contentTile_) {
                 int contentY = studyArea_->y() + tabsHeaderH;
                 int contentH = std::max(20, studyArea_->h() - tabsHeaderH);
@@ -735,6 +837,7 @@ void MainWindow::restoreSessionState(const SessionState& state) {
 int MainWindow::handle(int event) {
     if (event == FL_DRAG || event == FL_RELEASE) {
         if (newStudyTabButton_) newStudyTabButton_->redraw();
+        if (closeStudyTabButton_) closeStudyTabButton_->redraw();
         if (studyTabsWidget_) {
             studyTabsWidget_->damage(FL_DAMAGE_ALL);
             studyTabsWidget_->redraw();
@@ -814,6 +917,12 @@ void MainWindow::onViewNewStudyTab(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<MainWindow*>(data);
     if (!self) return;
     self->duplicateActiveStudyTab();
+}
+
+void MainWindow::onViewCloseStudyTab(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<MainWindow*>(data);
+    if (!self) return;
+    self->closeActiveStudyTab();
 }
 
 void MainWindow::onHelpAbout(Fl_Widget* /*w*/, void* /*data*/) {

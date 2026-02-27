@@ -58,6 +58,9 @@ public:
     /// Navigate to a verse in a specific module in the active workspace tab
     void navigateTo(const std::string& module, const std::string& reference);
 
+    /// Open a verse in a new study tab and activate it.
+    void openInNewStudyTab(const std::string& module, const std::string& reference);
+
     /// Show commentary for a verse in the active workspace tab
     void showCommentary(const std::string& reference);
 
@@ -123,6 +126,7 @@ private:
     LeftPane* leftPane_;
     Fl_Group* studyArea_;
     Fl_Button* newStudyTabButton_;
+    Fl_Button* closeStudyTabButton_;
     Fl_Tabs* studyTabsWidget_;
     Fl_Tile* contentTile_;
 
@@ -148,6 +152,9 @@ private:
     /// Duplicate the currently active workspace tab.
     void duplicateActiveStudyTab();
 
+    /// Close the currently active workspace tab.
+    void closeActiveStudyTab();
+
     /// Remove all study tabs and reset active pointers.
     void clearStudyTabs();
 
@@ -172,6 +179,9 @@ private:
     /// Callback when study tabs selection changes.
     static void onStudyTabChange(Fl_Widget* w, void* data);
 
+    /// Layout tab header controls (+, tabs, close).
+    void layoutStudyTabHeader();
+
     /// Build the menu bar
     void buildMenu();
 
@@ -180,6 +190,7 @@ private:
     static void onNavigateGo(Fl_Widget* w, void* data);
     static void onViewParallel(Fl_Widget* w, void* data);
     static void onViewNewStudyTab(Fl_Widget* w, void* data);
+    static void onViewCloseStudyTab(Fl_Widget* w, void* data);
     static void onHelpAbout(Fl_Widget* w, void* data);
 };
 
