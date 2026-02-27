@@ -72,6 +72,8 @@ public:
                                               int x, int y)>;
     using ContextCallback = std::function<void(const std::string& word,
                                                 const std::string& href,
+                                                const std::string& strong,
+                                                const std::string& morph,
                                                 int x, int y)>;
 
     void setLinkCallback(LinkCallback cb) { linkCallback_ = std::move(cb); }

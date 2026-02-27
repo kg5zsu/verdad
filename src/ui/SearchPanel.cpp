@@ -324,6 +324,17 @@ void SearchPanel::search(const std::string& query) {
     bool isStrongs = !strongsQuery.empty();
     if (isStrongs) trimmedQuery = strongsQuery;
 
+    if (regexSearch && !isStrongs) {
+        try {
+            std::regex test(trimmedQuery, std::regex::ECMAScript | std::regex::icase);
+            (void)test;
+        } catch (const std::regex_error&) {
+            fl_alert("Invalid regex pattern.");
+            setResultCountLabel("(invalid regex)");
+            return;
+        }
+    }
+
     bool indexingPending = false;
     bool usedIndexer = false;
     bool fallbackDeferred = false;
@@ -335,11 +346,17 @@ void SearchPanel::search(const std::string& query) {
         indexingPending = !moduleIndexed;
     }
 
-    // Prefer indexed searches for word/phrase/Strong's.
-    if (indexer && !regexSearch) {
+    // Prefer indexed searches when the index exists.
+    if (indexer) {
         usedIndexer = true;
         if (isStrongs) {
             results_ = indexer->searchStrongs(moduleName, strongsQuery);
+        } else if (regexSearch) {
+            if (moduleIndexed) {
+                results_ = indexer->searchRegex(moduleName, trimmedQuery, false);
+            } else {
+                fallbackDeferred = true;
+            }
         } else {
             results_ = indexer->searchWord(moduleName, trimmedQuery, exactPhrase);
         }
@@ -349,17 +366,18 @@ void SearchPanel::search(const std::string& query) {
     int swordSearchType = -1;
     std::string swordQuery = isStrongs ? strongsQuery : trimmedQuery;
     if (!indexer) {
-        runSwordFallback = true;
-        swordSearchType = regexSearch ? 0 : (exactPhrase ? 1 : -1);
-    } else if (regexSearch) {
-        // Regex is not supported by FTS5. Avoid concurrent SWORD searches while
-        // the background indexer is active (this has caused instability).
-        if (!indexer->isIndexing()) {
+        if (isStrongs) {
             runSwordFallback = true;
-            swordSearchType = 0;
-        } else {
+        } else if (regexSearch) {
+            // Avoid unstable SWORD regex search path.
             fallbackDeferred = true;
+        } else {
+            runSwordFallback = true;
+            swordSearchType = exactPhrase ? 1 : -1;
         }
+    } else if (isStrongs && results_.empty() && !moduleIndexed) {
+        // Allow immediate Strong's lookups before initial module indexing finishes.
+        runSwordFallback = true;
     }
 
     if (runSwordFallback && !swordQuery.empty()) {
@@ -409,7 +427,7 @@ void SearchPanel::search(const std::string& query) {
     }
     if (fallbackDeferred) {
         if (!labelSuffix.empty()) labelSuffix += " ";
-        labelSuffix += "(regex waits for indexing to finish)";
+        labelSuffix += "(regex requires module index)";
     }
     setResultCountLabel(labelSuffix);
 

@@ -89,6 +89,29 @@ std::string normalizeStrongsToken(std::string token) {
 std::vector<std::string> extractStrongsTokens(const std::string& text) {
     std::vector<std::string> terms;
     std::unordered_set<std::string> seen;
+    auto addTerm = [&](const std::string& term) {
+        std::string t = trimCopy(term);
+        if (t.empty()) return;
+        if (seen.insert(t).second) terms.push_back(t);
+    };
+    auto addNumericForms = [&](const std::string& digitsRaw,
+                               const std::string& suffix) {
+        std::string digits = digitsRaw;
+        if (digits.empty()) return;
+
+        addTerm(digits + suffix);
+
+        size_t nz = digits.find_first_not_of('0');
+        std::string baseDigits = (nz == std::string::npos) ? "0" : digits.substr(nz);
+        addTerm(baseDigits + suffix);
+
+        for (int width : {4, 5}) {
+            if (static_cast<int>(baseDigits.size()) <= width) {
+                addTerm(std::string(width - baseDigits.size(), '0') +
+                        baseDigits + suffix);
+            }
+        }
+    };
 
     static const std::regex kTokenRe(R"(([HhGg]?\d+[A-Za-z]?))");
     auto it = std::sregex_iterator(text.begin(), text.end(), kTokenRe);
@@ -97,21 +120,77 @@ std::vector<std::string> extractStrongsTokens(const std::string& text) {
         std::string tok = normalizeStrongsToken((*it)[1].str());
         if (tok.empty()) continue;
 
-        if (std::isdigit(static_cast<unsigned char>(tok[0]))) {
-            std::string gtok = "G" + tok;
-            std::string htok = "H" + tok;
-            if (seen.insert(gtok).second) terms.push_back(gtok);
-            if (seen.insert(htok).second) terms.push_back(htok);
+        char prefix = 0;
+        size_t pos = 0;
+        if (std::isalpha(static_cast<unsigned char>(tok[0]))) {
+            prefix = tok[0];
+            pos = 1;
+        }
+
+        size_t digitStart = pos;
+        while (pos < tok.size() &&
+               std::isdigit(static_cast<unsigned char>(tok[pos]))) {
+            ++pos;
+        }
+        if (digitStart == pos) {
+            addTerm(tok);
+            continue;
+        }
+
+        std::string digits = tok.substr(digitStart, pos - digitStart);
+        std::string suffix = tok.substr(pos);
+
+        if (prefix == 'H' || prefix == 'G') {
+            addTerm(std::string(1, prefix) + digits + suffix);
+            addNumericForms(digits, suffix);
+            // Some indexes include prefixed zero-padded forms.
+            size_t nz = digits.find_first_not_of('0');
+            std::string baseDigits = (nz == std::string::npos) ? "0" : digits.substr(nz);
+            for (int width : {4, 5}) {
+                if (static_cast<int>(baseDigits.size()) <= width) {
+                    addTerm(std::string(1, prefix) +
+                            std::string(width - baseDigits.size(), '0') +
+                            baseDigits + suffix);
+                }
+            }
         } else {
-            if (seen.insert(tok).second) terms.push_back(tok);
+            addNumericForms(digits, suffix);
+            addTerm("H" + digits + suffix);
+            addTerm("G" + digits + suffix);
         }
     }
 
     if (!terms.empty()) return terms;
 
     std::string fallback = normalizeStrongsToken(text);
-    if (!fallback.empty()) terms.push_back(fallback);
+    if (!fallback.empty()) addTerm(fallback);
     return terms;
+}
+
+enum class StrongsLanguageHint {
+    Any,
+    Greek,
+    Hebrew
+};
+
+StrongsLanguageHint detectStrongsLanguageHint(const std::string& text) {
+    static const std::regex kTokenRe(R"(([HhGg]?\d+[A-Za-z]?))");
+    auto it = std::sregex_iterator(text.begin(), text.end(), kTokenRe);
+    auto end = std::sregex_iterator();
+
+    bool sawGreek = false;
+    bool sawHebrew = false;
+    for (; it != end; ++it) {
+        std::string tok = normalizeStrongsToken((*it)[1].str());
+        if (tok.empty()) continue;
+        if (!std::isalpha(static_cast<unsigned char>(tok[0]))) continue;
+        if (tok[0] == 'G') sawGreek = true;
+        if (tok[0] == 'H') sawHebrew = true;
+    }
+
+    if (sawGreek && !sawHebrew) return StrongsLanguageHint::Greek;
+    if (sawHebrew && !sawGreek) return StrongsLanguageHint::Hebrew;
+    return StrongsLanguageHint::Any;
 }
 
 std::vector<std::string> collectBookNames() {
@@ -135,6 +214,31 @@ std::vector<std::string> collectBookNames() {
 
 bool bindText(sqlite3_stmt* stmt, int index, const std::string& value) {
     return sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK;
+}
+
+std::string buildRegexSnippet(const std::string& text,
+                              const std::smatch& match,
+                              size_t maxLen = 160) {
+    if (text.empty()) return "";
+    if (text.size() <= maxLen) return text;
+
+    const size_t startPos = static_cast<size_t>(match.position());
+    const size_t endPos = startPos + static_cast<size_t>(match.length());
+
+    size_t left = 0;
+    if (startPos > maxLen / 2) {
+        left = startPos - (maxLen / 2);
+    }
+    if (endPos > left + maxLen) {
+        left = endPos - maxLen;
+    }
+    if (left > text.size()) left = text.size();
+
+    size_t len = std::min(maxLen, text.size() - left);
+    std::string out = text.substr(left, len);
+    if (left > 0) out = "... " + out;
+    if (left + len < text.size()) out += " ...";
+    return out;
 }
 
 } // namespace
@@ -343,15 +447,51 @@ std::string SearchIndexer::buildStrongsFtsQuery(const std::string& query) {
         text = trimCopy(text.substr(6));
     }
 
+    StrongsLanguageHint langHint = detectStrongsLanguageHint(text);
     std::vector<std::string> terms = extractStrongsTokens(text);
     if (terms.empty()) return "";
 
-    std::ostringstream out;
-    out << "{strongs_text}:(";
-    for (size_t i = 0; i < terms.size(); ++i) {
-        if (i) out << " OR ";
-        out << quoteFtsToken(terms[i]);
+    std::vector<std::string> prefixedTerms;
+    char prefix = 0;
+    if (langHint == StrongsLanguageHint::Greek) prefix = 'G';
+    if (langHint == StrongsLanguageHint::Hebrew) prefix = 'H';
+    if (prefix) {
+        for (const auto& t : terms) {
+            if (!t.empty() && std::isalpha(static_cast<unsigned char>(t[0])) &&
+                static_cast<char>(std::toupper(static_cast<unsigned char>(t[0]))) == prefix) {
+                prefixedTerms.push_back(t);
+            }
+        }
     }
+
+    auto appendOrTerms = [](std::ostringstream& out,
+                            const std::vector<std::string>& values) {
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i) out << " OR ";
+            out << quoteFtsToken(values[i]);
+        }
+    };
+
+    std::ostringstream out;
+    out << "{strongs_text}:((";
+    appendOrTerms(out, terms);
+    out << ")";
+
+    if (langHint != StrongsLanguageHint::Any) {
+        out << " AND (";
+        bool wrote = false;
+        if (!prefixedTerms.empty()) {
+            appendOrTerms(out, prefixedTerms);
+            wrote = true;
+        }
+        std::string langToken = (langHint == StrongsLanguageHint::Greek)
+                                    ? "Greek"
+                                    : "Hebrew";
+        if (wrote) out << " OR ";
+        out << quoteFtsToken(langToken);
+        out << ")";
+    }
+
     out << ")";
     return out.str();
 }
@@ -440,6 +580,62 @@ std::vector<SearchResult> SearchIndexer::searchStrongs(
         result.module = module ? module : moduleName;
         result.key = key ? key : "";
         result.text = snippet ? snippet : "";
+        results.push_back(std::move(result));
+    }
+
+    sqlite3_finalize(stmt);
+    return results;
+}
+
+std::vector<SearchResult> SearchIndexer::searchRegex(
+    const std::string& moduleName,
+    const std::string& pattern,
+    bool caseSensitive,
+    int maxResults) const {
+
+    std::vector<SearchResult> results;
+    if (!db_ || moduleName.empty() || pattern.empty()) return results;
+
+    std::regex re;
+    try {
+        std::regex::flag_type flags = std::regex::ECMAScript;
+        if (!caseSensitive) flags |= std::regex::icase;
+        re = std::regex(pattern, flags);
+    } catch (const std::regex_error&) {
+        return results;
+    }
+
+    std::lock_guard<std::mutex> lock(dbMutex_);
+
+    const char* sql =
+        "SELECT module_name, key_text, plain_text "
+        "FROM verse_index "
+        "WHERE module_name = ? "
+        "ORDER BY rowid";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return results;
+    }
+
+    bindText(stmt, 1, moduleName);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW &&
+           static_cast<int>(results.size()) < std::max(1, maxResults)) {
+        const char* module = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        const char* key = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+        const char* plain = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+        std::string plainText = plain ? plain : "";
+
+        std::smatch match;
+        if (plainText.empty() || !std::regex_search(plainText, match, re)) {
+            continue;
+        }
+
+        SearchResult result;
+        result.module = module ? module : moduleName;
+        result.key = key ? key : "";
+        result.text = buildRegexSnippet(plainText, match);
         results.push_back(std::move(result));
     }
 

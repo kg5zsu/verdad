@@ -180,17 +180,36 @@ int HtmlWidget::handle(int event) {
                     Fl::event_x() - x(), Fl::event_y() - y() + scrollY_,
                     [](const std::shared_ptr<litehtml::render_item>&) { return true; });
 
-                std::string word, href;
+                std::string word, href, strong, morph;
                 if (el) {
-                    // Try to get text content and href
-                    auto parent = el->parent();
-                    if (parent) {
-                        auto attrHref = parent->get_attr("href");
-                        if (attrHref) href = attrHref;
+                    litehtml::string elText;
+                    el->get_text(elText);
+                    word = elText;
+
+                    // Walk up parent chain for link and Strong's/morph attributes.
+                    auto cur = el;
+                    for (int depth = 0; cur && depth < 8; ++depth) {
+                        if (href.empty()) {
+                            auto h = cur->get_attr("href");
+                            if (h && *h) href = h;
+                        }
+                        if (strong.empty()) {
+                            auto s = cur->get_attr("data-strong");
+                            if (s && *s) strong = s;
+                        }
+                        if (morph.empty()) {
+                            auto m = cur->get_attr("data-morph");
+                            if (m && *m) morph = m;
+                        }
+                        if (!href.empty() && !strong.empty() && !morph.empty()) {
+                            break;
+                        }
+                        cur = cur->parent();
                     }
                 }
 
-                contextCallback_(word, href, Fl::event_x(), Fl::event_y());
+                contextCallback_(word, href, strong, morph,
+                                 Fl::event_x(), Fl::event_y());
             }
             return 1;
         }

@@ -22,10 +22,13 @@ public:
     /// Show context menu at position for a word/verse
     /// @param word      The word that was right-clicked
     /// @param href      The href attribute (may contain strongs: link)
+    /// @param strong    Strong's token(s) from data-strong attribute
+    /// @param morph     Morph token(s) from data-morph attribute
     /// @param verseKey  Current verse reference
     /// @param screenX   Screen X position
     /// @param screenY   Screen Y position
     void show(const std::string& word, const std::string& href,
+              const std::string& strong, const std::string& morph,
               const std::string& verseKey,
               int screenX, int screenY);
 
@@ -33,10 +36,14 @@ private:
     VerdadApp* app_;
     std::string currentWord_;
     std::string currentHref_;
+    std::string currentStrong_;
+    std::string currentMorph_;
+    std::string currentStrongsNumber_;
     std::string currentVerseKey_;
 
-    /// Extract Strong's number from href or word info
-    std::string extractStrongsNumber(const std::string& href) const;
+    /// Extract Strong's number from href/data-strong payload.
+    std::string extractStrongsNumber(const std::string& href,
+                                     const std::string& strong = "") const;
 
     // Menu action callbacks
     static void onSearchStrongs(Fl_Widget* w, void* data);

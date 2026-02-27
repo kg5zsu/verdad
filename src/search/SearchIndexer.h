@@ -57,6 +57,12 @@ public:
                                             const std::string& strongsQuery,
                                             int maxResults = 500) const;
 
+    /// Search plain verse text using a regex pattern.
+    std::vector<SearchResult> searchRegex(const std::string& moduleName,
+                                          const std::string& pattern,
+                                          bool caseSensitive = false,
+                                          int maxResults = 500) const;
+
 private:
     void workerLoop();
     void indexModuleNow(const std::string& moduleName);

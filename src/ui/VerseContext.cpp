@@ -11,8 +11,44 @@
 #include <FL/fl_ask.H>
 
 #include <cstring>
+#include <cctype>
+#include <regex>
 
 namespace verdad {
+namespace {
+
+std::string trimCopy(const std::string& text) {
+    size_t start = 0;
+    while (start < text.size() &&
+           std::isspace(static_cast<unsigned char>(text[start]))) {
+        ++start;
+    }
+
+    size_t end = text.size();
+    while (end > start &&
+           std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+        --end;
+    }
+
+    return text.substr(start, end - start);
+}
+
+std::string extractFirstStrongsToken(const std::string& text) {
+    static const std::regex kToken(R"(([HhGg]?\d+[A-Za-z]?))");
+    std::smatch m;
+    if (!std::regex_search(text, m, kToken)) return "";
+
+    std::string tok = trimCopy(m[1].str());
+    if (tok.empty()) return "";
+    for (char& c : tok) {
+        if (std::isalpha(static_cast<unsigned char>(c))) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+    }
+    return tok;
+}
+
+} // namespace
 
 VerseContext::VerseContext(VerdadApp* app)
     : app_(app) {}
@@ -20,10 +56,14 @@ VerseContext::VerseContext(VerdadApp* app)
 VerseContext::~VerseContext() = default;
 
 void VerseContext::show(const std::string& word, const std::string& href,
+                         const std::string& strong, const std::string& morph,
                          const std::string& verseKey,
                          int screenX, int screenY) {
     currentWord_ = word;
     currentHref_ = href;
+    currentStrong_ = strong;
+    currentMorph_ = morph;
+    currentStrongsNumber_.clear();
     currentVerseKey_ = verseKey;
 
     Fl_Menu_Button menu(screenX, screenY, 0, 0);
@@ -36,8 +76,9 @@ void VerseContext::show(const std::string& word, const std::string& href,
     }
 
     // Strong's number search (if href contains strongs info)
-    std::string strongsNum = extractStrongsNumber(href);
+    std::string strongsNum = extractStrongsNumber(href, strong);
     if (!strongsNum.empty()) {
+        currentStrongsNumber_ = strongsNum;
         std::string label = "Search Strong's: " + strongsNum;
         menu.add(label.c_str(), 0, onSearchStrongs, this);
 
@@ -54,6 +95,7 @@ void VerseContext::show(const std::string& word, const std::string& href,
             WordInfo info = app_->swordManager().getWordInfo(
                 currentModule, verseKey, word);
             if (!info.strongsNumber.empty()) {
+                currentStrongsNumber_ = info.strongsNumber;
                 std::string label = "Search Strong's: " + info.strongsNumber;
                 menu.add(label.c_str(), 0, onSearchStrongs, this);
                 // Store for callback
@@ -71,7 +113,11 @@ void VerseContext::show(const std::string& word, const std::string& href,
     menu.popup();
 }
 
-std::string VerseContext::extractStrongsNumber(const std::string& href) const {
+std::string VerseContext::extractStrongsNumber(const std::string& href,
+                                               const std::string& strong) const {
+    std::string tok = extractFirstStrongsToken(strong);
+    if (!tok.empty()) return tok;
+
     // Extract from various formats:
     // "strongs:H1234", "strong:G5678", "strongs://H1234"
     size_t pos = href.find("strongs:");
@@ -88,13 +134,16 @@ std::string VerseContext::extractStrongsNumber(const std::string& href) const {
         num = num.substr(1);
     }
 
-    return num;
+    return extractFirstStrongsToken(num);
 }
 
 void VerseContext::onSearchStrongs(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<VerseContext*>(data);
 
-    std::string strongsNum = self->extractStrongsNumber(self->currentHref_);
+    std::string strongsNum = self->currentStrongsNumber_;
+    if (strongsNum.empty()) {
+        strongsNum = self->extractStrongsNumber(self->currentHref_, self->currentStrong_);
+    }
     if (strongsNum.empty()) return;
 
     // Execute search and show results
@@ -137,7 +186,10 @@ void VerseContext::onCopyWord(Fl_Widget* /*w*/, void* data) {
 void VerseContext::onLookupDictionary(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<VerseContext*>(data);
 
-    std::string strongsNum = self->extractStrongsNumber(self->currentHref_);
+    std::string strongsNum = self->currentStrongsNumber_;
+    if (strongsNum.empty()) {
+        strongsNum = self->extractStrongsNumber(self->currentHref_, self->currentStrong_);
+    }
     if (strongsNum.empty()) return;
 
     if (self->app_->mainWindow()) {

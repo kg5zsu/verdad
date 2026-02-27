@@ -183,6 +183,7 @@ private:
                      const std::string& strong, const std::string& morph,
                      int x, int y);
     void onContextMenu(const std::string& word, const std::string& href,
+                       const std::string& strong, const std::string& morph,
                        int x, int y);
 };
 
