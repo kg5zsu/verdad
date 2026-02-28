@@ -254,7 +254,14 @@ void VerdadApp::loadPreferences() {
             tab.commentaryReference = prefs[pfx + "commentary_ref"];
             tab.dictionaryModule = prefs[pfx + "dictionary_module"];
             tab.dictionaryKey = prefs[pfx + "dictionary_key"];
-            tab.dictionaryActive = parseBoolOr(prefs[pfx + "dictionary_active"], false);
+            tab.generalBookModule = prefs[pfx + "general_book_module"];
+            tab.generalBookKey = prefs[pfx + "general_book_key"];
+            tab.dictionaryPaneHeight = parseIntOr(prefs[pfx + "dictionary_pane_h"], 0);
+            // Backward-compatible key name: dictionary_active now maps to
+            // "secondary right tab active" (General Books).
+            std::string activeRaw = prefs[pfx + "general_book_active"];
+            if (activeRaw.empty()) activeRaw = prefs[pfx + "dictionary_active"];
+            tab.dictionaryActive = parseBoolOr(activeRaw, false);
             state.studyTabs.push_back(tab);
         }
 
@@ -315,6 +322,11 @@ void VerdadApp::savePreferences() {
             file << pfx << "commentary_ref=" << t.commentaryReference << "\n";
             file << pfx << "dictionary_module=" << t.dictionaryModule << "\n";
             file << pfx << "dictionary_key=" << t.dictionaryKey << "\n";
+            file << pfx << "general_book_module=" << t.generalBookModule << "\n";
+            file << pfx << "general_book_key=" << t.generalBookKey << "\n";
+            file << pfx << "dictionary_pane_h=" << t.dictionaryPaneHeight << "\n";
+            file << pfx << "general_book_active=" << (t.dictionaryActive ? 1 : 0) << "\n";
+            // Legacy compatibility for older builds.
             file << pfx << "dictionary_active=" << (t.dictionaryActive ? 1 : 0) << "\n";
         }
 

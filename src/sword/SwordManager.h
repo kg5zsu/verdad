@@ -76,6 +76,9 @@ public:
     /// Get list of available dictionary/lexicon modules
     std::vector<ModuleInfo> getDictionaryModules() const;
 
+    /// Get list of available general book modules
+    std::vector<ModuleInfo> getGeneralBookModules() const;
+
     /// Get rendered XHTML text for a verse/passage
     /// @param moduleName  Module to use (e.g. "KJV")
     /// @param key         Verse reference (e.g. "Genesis 1:1" or "Gen 1:1-5")
@@ -116,6 +119,10 @@ public:
     std::string getDictionaryEntry(const std::string& moduleName,
                                    const std::string& key);
 
+    /// Get a general book entry
+    std::string getGeneralBookEntry(const std::string& moduleName,
+                                    const std::string& key);
+
     /// Search a module for text
     /// @param moduleName   Module to search
     /// @param searchText   Text to search for
@@ -141,6 +148,9 @@ public:
 
     /// Get Strong's definition from a lexicon
     std::string getStrongsDefinition(const std::string& strongsNumber);
+
+    /// Get primary Greek/Hebrew lemma text for a Strong's key (for compact UI labels).
+    std::string getStrongsLemma(const std::string& strongsNumber);
 
     /// Get morphology definition
     std::string getMorphDefinition(const std::string& morphCode);

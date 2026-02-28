@@ -21,7 +21,11 @@ public:
     ~SearchPanel() override;
 
     /// Execute a search and display results
-    void search(const std::string& query);
+    void search(const std::string& query,
+                const std::string& moduleOverride = "");
+
+    /// Set the selected module in the search dropdown (if present).
+    void setSelectedModule(const std::string& moduleName);
 
     /// Clear results
     void clear();

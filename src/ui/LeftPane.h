@@ -25,7 +25,11 @@ public:
     ~LeftPane() override;
 
     /// Execute a search
-    void doSearch(const std::string& query);
+    void doSearch(const std::string& query,
+                  const std::string& moduleOverride = "");
+
+    /// Set selected module for the search tab dropdown.
+    void setSearchModule(const std::string& moduleName);
 
     /// Switch to the search results tab
     void showSearchTab();

@@ -35,7 +35,10 @@ public:
         std::string commentaryReference;
         std::string dictionaryModule;
         std::string dictionaryKey;
+        std::string generalBookModule;
+        std::string generalBookKey;
         bool dictionaryActive = false;
+        int dictionaryPaneHeight = 0;
     };
 
     struct SessionState {
@@ -76,7 +79,8 @@ public:
     void hideWordInfo();
 
     /// Show search results in the left pane
-    void showSearchResults(const std::string& query);
+    void showSearchResults(const std::string& query,
+                           const std::string& moduleOverride = "");
 
     /// Called by BiblePane when module/book/chapter context changes.
     void updateActiveStudyTabLabel();

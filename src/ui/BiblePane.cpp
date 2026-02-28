@@ -76,14 +76,16 @@ BiblePane::BiblePane(VerdadApp* app, int X, int Y, int W, int H)
     htmlWidget_->setHoverCallback(
         [this](const std::string& word, const std::string& href,
                const std::string& strong, const std::string& morph,
+               const std::string& module,
                int x, int y) {
-            onWordHover(word, href, strong, morph, x, y);
+            onWordHover(word, href, strong, morph, module, x, y);
         });
     htmlWidget_->setContextCallback(
         [this](const std::string& word, const std::string& href,
                const std::string& strong, const std::string& morph,
+               const std::string& module,
                int x, int y) {
-            onContextMenu(word, href, strong, morph, x, y);
+            onContextMenu(word, href, strong, morph, module, x, y);
         });
 
     end();
@@ -1020,6 +1022,7 @@ void BiblePane::onLinkClicked(const std::string& url) {
 
 void BiblePane::onWordHover(const std::string& word, const std::string& href,
                              const std::string& strong, const std::string& morph,
+                             const std::string& /*module*/,
                              int x, int y) {
     if (app_->mainWindow()) {
         if (!strong.empty() || !morph.empty() || !href.empty()) {
@@ -1032,12 +1035,13 @@ void BiblePane::onWordHover(const std::string& word, const std::string& href,
 
 void BiblePane::onContextMenu(const std::string& word, const std::string& href,
                                const std::string& strong, const std::string& morph,
+                               const std::string& module,
                                int x, int y) {
     std::string verseKey = currentBook_ + " " + std::to_string(currentChapter_) +
                            ":" + std::to_string(currentVerse_);
 
     VerseContext ctx(app_);
-    ctx.show(word, href, strong, morph, verseKey, x, y);
+    ctx.show(word, href, strong, morph, module, verseKey, x, y);
 }
 
 } // namespace verdad

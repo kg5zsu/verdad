@@ -181,9 +181,11 @@ private:
     void onLinkClicked(const std::string& url);
     void onWordHover(const std::string& word, const std::string& href,
                      const std::string& strong, const std::string& morph,
+                     const std::string& module,
                      int x, int y);
     void onContextMenu(const std::string& word, const std::string& href,
                        const std::string& strong, const std::string& morph,
+                       const std::string& module,
                        int x, int y);
 };
 

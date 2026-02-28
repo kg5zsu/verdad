@@ -164,11 +164,18 @@ void LeftPane::resize(int X, int Y, int W, int H) {
     contentTile_->init_sizes();
 }
 
-void LeftPane::doSearch(const std::string& query) {
+void LeftPane::doSearch(const std::string& query,
+                        const std::string& moduleOverride) {
     searchInput_->value(query.c_str());
     if (searchPanel_) {
-        searchPanel_->search(query);
+        searchPanel_->search(query, moduleOverride);
         showSearchTab();
+    }
+}
+
+void LeftPane::setSearchModule(const std::string& moduleName) {
+    if (searchPanel_) {
+        searchPanel_->setSelectedModule(moduleName);
     }
 }
 

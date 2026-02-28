@@ -5,11 +5,281 @@
 #include <FL/Fl_Scrollbar.H>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <cctype>
+#include <limits>
+#include <memory>
 #include <sstream>
+#include <vector>
 
 namespace verdad {
+namespace {
+
+std::string trimCopy(const std::string& text) {
+    size_t start = 0;
+    while (start < text.size() &&
+           std::isspace(static_cast<unsigned char>(text[start]))) {
+        ++start;
+    }
+
+    size_t end = text.size();
+    while (end > start &&
+           std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+        --end;
+    }
+
+    return text.substr(start, end - start);
+}
+
+bool containsWhitespace(const std::string& text) {
+    for (char c : text) {
+        if (std::isspace(static_cast<unsigned char>(c))) return true;
+    }
+    return false;
+}
+
+std::string stripWordEdgePunct(const std::string& raw) {
+    auto isAsciiWordChar = [](unsigned char c) -> bool {
+        return std::isalnum(c) || c == '\'' || c == '-';
+    };
+
+    size_t start = 0;
+    size_t end = raw.size();
+    while (start < end) {
+        unsigned char uc = static_cast<unsigned char>(raw[start]);
+        if (uc >= 0x80 || isAsciiWordChar(uc)) break;
+        ++start;
+    }
+    while (end > start) {
+        unsigned char uc = static_cast<unsigned char>(raw[end - 1]);
+        if (uc >= 0x80 || isAsciiWordChar(uc)) break;
+        --end;
+    }
+    return raw.substr(start, end - start);
+}
+
+std::vector<std::string> splitWordCandidates(const std::string& text) {
+    std::vector<std::string> words;
+    std::istringstream ss(text);
+    std::string part;
+    while (ss >> part) {
+        std::string tok = stripWordEdgePunct(part);
+        if (!tok.empty()) words.push_back(tok);
+    }
+    return words;
+}
+
+bool isNumericToken(const std::string& token) {
+    if (token.empty()) return false;
+    bool sawDigit = false;
+    for (char c : token) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (std::isdigit(uc)) {
+            sawDigit = true;
+            continue;
+        }
+        if (uc == ',' || uc == '.' || uc == ':' || uc == ';' ||
+            uc == ')' || uc == '(' || uc == '[' || uc == ']') {
+            continue;
+        }
+        return false;
+    }
+    return sawDigit;
+}
+
+std::vector<std::string> removeLeadingNumericTokens(
+        const std::vector<std::string>& words) {
+    if (words.size() < 2) return words;
+
+    bool hasNonNumeric = false;
+    for (const auto& w : words) {
+        if (!isNumericToken(w)) {
+            hasNonNumeric = true;
+            break;
+        }
+    }
+    if (!hasNonNumeric) return words;
+
+    size_t firstNonNumeric = 0;
+    while (firstNonNumeric < words.size() &&
+           isNumericToken(words[firstNonNumeric])) {
+        ++firstNonNumeric;
+    }
+    if (firstNonNumeric == 0 || firstNonNumeric >= words.size()) return words;
+    return std::vector<std::string>(words.begin() + firstNonNumeric, words.end());
+}
+
+bool findElementHitBoxAtPoint(
+        const std::shared_ptr<litehtml::element>& node,
+        int docX, int docY,
+        litehtml::position& bestBox,
+        double& bestArea) {
+    bool found = false;
+    node->run_on_renderers([&](const std::shared_ptr<litehtml::render_item>& ri) -> bool {
+        if (!ri) return true;
+        litehtml::position box = ri->get_placement();
+        if (box.width <= 0 || box.height <= 0) return true;
+        if (!box.is_point_inside(docX, docY)) return true;
+
+        double area = static_cast<double>(box.width) * static_cast<double>(box.height);
+        if (area <= 0.0) return true;
+        if (!found || area < bestArea) {
+            bestArea = area;
+            bestBox = box;
+            found = true;
+        }
+        return true;
+    });
+    return found;
+}
+
+struct HitElement {
+    std::shared_ptr<litehtml::element> element;
+    litehtml::position box;
+    bool hasBox = false;
+};
+
+bool isInlineLikeDisplay(litehtml::style_display d) {
+    return d == litehtml::display_inline ||
+           d == litehtml::display_inline_text ||
+           d == litehtml::display_inline_block ||
+           d == litehtml::display_inline_table ||
+           d == litehtml::display_inline_flex;
+}
+
+HitElement findDeepestElementAtPoint(
+        const std::shared_ptr<litehtml::element>& root,
+        int docX, int docY) {
+    HitElement best;
+    if (!root) return best;
+
+    struct StackNode {
+        std::shared_ptr<litehtml::element> element;
+        int depth = 0;
+    };
+
+    double bestArea = std::numeric_limits<double>::max();
+    int bestDepth = -1;
+
+    std::vector<StackNode> stack;
+    stack.push_back({root, 0});
+
+    while (!stack.empty()) {
+        StackNode cur = stack.back();
+        stack.pop_back();
+        if (!cur.element) continue;
+
+        litehtml::position box;
+        double area = 0.0;
+        if (!findElementHitBoxAtPoint(cur.element, docX, docY, box, area)) {
+            continue;
+        }
+
+        litehtml::string nodeText;
+        cur.element->get_text(nodeText);
+        if (!trimCopy(nodeText).empty()) {
+            bool betterArea = area + 0.01 < bestArea;
+            bool sameArea = std::fabs(area - bestArea) <= 0.01;
+            if (betterArea || (sameArea && cur.depth > bestDepth)) {
+                bestArea = area;
+                bestDepth = cur.depth;
+                best.element = cur.element;
+                best.box = box;
+                best.hasBox = true;
+            }
+        }
+
+        const auto& children = cur.element->children();
+        for (auto it = children.rbegin(); it != children.rend(); ++it) {
+            if (*it) stack.push_back({*it, cur.depth + 1});
+        }
+    }
+
+    if (!best.element) {
+        best.element = root;
+    }
+    return best;
+}
+
+std::string chooseWordByHitX(const std::string& text,
+                             const litehtml::position& placement,
+                             int docX) {
+    std::vector<std::string> words = splitWordCandidates(text);
+    words = removeLeadingNumericTokens(words);
+    if (words.empty()) return "";
+    if (placement.width <= 0) return words.front();
+
+    fl_font(FL_TIMES, 14);
+    std::vector<double> wordWidths;
+    wordWidths.reserve(words.size());
+    double wordsTotal = 0.0;
+    for (const auto& w : words) {
+        double ww = std::max(1.0, static_cast<double>(fl_width(w.c_str())));
+        wordWidths.push_back(ww);
+        wordsTotal += ww;
+    }
+
+    const size_t gapCount = words.size() - 1;
+    double spaceW = std::max(1.0, static_cast<double>(fl_width(" ")));
+    double gapsTotal = static_cast<double>(gapCount) * spaceW;
+
+    double targetWidth = std::max(1.0, static_cast<double>(placement.width));
+    double extraPerGap = 0.0;
+    if (gapCount > 0 && targetWidth > (wordsTotal + gapsTotal)) {
+        extraPerGap = (targetWidth - (wordsTotal + gapsTotal)) /
+                      static_cast<double>(gapCount);
+    }
+
+    int localX = docX - placement.x;
+    if (localX < 0 || localX >= placement.width) return "";
+    if (words.size() == 1) {
+        double ww = std::max(1.0, static_cast<double>(fl_width(words.front().c_str())));
+        if (static_cast<double>(localX) <= ww + 1.0) return words.front();
+        return "";
+    }
+
+    double x = static_cast<double>(localX);
+    double cursor = 0.0;
+    for (size_t i = 0; i < words.size(); ++i) {
+        double wordStart = cursor;
+        double wordEnd = cursor + wordWidths[i];
+        if (x >= wordStart && x <= wordEnd) return words[i];
+        cursor = wordEnd;
+        if (i + 1 < words.size()) {
+            double gap = spaceW + extraPerGap;
+            if (x < cursor + gap) return "";
+            cursor += gap;
+        }
+    }
+
+    // Trailing whitespace region.
+    return "";
+}
+
+std::string normalizeHitWord(const std::string& raw,
+                             const litehtml::position* placement,
+                             int docX) {
+    std::string text = trimCopy(raw);
+    if (text.empty()) return "";
+
+    if (!containsWhitespace(text)) {
+        return stripWordEdgePunct(text);
+    }
+
+    if (placement) {
+        std::string picked = chooseWordByHitX(text, *placement, docX);
+        // If pointer lands in inter-word/trailing whitespace, no word is selected.
+        return picked;
+    }
+
+    std::vector<std::string> words = splitWordCandidates(text);
+    words = removeLeadingNumericTokens(words);
+    if (!words.empty()) return words.front();
+    return stripWordEdgePunct(text);
+}
+
+} // namespace
 
 HtmlWidget::HtmlWidget(int X, int Y, int W, int H, const char* label)
     : Fl_Widget(X, Y, W, H, label) {
@@ -173,18 +443,36 @@ int HtmlWidget::handle(int event) {
         if (Fl::event_button() == FL_RIGHT_MOUSE && contextCallback_) {
             // Right-click context menu
             if (doc_) {
+                int docX = Fl::event_x() - x();
+                int docY = Fl::event_y() - y() + scrollY_;
                 litehtml::position::vector redraw;
                 std::vector<litehtml::position> clientRects;
                 auto el = doc_->root_render()->get_element_by_point(
-                    Fl::event_x() - x(), Fl::event_y() - y() + scrollY_,
-                    Fl::event_x() - x(), Fl::event_y() - y() + scrollY_,
+                    docX, docY,
+                    docX, docY,
                     [](const std::shared_ptr<litehtml::render_item>&) { return true; });
 
-                std::string word, href, strong, morph;
+                std::string word, href, strong, morph, module;
                 if (el) {
+                    HitElement hit = findDeepestElementAtPoint(el, docX, docY);
+                    if (hit.element) el = hit.element;
+
+                    auto fontIt = fonts_.find(el->css().get_font());
+                    if (fontIt != fonts_.end()) {
+                        fl_font(fontIt->second.flFont, fontIt->second.size);
+                    } else {
+                        fl_font(FL_TIMES, static_cast<int>(get_default_font_size()));
+                    }
+
                     litehtml::string elText;
                     el->get_text(elText);
                     word = elText;
+                    if (hit.hasBox) {
+                        word = normalizeHitWord(word, &hit.box, docX);
+                    } else {
+                        litehtml::position hitPlacement = el->get_placement();
+                        word = normalizeHitWord(word, &hitPlacement, docX);
+                    }
 
                     // Walk up parent chain for link and Strong's/morph attributes.
                     auto cur = el;
@@ -201,14 +489,29 @@ int HtmlWidget::handle(int event) {
                             auto m = cur->get_attr("data-morph");
                             if (m && *m) morph = m;
                         }
-                        if (!href.empty() && !strong.empty() && !morph.empty()) {
+                        if (module.empty()) {
+                            auto dm = cur->get_attr("data-module");
+                            if (dm && *dm) module = dm;
+                        }
+                        if (!href.empty() && !strong.empty() && !morph.empty() &&
+                            !module.empty()) {
                             break;
                         }
                         cur = cur->parent();
                     }
+
+                    // In parallel view, clicks in block whitespace can resolve to
+                    // container elements. Do not fabricate a word in that case.
+                    bool isParallelDoc =
+                        currentHtml_.find("class=\"parallel\"") != std::string::npos;
+                    if (isParallelDoc &&
+                        !isInlineLikeDisplay(el->css().get_display()) &&
+                        strong.empty() && morph.empty() && href.empty()) {
+                        word.clear();
+                    }
                 }
 
-                contextCallback_(word, href, strong, morph,
+                contextCallback_(word, href, strong, morph, module,
                                  Fl::event_x(), Fl::event_y());
             }
             return 1;
@@ -259,7 +562,7 @@ int HtmlWidget::handle(int event) {
                     Fl::event_x() - x(), Fl::event_y() - y() + scrollY_,
                     [](const std::shared_ptr<litehtml::render_item>&) { return true; });
 
-                std::string word, href, strong, morph;
+                std::string word, href, strong, morph, module;
                 if (el) {
                     // Get text content of the element under the cursor
                     litehtml::string elText;
@@ -282,19 +585,26 @@ int HtmlWidget::handle(int event) {
                             auto m = cur->get_attr("data-morph");
                             if (m && *m) morph = m;
                         }
-                        if (!strong.empty() && !morph.empty() && !href.empty())
+                        if (module.empty()) {
+                            auto dm = cur->get_attr("data-module");
+                            if (dm && *dm) module = dm;
+                        }
+                        if (!strong.empty() && !morph.empty() &&
+                            !href.empty() && !module.empty())
                             break;
                         cur = cur->parent();
                     }
                 }
 
                 if (href != lastHoverHref_ || word != lastHoverWord_ ||
-                    strong != lastHoverStrong_ || morph != lastHoverMorph_) {
+                    strong != lastHoverStrong_ || morph != lastHoverMorph_ ||
+                    module != lastHoverModule_) {
                     lastHoverWord_   = word;
                     lastHoverHref_   = href;
                     lastHoverStrong_ = strong;
                     lastHoverMorph_  = morph;
-                    hoverCallback_(word, href, strong, morph,
+                    lastHoverModule_ = module;
+                    hoverCallback_(word, href, strong, morph, module,
                                    Fl::event_x(), Fl::event_y());
                 }
             }
@@ -321,12 +631,14 @@ int HtmlWidget::handle(int event) {
 
     case FL_LEAVE:
         if (hoverCallback_ && (!lastHoverWord_.empty() || !lastHoverHref_.empty() ||
-                                !lastHoverStrong_.empty() || !lastHoverMorph_.empty())) {
+                                !lastHoverStrong_.empty() || !lastHoverMorph_.empty() ||
+                                !lastHoverModule_.empty())) {
             lastHoverWord_.clear();
             lastHoverHref_.clear();
             lastHoverStrong_.clear();
             lastHoverMorph_.clear();
-            hoverCallback_("", "", "", "", 0, 0);
+            lastHoverModule_.clear();
+            hoverCallback_("", "", "", "", "", 0, 0);
         }
         return 1;
 

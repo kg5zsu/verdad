@@ -179,6 +179,38 @@ bool keyMatchesRequest(const std::string& requestedKey, const std::string& resol
     return false;
 }
 
+char strongPrefixFromKey(const std::string& key) {
+    if (!key.empty() && std::isalpha(static_cast<unsigned char>(key[0]))) {
+        return static_cast<char>(
+            std::toupper(static_cast<unsigned char>(key[0])));
+    }
+    return 0;
+}
+
+std::vector<std::string> strongLexiconsForPrefix(char prefix) {
+    if (prefix == 'H') {
+        return {"StrongsHebrew", "TWOT", "StrongsRealHebrew"};
+    }
+    if (prefix == 'G') {
+        return {"StrongsGreek", "Thayer", "StrongsRealGreek"};
+    }
+    return {"StrongsHebrew", "TWOT", "StrongsRealHebrew",
+            "StrongsGreek", "Thayer", "StrongsRealGreek"};
+}
+
+std::vector<std::string> strongLookupKeys(const std::string& key, char prefix) {
+    std::vector<std::string> keys;
+    keys.push_back(key);
+    if (prefix && key.length() > 1) {
+        keys.push_back(key.substr(1));
+    } else if (!key.empty() &&
+               std::isdigit(static_cast<unsigned char>(key[0]))) {
+        keys.push_back("H" + key);
+        keys.push_back("G" + key);
+    }
+    return keys;
+}
+
 std::string readLexiconEntry(sword::SWModule* lex, const std::string& key) {
     if (!lex || key.empty()) return "";
 
@@ -452,6 +484,83 @@ std::string decodeHtmlEntities(const std::string& s) {
         out.push_back(s[i++]);
     }
     return out;
+}
+
+bool isGreekCodepoint(uint32_t cp) {
+    return (cp >= 0x0370 && cp <= 0x03FF) ||
+           (cp >= 0x1F00 && cp <= 0x1FFF);
+}
+
+bool isHebrewCodepoint(uint32_t cp) {
+    return (cp >= 0x0590 && cp <= 0x05FF) ||
+           (cp >= 0xFB1D && cp <= 0xFB4F);
+}
+
+bool isUnicodeCombiningMark(uint32_t cp) {
+    return (cp >= 0x0300 && cp <= 0x036F) ||
+           (cp >= 0x1DC0 && cp <= 0x1DFF) ||
+           (cp >= 0x20D0 && cp <= 0x20FF) ||
+           (cp >= 0xFE20 && cp <= 0xFE2F);
+}
+
+bool matchesStrongsScript(uint32_t cp, char prefix) {
+    if (prefix == 'G') return isGreekCodepoint(cp);
+    if (prefix == 'H') return isHebrewCodepoint(cp);
+    return isGreekCodepoint(cp) || isHebrewCodepoint(cp);
+}
+
+std::string extractScriptToken(const std::string& text, char prefix) {
+    size_t i = 0;
+    while (i < text.size()) {
+        size_t start = i;
+        uint32_t cp = 0;
+        if (!decodeNextUtf8(text, i, cp)) break;
+        if (!matchesStrongsScript(cp, prefix)) continue;
+
+        size_t end = i;
+        while (end < text.size()) {
+            size_t next = end;
+            uint32_t cp2 = 0;
+            if (!decodeNextUtf8(text, next, cp2)) break;
+            if (matchesStrongsScript(cp2, prefix) ||
+                isUnicodeCombiningMark(cp2)) {
+                end = next;
+                continue;
+            }
+            break;
+        }
+
+        std::string token = trimCopy(text.substr(start, end - start));
+        if (!token.empty()) return token;
+        i = end;
+    }
+
+    return "";
+}
+
+std::string extractBracketToken(const std::string& text, char open, char close) {
+    size_t begin = text.find(open);
+    if (begin == std::string::npos) return "";
+    size_t end = text.find(close, begin + 1);
+    if (end == std::string::npos || end <= begin + 1) return "";
+    return trimCopy(text.substr(begin + 1, end - begin - 1));
+}
+
+std::string extractStrongsLemmaFromDefinition(const std::string& definition,
+                                              char prefix) {
+    std::string text = trimCopy(decodeHtmlEntities(definition));
+    if (text.empty()) return "";
+
+    static const std::regex leadKey(R"(^[HhGg]?\d+[A-Za-z]?\s+)");
+    text = std::regex_replace(text, leadKey, "");
+    text = trimCopy(text);
+    if (text.empty()) return "";
+
+    std::string lemma = extractScriptToken(text, prefix);
+    if (!lemma.empty()) return lemma;
+
+    // Fallback for lexicons without script text.
+    return extractBracketToken(text, '{', '}');
 }
 
 bool isHexDigit(char c) {
@@ -1304,6 +1413,99 @@ std::string sanitizeParallelVerseHtml(const std::string& html) {
     return collapseSpacesOutsideTags(out);
 }
 
+std::string wrapParallelPlainWords(const std::string& html) {
+    if (html.empty()) return html;
+
+    std::string out;
+    out.reserve(html.size() + html.size() / 3);
+
+    std::vector<bool> spanWordStack;
+    int wordSpanDepth = 0;
+
+    size_t pos = 0;
+    while (pos < html.size()) {
+        if (html[pos] == '<') {
+            size_t tagEnd = findTagEnd(html, pos);
+            if (tagEnd == std::string::npos) {
+                out.append(html.substr(pos));
+                break;
+            }
+
+            std::string rawTag = html.substr(pos, tagEnd - pos + 1);
+            size_t parsedEnd = std::string::npos;
+            std::string tagName;
+            bool isClosing = false;
+            bool isSelfClosing = false;
+            if (parseTag(html, pos, parsedEnd, tagName, isClosing, isSelfClosing)) {
+                if (tagName == "span") {
+                    if (isClosing) {
+                        if (!spanWordStack.empty()) {
+                            bool wasWord = spanWordStack.back();
+                            spanWordStack.pop_back();
+                            if (wasWord && wordSpanDepth > 0) --wordSpanDepth;
+                        }
+                    } else {
+                        bool isWordSpan = false;
+                        std::string classValue;
+                        if (extractAttributeValue(rawTag, "class", classValue)) {
+                            std::string cls = trimCopy(decodeHtmlEntities(classValue));
+                            std::istringstream css(cls);
+                            std::string tok;
+                            while (css >> tok) {
+                                if (tok == "w") {
+                                    isWordSpan = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (isWordSpan) ++wordSpanDepth;
+                        if (!isSelfClosing) {
+                            spanWordStack.push_back(isWordSpan);
+                        } else if (isWordSpan && wordSpanDepth > 0) {
+                            --wordSpanDepth;
+                        }
+                    }
+                }
+            }
+
+            out += rawTag;
+            pos = tagEnd + 1;
+            continue;
+        }
+
+        size_t textEnd = html.find('<', pos);
+        if (textEnd == std::string::npos) textEnd = html.size();
+        std::string text = html.substr(pos, textEnd - pos);
+
+        if (wordSpanDepth > 0) {
+            out += text;
+            pos = textEnd;
+            continue;
+        }
+
+        size_t i = 0;
+        while (i < text.size()) {
+            if (isWordByte(static_cast<unsigned char>(text[i]))) {
+                size_t start = i;
+                while (i < text.size() &&
+                       isWordByte(static_cast<unsigned char>(text[i]))) {
+                    ++i;
+                }
+                out += "<span class=\"w\">";
+                out.append(text.substr(start, i - start));
+                out += "</span>";
+            } else {
+                out.push_back(text[i]);
+                ++i;
+            }
+        }
+
+        pos = textEnd;
+    }
+
+    return out;
+}
+
 } // namespace
 
 SwordManager::SwordManager() = default;
@@ -1386,6 +1588,37 @@ std::vector<ModuleInfo> SwordManager::getDictionaryModules() const {
     return getModulesByType("Lexicons / Dictionaries");
 }
 
+std::vector<ModuleInfo> SwordManager::getGeneralBookModules() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<ModuleInfo> modules;
+
+    if (!mgr_) return modules;
+
+    for (auto it = mgr_->Modules.begin(); it != mgr_->Modules.end(); ++it) {
+        sword::SWModule* mod = it->second;
+        if (!mod) continue;
+
+        const char* typeRaw = mod->getType();
+        std::string type = typeRaw ? typeRaw : "";
+        std::string lower = toLowerAscii(type);
+        bool isGeneralBook =
+            lower == "genbook" ||
+            containsNoCase(lower, "genbook") ||
+            containsNoCase(lower, "general book") ||
+            containsNoCase(lower, "generic book");
+        if (isGeneralBook) {
+            modules.push_back(buildModuleInfo(mod));
+        }
+    }
+
+    std::sort(modules.begin(), modules.end(),
+              [](const ModuleInfo& a, const ModuleInfo& b) {
+                  return a.name < b.name;
+              });
+
+    return modules;
+}
+
 std::string SwordManager::getVerseText(const std::string& moduleName,
                                         const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1400,6 +1633,9 @@ std::string SwordManager::getVerseText(const std::string& moduleName,
     }
 
     text = postProcessHtml(text);
+    // Mixed-tagged verses can still contain unwrapped words; wrap them so
+    // context-hit behavior matches parallel mode.
+    text = wrapParallelPlainWords(text);
 
     VerseRef ref;
     try {
@@ -1500,6 +1736,9 @@ std::string SwordManager::getChapterText(const std::string& moduleName,
             verseText = std::string(mod->renderText().c_str());
             if (!verseText.empty()) {
                 verseText = postProcessHtml(verseText);
+                // Mixed-tagged verses can still contain unwrapped words; wrap
+                // remaining plain words for accurate word-level context actions.
+                verseText = wrapParallelPlainWords(verseText);
                 storeVerseHtmlCache(cacheKey, verseText);
             }
         }
@@ -1616,9 +1855,12 @@ std::string SwordManager::getParallelText(
             if (selectedVerse > 0 && v == selectedVerse) {
                 cellClasses += " verse-selected";
             }
+            const std::string moduleAttr = htmlEscapeAttr(moduleNames[i]);
             sword::SWModule* mod = getModule(moduleNames[i]);
-            html << "<div class=\"" << colClass << "\" style=\"width: " << w << "%;\">"
-                 << "<div class=\"" << cellClasses << "\">";
+            html << "<div class=\"" << colClass << "\" data-module=\""
+                 << moduleAttr << "\" style=\"width: " << w << "%;\">"
+                 << "<div class=\"" << cellClasses << "\" data-module=\""
+                 << moduleAttr << "\">";
             if (mod) {
                 std::string ref = book + " " + std::to_string(chapter)
                                   + ":" + std::to_string(v);
@@ -1634,6 +1876,11 @@ std::string SwordManager::getParallelText(
                         }
                     }
                     verseText = sanitizeParallelVerseHtml(verseText);
+                    // Ensure every visible word is hit-testable in parallel view.
+                    // Some modules (e.g. KJV) have mixed markup where only a subset
+                    // of words carry Strong's wrappers; unwrapped words still need
+                    // a plain <span class="w"> wrapper for accurate context actions.
+                    verseText = wrapParallelPlainWords(verseText);
                     html << "<a class=\"versenum-link\" href=\"verse:" << v << "\">"
                          << "<sup class=\"versenum\">" << v << "</sup></a> ";
                     html << verseText;
@@ -1685,6 +1932,40 @@ std::string SwordManager::getDictionaryEntry(const std::string& moduleName,
     std::ostringstream html;
     html << "<div class=\"dictionary\">\n";
     html << "<div class=\"entry-key\">" << key << "</div>\n";
+    html << text;
+    html << "</div>\n";
+    return html.str();
+}
+
+std::string SwordManager::getGeneralBookEntry(const std::string& moduleName,
+                                              const std::string& key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    sword::SWModule* mod = getModule(moduleName);
+    if (!mod) return "<p><i>General book module not found: " + moduleName + "</i></p>";
+
+    std::string lookupKey = trimCopy(key);
+    if (lookupKey.empty()) {
+        std::ostringstream html;
+        html << "<div class=\"general-book\">\n";
+        html << "<div class=\"entry-key\">" << htmlEscapeAttr(moduleName) << "</div>\n";
+        const char* desc = mod->getDescription();
+        if (desc && *desc) {
+            html << "<p>" << desc << "</p>\n";
+        }
+        html << "<p><i>Enter a key and press Go to open an entry.</i></p>\n";
+        html << "</div>\n";
+        return html.str();
+    }
+
+    mod->setKey(lookupKey.c_str());
+    std::string text = std::string(mod->renderText().c_str());
+    if (text.empty()) {
+        return "<p><i>No entry found for: " + lookupKey + "</i></p>";
+    }
+
+    std::ostringstream html;
+    html << "<div class=\"general-book\">\n";
+    html << "<div class=\"entry-key\">" << htmlEscapeAttr(lookupKey) << "</div>\n";
     html << text;
     html << "</div>\n";
     return html.str();
@@ -1835,33 +2116,9 @@ std::string SwordManager::getStrongsDefinition(const std::string& strongsNumber)
     std::string key = normalizeStrongsKey(strongsNumber);
     if (key.empty()) return "";
 
-    char prefix = 0;
-    if (!key.empty() && std::isalpha(static_cast<unsigned char>(key[0]))) {
-        prefix = static_cast<char>(
-            std::toupper(static_cast<unsigned char>(key[0])));
-    }
-
-    // Try various Strong's lexicons
-    std::vector<std::string> lexicons;
-    if (prefix == 'H') {
-        lexicons = {"StrongsHebrew", "TWOT", "StrongsRealHebrew"};
-    } else if (prefix == 'G') {
-        lexicons = {"StrongsGreek", "Thayer", "StrongsRealGreek"};
-    } else {
-        // If prefix is missing, try both families.
-        lexicons = {"StrongsHebrew", "TWOT", "StrongsRealHebrew",
-                    "StrongsGreek", "Thayer", "StrongsRealGreek"};
-    }
-
-    std::vector<std::string> lookupKeys;
-    lookupKeys.push_back(key);
-    if (prefix && key.length() > 1) {
-        lookupKeys.push_back(key.substr(1));
-    } else if (!key.empty() &&
-               std::isdigit(static_cast<unsigned char>(key[0]))) {
-        lookupKeys.push_back("H" + key);
-        lookupKeys.push_back("G" + key);
-    }
+    char prefix = strongPrefixFromKey(key);
+    std::vector<std::string> lexicons = strongLexiconsForPrefix(prefix);
+    std::vector<std::string> lookupKeys = strongLookupKeys(key, prefix);
 
     std::string fallbackWithoutCjk;
     for (const auto& lexName : lexicons) {
@@ -1879,6 +2136,35 @@ std::string SwordManager::getStrongsDefinition(const std::string& strongsNumber)
     }
 
     return fallbackWithoutCjk;
+}
+
+std::string SwordManager::getStrongsLemma(const std::string& strongsNumber) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!mgr_) return "";
+
+    std::string key = normalizeStrongsKey(strongsNumber);
+    if (key.empty()) return "";
+
+    char prefix = strongPrefixFromKey(key);
+    std::vector<std::string> lexicons = strongLexiconsForPrefix(prefix);
+    std::vector<std::string> lookupKeys = strongLookupKeys(key, prefix);
+
+    for (const auto& lexName : lexicons) {
+        sword::SWModule* lex = getModule(lexName);
+        if (!lex) continue;
+        for (const auto& lookupKey : lookupKeys) {
+            std::string text = readLexiconEntry(lex, lookupKey);
+            if (text.empty()) continue;
+            if (containsCjkText(text)) {
+                text = stripCjkText(text);
+                if (text.empty()) continue;
+            }
+            std::string lemma = extractStrongsLemmaFromDefinition(text, prefix);
+            if (!lemma.empty()) return lemma;
+        }
+    }
+
+    return "";
 }
 
 std::string SwordManager::getMorphDefinition(const std::string& morphCode) {

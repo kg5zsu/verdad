@@ -252,6 +252,9 @@ void MainWindow::addStudyTab(const std::string& module,
     if (rightPane_) {
         ctx.state.commentaryModule = rightPane_->currentCommentaryModule();
         ctx.state.dictionaryModule = rightPane_->currentDictionaryModule();
+        ctx.state.generalBookModule = rightPane_->currentGeneralBookModule();
+        ctx.state.generalBookKey = rightPane_->currentGeneralBookKey();
+        ctx.state.dictionaryPaneHeight = rightPane_->dictionaryPaneHeight();
     }
     if (!ctx.state.commentaryModule.empty()) {
         ctx.state.commentaryReference = initBook + " " + std::to_string(initChapter) +
@@ -460,7 +463,10 @@ void MainWindow::captureActiveTabState() {
         ctx.state.commentaryReference = rightPane_->currentCommentaryReference();
         ctx.state.dictionaryModule = rightPane_->currentDictionaryModule();
         ctx.state.dictionaryKey = rightPane_->currentDictionaryKey();
+        ctx.state.generalBookModule = rightPane_->currentGeneralBookModule();
+        ctx.state.generalBookKey = rightPane_->currentGeneralBookKey();
         ctx.state.dictionaryActive = rightPane_->isDictionaryTabActive();
+        ctx.state.dictionaryPaneHeight = rightPane_->dictionaryPaneHeight();
     }
 }
 
@@ -480,13 +486,21 @@ void MainWindow::applyTabState(int index) {
         ctx.state.parallelMode,
         ctx.state.parallelModules);
     biblePane_->refresh();
+    if (leftPane_ && biblePane_) {
+        leftPane_->setSearchModule(biblePane_->currentModule());
+    }
 
     rightPane_->setStudyState(
         ctx.state.commentaryModule,
         ctx.state.commentaryReference,
         ctx.state.dictionaryModule,
         ctx.state.dictionaryKey,
+        ctx.state.generalBookModule,
+        ctx.state.generalBookKey,
         ctx.state.dictionaryActive);
+    if (ctx.state.dictionaryPaneHeight > 0) {
+        rightPane_->setDictionaryPaneHeight(ctx.state.dictionaryPaneHeight);
+    }
     rightPane_->refresh();
     rightPane_->setDictionaryTabActive(ctx.state.dictionaryActive);
     biblePane_->redrawChrome();
@@ -647,9 +661,10 @@ void MainWindow::applyPendingWordInfo() {
     }
 }
 
-void MainWindow::showSearchResults(const std::string& query) {
+void MainWindow::showSearchResults(const std::string& query,
+                                   const std::string& moduleOverride) {
     if (leftPane_) {
-        leftPane_->doSearch(query);
+        leftPane_->doSearch(query, moduleOverride);
         leftPane_->showSearchTab();
     }
 }

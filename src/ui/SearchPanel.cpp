@@ -293,21 +293,26 @@ SearchPanel::~SearchPanel() {
     }
 }
 
-void SearchPanel::search(const std::string& query) {
+void SearchPanel::search(const std::string& query,
+                         const std::string& moduleOverride) {
     results_.clear();
     resultBrowser_->clear();
 
     std::string trimmedQuery = trimCopy(query);
     if (trimmedQuery.empty()) return;
 
-    // Per program spec, search follows the current Bible tab/module.
-    std::string moduleName;
-    if (app_->mainWindow() && app_->mainWindow()->biblePane()) {
-        moduleName = trimCopy(app_->mainWindow()->biblePane()->currentModule());
-    }
+    // Module selection precedence:
+    // 1) explicit override (context menu / module-aware action)
+    // 2) search panel module dropdown (manual search)
+    // 3) active Bible tab module (fallback)
+    std::string moduleName = trimCopy(moduleOverride);
     if (moduleName.empty()) {
         const Fl_Menu_Item* item = moduleChoice_->mvalue();
         if (item && item->label()) moduleName = item->label();
+    }
+    if (moduleName.empty() &&
+        app_->mainWindow() && app_->mainWindow()->biblePane()) {
+        moduleName = trimCopy(app_->mainWindow()->biblePane()->currentModule());
     }
     if (moduleName.empty()) {
         fl_alert("No active Bible module to search.");
@@ -468,6 +473,15 @@ void SearchPanel::populateModules() {
 
     if (moduleChoice_->size() > 0) {
         moduleChoice_->value(0);
+    }
+}
+
+void SearchPanel::setSelectedModule(const std::string& moduleName) {
+    std::string name = trimCopy(moduleName);
+    if (!moduleChoice_ || name.empty()) return;
+    int moduleIndex = findChoiceIndexByLabel(moduleChoice_, name);
+    if (moduleIndex >= 0) {
+        moduleChoice_->value(moduleIndex);
     }
 }
 

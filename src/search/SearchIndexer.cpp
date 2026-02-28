@@ -53,15 +53,24 @@ std::string quoteFtsToken(const std::string& token) {
 }
 
 std::string normalizeWordToken(const std::string& raw) {
-    std::string out;
-    out.reserve(raw.size());
-    for (char c : raw) {
-        unsigned char uc = static_cast<unsigned char>(c);
-        if (std::isalnum(uc) || c == '\'') {
-            out.push_back(c);
-        }
+    auto isAsciiWordChar = [](unsigned char c) -> bool {
+        return std::isalnum(c) || c == '\'' || c == '-';
+    };
+
+    size_t start = 0;
+    size_t end = raw.size();
+    while (start < end) {
+        unsigned char uc = static_cast<unsigned char>(raw[start]);
+        if (uc >= 0x80 || isAsciiWordChar(uc)) break;
+        ++start;
     }
-    return out;
+    while (end > start) {
+        unsigned char uc = static_cast<unsigned char>(raw[end - 1]);
+        if (uc >= 0x80 || isAsciiWordChar(uc)) break;
+        --end;
+    }
+
+    return raw.substr(start, end - start);
 }
 
 std::vector<std::string> tokenizeWords(const std::string& text) {

@@ -3,7 +3,11 @@
 
 #include <FL/Fl_Group.H>
 #include <FL/Fl_Tabs.H>
+#include <FL/Fl_Tile.H>
+#include <FL/Fl_Box.H>
 #include <FL/Fl_Choice.H>
+#include <FL/Fl_Input.H>
+#include <FL/Fl_Button.H>
 #include <string>
 #include <vector>
 
@@ -12,8 +16,8 @@ namespace verdad {
 class VerdadApp;
 class HtmlWidget;
 
-/// Right pane for commentary and dictionary display.
-/// Uses tabs for multiple commentaries/dictionaries.
+/// Right pane for commentary, dictionary, and general books.
+/// Dictionary is shown in a resizable bottom pane inside the Commentary tab.
 class RightPane : public Fl_Group {
 public:
     struct DisplayBuffer {
@@ -23,6 +27,9 @@ public:
         std::string dictionaryHtml;
         int dictionaryScrollY = 0;
         bool hasDictionary = false;
+        std::string generalBookHtml;
+        int generalBookScrollY = 0;
+        bool hasGeneralBook = false;
     };
 
     RightPane(VerdadApp* app, int X, int Y, int W, int H);
@@ -40,11 +47,20 @@ public:
     /// Show a dictionary entry in a specific module
     void showDictionaryEntry(const std::string& moduleName, const std::string& key);
 
+    /// Show a general book entry
+    void showGeneralBookEntry(const std::string& key);
+
+    /// Show a general book entry in a specific module
+    void showGeneralBookEntry(const std::string& moduleName, const std::string& key);
+
     /// Set the current commentary module
     void setCommentaryModule(const std::string& moduleName);
 
     /// Set the current dictionary module
     void setDictionaryModule(const std::string& moduleName);
+
+    /// Set the current general book module
+    void setGeneralBookModule(const std::string& moduleName);
 
     /// Current commentary module
     const std::string& currentCommentaryModule() const { return currentCommentary_; }
@@ -58,17 +74,33 @@ public:
     /// Current dictionary key
     const std::string& currentDictionaryKey() const { return currentDictKey_; }
 
-    /// Returns true if dictionary tab is active, false for commentary tab.
+    /// Current general book module
+    const std::string& currentGeneralBookModule() const { return currentGeneralBook_; }
+
+    /// Current general book key
+    const std::string& currentGeneralBookKey() const { return currentGeneralBookKey_; }
+
+    /// Legacy naming kept for session compatibility.
+    /// Returns true if the secondary tab is active (now General Books), false for Commentary.
     bool isDictionaryTabActive() const;
 
-    /// Select the visible tab: true = dictionary, false = commentary.
+    /// Legacy naming kept for session compatibility.
+    /// Select visible tab: true = General Books, false = Commentary.
     void setDictionaryTabActive(bool dictionaryActive);
+
+    /// Current dictionary pane height in pixels.
+    int dictionaryPaneHeight() const;
+
+    /// Set dictionary pane height in pixels (clamped to valid splitter range).
+    void setDictionaryPaneHeight(int height);
 
     /// Apply modules/keys/tab selection without rendering new text.
     void setStudyState(const std::string& commentaryModule,
                        const std::string& commentaryReference,
                        const std::string& dictionaryModule,
                        const std::string& dictionaryKey,
+                       const std::string& generalBookModule,
+                       const std::string& generalBookKey,
                        bool dictionaryActive);
 
     /// Capture currently rendered text/scroll for fast restore.
@@ -89,22 +121,34 @@ protected:
 private:
     VerdadApp* app_;
 
-    // Tabs for commentary and dictionary
+    // Tabs for commentary and general books
     Fl_Tabs* tabs_;
 
     // Commentary tab
     Fl_Group* commentaryGroup_;
+    Fl_Tile* commentaryTile_;
+    Fl_Box* commentaryResizeBox_;
+    Fl_Group* commentaryTopGroup_;
+    Fl_Group* dictionaryBottomGroup_;
     Fl_Choice* commentaryChoice_;
     HtmlWidget* commentaryHtml_;
     std::string currentCommentary_;
     std::string currentCommentaryRef_;
 
-    // Dictionary tab
-    Fl_Group* dictionaryGroup_;
+    // Dictionary pane (bottom of commentary tab)
     Fl_Choice* dictionaryChoice_;
     HtmlWidget* dictionaryHtml_;
     std::string currentDictionary_;
     std::string currentDictKey_;
+
+    // General books tab
+    Fl_Group* generalBooksGroup_;
+    Fl_Choice* generalBookChoice_;
+    Fl_Input* generalBookKeyInput_;
+    Fl_Button* generalBookGoButton_;
+    HtmlWidget* generalBookHtml_;
+    std::string currentGeneralBook_;
+    std::string currentGeneralBookKey_;
 
     /// Populate commentary module choices
     void populateCommentaryModules();
@@ -112,9 +156,15 @@ private:
     /// Populate dictionary module choices
     void populateDictionaryModules();
 
+    /// Populate general book module choices
+    void populateGeneralBookModules();
+
     // Callbacks
     static void onCommentaryModuleChange(Fl_Widget* w, void* data);
     static void onDictionaryModuleChange(Fl_Widget* w, void* data);
+    static void onGeneralBookModuleChange(Fl_Widget* w, void* data);
+    static void onGeneralBookGo(Fl_Widget* w, void* data);
+    static void onGeneralBookKeyInput(Fl_Widget* w, void* data);
 };
 
 } // namespace verdad
