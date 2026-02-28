@@ -27,7 +27,7 @@ public:
     SearchIndexer& operator=(const SearchIndexer&) = delete;
 
     /// Queue one module for background indexing.
-    void queueModuleIndex(const std::string& moduleName);
+    void queueModuleIndex(const std::string& moduleName, bool force = false);
 
     /// Queue multiple modules for background indexing.
     void queueModuleIndex(const std::vector<std::string>& moduleNames);

@@ -43,6 +43,9 @@ public:
     /// Update the preview area with text
     void setPreviewText(const std::string& html);
 
+    /// Apply runtime HTML style overrides to the preview widget.
+    void setHtmlStyleOverride(const std::string& css);
+
     /// Current preview widget height in pixels.
     int previewHeight() const;
 

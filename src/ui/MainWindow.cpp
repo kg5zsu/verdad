@@ -3,12 +3,21 @@
 #include "ui/LeftPane.h"
 #include "ui/BiblePane.h"
 #include "ui/RightPane.h"
+#include "ui/ModuleManagerDialog.h"
+#include "ui/StyledTabs.h"
 #include "sword/SwordManager.h"
 
 #include <FL/Fl.H>
 #include <FL/fl_ask.H>
 #include <FL/Fl_Menu_Item.H>
 #include <FL/fl_draw.H>
+#include <FL/Fl_Choice.H>
+#include <FL/Fl_Spinner.H>
+#include <FL/Fl_Return_Button.H>
+#include <FL/Fl_Box.H>
+#include <FL/Fl_Browser_.H>
+#include <FL/Fl_Input_.H>
+#include <FL/Fl_Menu_.H>
 
 #include <algorithm>
 #include <cctype>
@@ -19,27 +28,6 @@
 
 namespace verdad {
 namespace {
-
-class AutoRedrawTabs : public Fl_Tabs {
-public:
-    AutoRedrawTabs(int X, int Y, int W, int H, const char* L = nullptr)
-        : Fl_Tabs(X, Y, W, H, L) {}
-
-    void draw() override {
-        fl_push_clip(x(), y(), w(), h());
-        Fl_Color bg = parent() ? parent()->color() : FL_BACKGROUND_COLOR;
-        fl_color(bg);
-        fl_rectf(x(), y(), w(), h());
-        fl_pop_clip();
-        Fl_Tabs::draw();
-    }
-
-    void resize(int X, int Y, int W, int H) override {
-        Fl_Tabs::resize(X, Y, W, H);
-        damage(FL_DAMAGE_ALL);
-        redraw();
-    }
-};
 
 std::string trimCopy(const std::string& s) {
     size_t start = 0;
@@ -124,6 +112,57 @@ std::vector<std::string> extractStrongsTokens(const std::string& strongs) {
     return numeric;
 }
 
+Fl_Font appFontFromName(const std::string& name) {
+    if (name == "Times") return FL_TIMES;
+    if (name == "Courier") return FL_COURIER;
+    return FL_HELVETICA;
+}
+
+const char* appFontName(Fl_Font font) {
+    switch (font) {
+    case FL_TIMES:
+    case FL_TIMES_BOLD:
+    case FL_TIMES_ITALIC:
+    case FL_TIMES_BOLD_ITALIC:
+        return "Times";
+    case FL_COURIER:
+    case FL_COURIER_BOLD:
+    case FL_COURIER_ITALIC:
+    case FL_COURIER_BOLD_ITALIC:
+        return "Courier";
+    default:
+        return "Helvetica";
+    }
+}
+
+void applyUiFontRecursively(Fl_Widget* w, Fl_Font font, int size) {
+    if (!w) return;
+    int clampedSize = std::clamp(size, 8, 36);
+
+    w->labelfont(font);
+    w->labelsize(clampedSize);
+
+    if (auto* input = dynamic_cast<Fl_Input_*>(w)) {
+        input->textfont(font);
+        input->textsize(clampedSize);
+    } else if (auto* choice = dynamic_cast<Fl_Choice*>(w)) {
+        choice->textfont(font);
+        choice->textsize(clampedSize);
+    } else if (auto* browser = dynamic_cast<Fl_Browser_*>(w)) {
+        browser->textfont(font);
+        browser->textsize(clampedSize);
+    } else if (auto* menu = dynamic_cast<Fl_Menu_*>(w)) {
+        menu->textfont(font);
+        menu->textsize(clampedSize);
+    }
+
+    if (auto* group = dynamic_cast<Fl_Group*>(w)) {
+        for (int i = 0; i < group->children(); ++i) {
+            applyUiFontRecursively(group->child(i), font, clampedSize);
+        }
+    }
+}
+
 } // namespace
 
 MainWindow::MainWindow(VerdadApp* app, int W, int H, const char* title)
@@ -175,7 +214,7 @@ MainWindow::MainWindow(VerdadApp* app, int W, int H, const char* title)
     closeStudyTabButton_->callback(onViewCloseStudyTab, this);
     closeStudyTabButton_->tooltip("Close current study tab");
 
-    studyTabsWidget_ = new AutoRedrawTabs(
+    studyTabsWidget_ = new StyledTabs(
         studyX + newTabButtonW + (tabButtonPad * 2),
         menuH,
         studyW - newTabButtonW - closeTabButtonW - (tabButtonPad * 4),
@@ -579,7 +618,13 @@ void MainWindow::showWordInfo(const std::string& word, const std::string& href,
     if (hoverDelayScheduled_) {
         Fl::remove_timeout(onHoverDelayTimeout, this);
     }
-    Fl::add_timeout(1.0, onHoverDelayTimeout, this);
+    double hoverDelaySec = 1.0;
+    if (app_) {
+        hoverDelaySec = std::clamp(
+            app_->appearanceSettings().hoverDelayMs / 1000.0,
+            0.1, 5.0);
+    }
+    Fl::add_timeout(hoverDelaySec, onHoverDelayTimeout, this);
     hoverDelayScheduled_ = true;
 }
 
@@ -674,6 +719,19 @@ void MainWindow::refresh() {
     if (biblePane_) biblePane_->refresh();
     if (rightPane_) rightPane_->refresh();
     captureActiveTabState();
+}
+
+void MainWindow::applyAppearanceSettings(Fl_Font appFont,
+                                         int appFontSize,
+                                         const std::string& textCssOverride) {
+    int clampedSize = std::clamp(appFontSize, 8, 36);
+    applyUiFontRecursively(this, appFont, clampedSize);
+
+    if (leftPane_) leftPane_->setHtmlStyleOverride(textCssOverride);
+    if (biblePane_) biblePane_->setHtmlStyleOverride(textCssOverride);
+    if (rightPane_) rightPane_->setHtmlStyleOverride(textCssOverride);
+
+    redraw();
 }
 
 MainWindow::SessionState MainWindow::captureSessionState() {
@@ -846,9 +904,11 @@ void MainWindow::onStudyTabChange(Fl_Widget* /*w*/, void* data) {
 }
 
 void MainWindow::buildMenu() {
+    menuBar_->add("&File/&Module Manager...", 0, onFileModuleManager, this);
     menuBar_->add("&File/&Quit", FL_CTRL + 'q', onFileQuit, this);
     menuBar_->add("&Navigate/&Go to Verse...", FL_CTRL + 'g', onNavigateGo, this);
     menuBar_->add("&View/&Parallel Bibles", FL_CTRL + 'p', onViewParallel, this);
+    menuBar_->add("&View/&Settings...", 0, onViewSettings, this);
     menuBar_->add("&View/&New Study Tab", FL_CTRL + 't', onViewNewStudyTab, this);
     menuBar_->add("&Help/&About Verdad", 0, onHelpAbout, this);
 }
@@ -856,6 +916,14 @@ void MainWindow::buildMenu() {
 void MainWindow::onFileQuit(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<MainWindow*>(data);
     self->hide();
+}
+
+void MainWindow::onFileModuleManager(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<MainWindow*>(data);
+    if (!self || !self->app_) return;
+
+    ModuleManagerDialog dlg(self->app_);
+    dlg.openModal();
 }
 
 void MainWindow::onNavigateGo(Fl_Widget* /*w*/, void* data) {
@@ -875,6 +943,116 @@ void MainWindow::onViewParallel(Fl_Widget* /*w*/, void* data) {
     if (self->rightPane_) {
         self->rightPane_->redrawChrome();
     }
+}
+
+void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<MainWindow*>(data);
+    if (!self || !self->app_) return;
+
+    auto current = self->app_->appearanceSettings();
+
+    Fl_Double_Window* dlg = new Fl_Double_Window(420, 285, "Settings");
+    dlg->set_modal();
+    dlg->begin();
+
+    Fl_Box* appFontLabel = new Fl_Box(20, 20, 140, 24, "Application font:");
+    appFontLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    Fl_Choice* appFontChoice = new Fl_Choice(170, 20, 220, 24);
+    appFontChoice->add("Helvetica");
+    appFontChoice->add("Times");
+    appFontChoice->add("Courier");
+    int appFontIdx = appFontChoice->find_index(current.appFontName.c_str());
+    appFontChoice->value(appFontIdx >= 0 ? appFontIdx : 0);
+
+    Fl_Box* appSizeLabel = new Fl_Box(20, 54, 140, 24, "Application size:");
+    appSizeLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    Fl_Spinner* appSizeSpinner = new Fl_Spinner(170, 54, 80, 24);
+    appSizeSpinner->minimum(8);
+    appSizeSpinner->maximum(36);
+    appSizeSpinner->step(1);
+    appSizeSpinner->value(current.appFontSize);
+
+    Fl_Box* textFontLabel = new Fl_Box(20, 96, 140, 24, "Text font:");
+    textFontLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    Fl_Choice* textFontChoice = new Fl_Choice(170, 96, 220, 24);
+    textFontChoice->add("DejaVu Serif");
+    textFontChoice->add("DejaVu Sans");
+    textFontChoice->add("Liberation Serif");
+    textFontChoice->add("Liberation Sans");
+    textFontChoice->add("Times New Roman");
+    textFontChoice->add("Arial");
+    int textFontIdx = textFontChoice->find_index(current.textFontFamily.c_str());
+    textFontChoice->value(textFontIdx >= 0 ? textFontIdx : 0);
+
+    Fl_Box* textSizeLabel = new Fl_Box(20, 130, 140, 24, "Text size:");
+    textSizeLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    Fl_Spinner* textSizeSpinner = new Fl_Spinner(170, 130, 80, 24);
+    textSizeSpinner->minimum(8);
+    textSizeSpinner->maximum(36);
+    textSizeSpinner->step(1);
+    textSizeSpinner->value(current.textFontSize);
+
+    Fl_Box* hoverLabel = new Fl_Box(20, 164, 140, 24, "Hover delay (ms):");
+    hoverLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    Fl_Spinner* hoverDelaySpinner = new Fl_Spinner(170, 164, 90, 24);
+    hoverDelaySpinner->minimum(100);
+    hoverDelaySpinner->maximum(5000);
+    hoverDelaySpinner->step(100);
+    hoverDelaySpinner->value(current.hoverDelayMs);
+
+    Fl_Button* cancelBtn = new Fl_Button(220, 235, 80, 28, "Cancel");
+    Fl_Return_Button* applyBtn = new Fl_Return_Button(310, 235, 80, 28, "Apply");
+
+    struct DialogState {
+        bool accepted = false;
+    };
+    auto* state = new DialogState();
+
+    cancelBtn->callback(
+        [](Fl_Widget* w, void* data) {
+            auto* st = static_cast<DialogState*>(data);
+            st->accepted = false;
+            if (w && w->window()) w->window()->hide();
+        },
+        state);
+
+    applyBtn->callback(
+        [](Fl_Widget* w, void* data) {
+            auto* st = static_cast<DialogState*>(data);
+            st->accepted = true;
+            if (w && w->window()) w->window()->hide();
+        },
+        state);
+
+    dlg->end();
+    dlg->show();
+    while (dlg->shown()) {
+        Fl::wait();
+    }
+
+    if (state->accepted) {
+        VerdadApp::AppearanceSettings updated = current;
+
+        const Fl_Menu_Item* appFontItem = appFontChoice->mvalue();
+        if (appFontItem && appFontItem->label()) {
+            updated.appFontName = appFontItem->label();
+        } else {
+            updated.appFontName = appFontName(appFontFromName(current.appFontName));
+        }
+        updated.appFontSize = static_cast<int>(appSizeSpinner->value());
+
+        const Fl_Menu_Item* textFontItem = textFontChoice->mvalue();
+        if (textFontItem && textFontItem->label()) {
+            updated.textFontFamily = textFontItem->label();
+        }
+        updated.textFontSize = static_cast<int>(textSizeSpinner->value());
+        updated.hoverDelayMs = static_cast<int>(hoverDelaySpinner->value());
+
+        self->app_->setAppearanceSettings(updated);
+    }
+
+    delete state;
+    delete dlg;
 }
 
 void MainWindow::onViewNewStudyTab(Fl_Widget* /*w*/, void* data) {

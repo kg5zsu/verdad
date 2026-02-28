@@ -75,6 +75,9 @@ public:
     /// Refresh the current view
     void refresh();
 
+    /// Apply runtime HTML style overrides to the Bible view.
+    void setHtmlStyleOverride(const std::string& css);
+
     /// Select a verse in the current chapter
     void selectVerse(int verse);
 

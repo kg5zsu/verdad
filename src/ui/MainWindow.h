@@ -97,6 +97,11 @@ public:
     /// Refresh all panes
     void refresh();
 
+    /// Apply UI font and text rendering style settings.
+    void applyAppearanceSettings(Fl_Font appFont,
+                                 int appFontSize,
+                                 const std::string& textCssOverride);
+
     /// Capture all session-restorable state.
     SessionState captureSessionState();
 
@@ -191,8 +196,10 @@ private:
 
     // Menu callbacks
     static void onFileQuit(Fl_Widget* w, void* data);
+    static void onFileModuleManager(Fl_Widget* w, void* data);
     static void onNavigateGo(Fl_Widget* w, void* data);
     static void onViewParallel(Fl_Widget* w, void* data);
+    static void onViewSettings(Fl_Widget* w, void* data);
     static void onViewNewStudyTab(Fl_Widget* w, void* data);
     static void onViewCloseStudyTab(Fl_Widget* w, void* data);
     static void onHelpAbout(Fl_Widget* w, void* data);

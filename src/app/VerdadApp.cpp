@@ -83,6 +83,31 @@ std::string joinCsv(const std::vector<std::string>& items) {
     return out.str();
 }
 
+std::string normalizeAppFontName(const std::string& name) {
+    std::string n = trimCopy(name);
+    if (n == "Times") return "Times";
+    if (n == "Courier") return "Courier";
+    return "Helvetica";
+}
+
+int clampFontSize(int size) {
+    return std::clamp(size, 8, 36);
+}
+
+int clampHoverDelayMs(int ms) {
+    return std::clamp(ms, 100, 5000);
+}
+
+std::string escapeCssString(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+    for (char c : text) {
+        if (c == '"' || c == '\\') out.push_back('\\');
+        out.push_back(c);
+    }
+    return out;
+}
+
 } // namespace
 
 VerdadApp* VerdadApp::instance_ = nullptr;
@@ -131,6 +156,9 @@ bool VerdadApp::initialize(int argc, char* argv[]) {
 
     // Load user preferences
     loadPreferences();
+
+    // Ensure appearance is applied even when no preference file exists.
+    setAppearanceSettings(appearanceSettings_);
 
     // Index current Bible first, then queue remaining Bible modules.
     if (searchIndexer_) {
@@ -226,6 +254,21 @@ void VerdadApp::loadPreferences() {
 
     if (!mainWindow_) return;
 
+    appearanceSettings_.appFontName =
+        normalizeAppFontName(prefs["app_font"]);
+    appearanceSettings_.appFontSize =
+        clampFontSize(parseIntOr(prefs["app_font_size"],
+                                 appearanceSettings_.appFontSize));
+    if (!prefs["text_font_family"].empty()) {
+        appearanceSettings_.textFontFamily = prefs["text_font_family"];
+    }
+    appearanceSettings_.textFontSize =
+        clampFontSize(parseIntOr(prefs["text_font_size"],
+                                 appearanceSettings_.textFontSize));
+    appearanceSettings_.hoverDelayMs =
+        clampHoverDelayMs(parseIntOr(prefs["hover_delay_ms"],
+                                     appearanceSettings_.hoverDelayMs));
+
     // New session format: restore full window/tabs/splitter state.
     if (prefs.find("study_tab_count") != prefs.end()) {
         MainWindow::SessionState state;
@@ -266,6 +309,7 @@ void VerdadApp::loadPreferences() {
         }
 
         mainWindow_->restoreSessionState(state);
+        setAppearanceSettings(appearanceSettings_);
         return;
     }
 
@@ -287,6 +331,8 @@ void VerdadApp::loadPreferences() {
             mainWindow_->biblePane()->navigateTo(itBook->second, chapter, verse);
         }
     }
+
+    setAppearanceSettings(appearanceSettings_);
 }
 
 void VerdadApp::savePreferences() {
@@ -297,6 +343,12 @@ void VerdadApp::savePreferences() {
     file << "# Verdad preferences\n";
 
     if (mainWindow_) {
+        file << "app_font=" << appearanceSettings_.appFontName << "\n";
+        file << "app_font_size=" << appearanceSettings_.appFontSize << "\n";
+        file << "text_font_family=" << appearanceSettings_.textFontFamily << "\n";
+        file << "text_font_size=" << appearanceSettings_.textFontSize << "\n";
+        file << "hover_delay_ms=" << appearanceSettings_.hoverDelayMs << "\n";
+
         MainWindow::SessionState state = mainWindow_->captureSessionState();
         file << "window_x=" << state.windowX << "\n";
         file << "window_y=" << state.windowY << "\n";
@@ -338,6 +390,51 @@ void VerdadApp::savePreferences() {
             file << "bible_verse=" << mainWindow_->biblePane()->currentVerse() << "\n";
         }
     }
+}
+
+void VerdadApp::setAppearanceSettings(const AppearanceSettings& settings) {
+    appearanceSettings_.appFontName = normalizeAppFontName(settings.appFontName);
+    appearanceSettings_.appFontSize = clampFontSize(settings.appFontSize);
+    appearanceSettings_.textFontFamily =
+        trimCopy(settings.textFontFamily).empty()
+            ? std::string("DejaVu Serif")
+            : trimCopy(settings.textFontFamily);
+    appearanceSettings_.textFontSize = clampFontSize(settings.textFontSize);
+    appearanceSettings_.hoverDelayMs = clampHoverDelayMs(settings.hoverDelayMs);
+
+    if (mainWindow_) {
+        mainWindow_->applyAppearanceSettings(
+            appFont(),
+            appearanceSettings_.appFontSize,
+            textStyleOverrideCss());
+    }
+}
+
+Fl_Font VerdadApp::appFont() const {
+    if (appearanceSettings_.appFontName == "Times") return FL_TIMES;
+    if (appearanceSettings_.appFontName == "Courier") return FL_COURIER;
+    return FL_HELVETICA;
+}
+
+std::string VerdadApp::textStyleOverrideCss() const {
+    std::string family = escapeCssString(appearanceSettings_.textFontFamily);
+    int size = clampFontSize(appearanceSettings_.textFontSize);
+
+    std::ostringstream css;
+    css << "body,\n"
+        << "div.parallel-col,\n"
+        << "div.parallel-col-last,\n"
+        << "div.parallel-cell,\n"
+        << "div.parallel-cell-last,\n"
+        << "div.commentary,\n"
+        << "div.dictionary,\n"
+        << "div.general-book,\n"
+        << "div.mag-lite {\n"
+        << "  font-family: \"" << family << "\" !important;\n"
+        << "  font-size: " << size << "px !important;\n"
+        << "}\n";
+
+    return css.str();
 }
 
 } // namespace verdad

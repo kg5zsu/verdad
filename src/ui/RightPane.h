@@ -17,7 +17,7 @@ class VerdadApp;
 class HtmlWidget;
 
 /// Right pane for commentary, dictionary, and general books.
-/// Dictionary is shown in a resizable bottom pane inside the Commentary tab.
+/// Commentary/General Books are top tabs; dictionary is a resizable bottom pane.
 class RightPane : public Fl_Group {
 public:
     struct DisplayBuffer {
@@ -115,33 +115,37 @@ public:
     /// Refresh display
     void refresh();
 
+    /// Apply runtime HTML style overrides to all right-pane HTML widgets.
+    void setHtmlStyleOverride(const std::string& css);
+
 protected:
     void resize(int X, int Y, int W, int H) override;
 
 private:
     VerdadApp* app_;
 
-    // Tabs for commentary and general books
+    // Main vertical split: top tabs + bottom dictionary pane.
+    Fl_Tile* contentTile_;
+    Fl_Box* contentResizeBox_;
+
+    // Tabs for commentary and general books (top pane)
     Fl_Tabs* tabs_;
 
-    // Commentary tab
+    // Commentary tab (top pane)
     Fl_Group* commentaryGroup_;
-    Fl_Tile* commentaryTile_;
-    Fl_Box* commentaryResizeBox_;
-    Fl_Group* commentaryTopGroup_;
-    Fl_Group* dictionaryBottomGroup_;
     Fl_Choice* commentaryChoice_;
     HtmlWidget* commentaryHtml_;
     std::string currentCommentary_;
     std::string currentCommentaryRef_;
 
-    // Dictionary pane (bottom of commentary tab)
+    // Dictionary pane (bottom pane)
+    Fl_Group* dictionaryPaneGroup_;
     Fl_Choice* dictionaryChoice_;
     HtmlWidget* dictionaryHtml_;
     std::string currentDictionary_;
     std::string currentDictKey_;
 
-    // General books tab
+    // General books tab (top pane)
     Fl_Group* generalBooksGroup_;
     Fl_Choice* generalBookChoice_;
     Fl_Input* generalBookKeyInput_;

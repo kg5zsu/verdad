@@ -48,6 +48,8 @@ set(SOURCES
     src/search/SearchIndexer.cpp
     src/tags/TagManager.cpp
     src/ui/MainWindow.cpp
+    src/ui/StyledTabs.cpp
+    src/ui/ModuleManagerDialog.cpp
     src/ui/HtmlWidget.cpp
     src/ui/LeftPane.cpp
     src/ui/BiblePane.cpp
@@ -64,6 +66,8 @@ set(HEADERS
     src/search/SearchIndexer.h
     src/tags/TagManager.h
     src/ui/MainWindow.h
+    src/ui/StyledTabs.h
+    src/ui/ModuleManagerDialog.h
     src/ui/HtmlWidget.h
     src/ui/LeftPane.h
     src/ui/BiblePane.h

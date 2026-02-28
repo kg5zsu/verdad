@@ -5,6 +5,7 @@
 #include "ui/TagPanel.h"
 #include "ui/HtmlWidget.h"
 #include "ui/MainWindow.h"
+#include "ui/StyledTabs.h"
 
 #include <FL/Fl.H>
 #include <FL/fl_ask.H>
@@ -70,7 +71,7 @@ LeftPane::LeftPane(VerdadApp* app, int X, int Y, int W, int H)
     int previewInitH = std::min(previewH, contentH - minTabH);
     previewInitH = std::max(minPreviewH, previewInitH);
     int tabsInitH = std::max(minTabH, contentH - previewInitH);
-    tabs_ = new Fl_Tabs(X + padding, contentY, contentW, tabsInitH);
+    tabs_ = new StyledTabs(X + padding, contentY, contentW, tabsInitH);
     tabs_->selection_color(tabs_->color());
     tabs_->begin();
 
@@ -203,6 +204,12 @@ void LeftPane::showTagTab() {
 void LeftPane::setPreviewText(const std::string& html) {
     if (previewWidget_) {
         previewWidget_->setHtml(html);
+    }
+}
+
+void LeftPane::setHtmlStyleOverride(const std::string& css) {
+    if (previewWidget_) {
+        previewWidget_->setStyleOverrideCss(css);
     }
 }
 

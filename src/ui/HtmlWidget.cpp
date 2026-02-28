@@ -279,6 +279,24 @@ std::string normalizeHitWord(const std::string& raw,
     return stripWordEdgePunct(text);
 }
 
+std::shared_ptr<litehtml::element> findElementByIdRecursive(
+        const std::shared_ptr<litehtml::element>& root,
+        const std::string& id) {
+    if (!root || id.empty()) return nullptr;
+
+    const char* attrId = root->get_attr("id");
+    if (attrId && id == attrId) {
+        return root;
+    }
+
+    for (const auto& child : root->children()) {
+        auto match = findElementByIdRecursive(child, id);
+        if (match) return match;
+    }
+
+    return nullptr;
+}
+
 } // namespace
 
 HtmlWidget::HtmlWidget(int X, int Y, int W, int H, const char* label)
@@ -333,7 +351,8 @@ void HtmlWidget::setHtml(const std::string& html, const std::string& baseUrl) {
     }
 
     // Create litehtml document
-    doc_ = litehtml::document::createFromString(fullHtml, this, masterCSS_);
+    doc_ = litehtml::document::createFromString(
+        fullHtml, this, masterCSS_, styleOverrideCSS_);
 
     renderDocument();
     updateScrollbar();
@@ -344,11 +363,43 @@ void HtmlWidget::setMasterCSS(const std::string& css) {
     masterCSS_ = css;
 }
 
+void HtmlWidget::setStyleOverrideCss(const std::string& css) {
+    if (styleOverrideCSS_ == css) return;
+    styleOverrideCSS_ = css;
+
+    if (!currentHtml_.empty()) {
+        int oldScroll = scrollY_;
+        std::string html = currentHtml_;
+        std::string base = baseUrl_;
+        setHtml(html, base);
+        setScrollY(oldScroll);
+    } else {
+        redraw();
+    }
+}
+
 void HtmlWidget::scrollToAnchor(const std::string& anchor) {
-    // litehtml doesn't have built-in anchor scrolling,
-    // so we would need to find the element position
-    (void)anchor;
-    redraw();
+    if (!doc_ || anchor.empty()) return;
+
+    std::string id = anchor;
+    if (!id.empty() && id.front() == '#') {
+        id.erase(id.begin());
+    }
+    if (id.empty()) return;
+
+    std::shared_ptr<litehtml::element> target;
+    if (auto root = doc_->root()) {
+        // Prefer CSS selector lookup first, then recursive fallback.
+        target = root->select_one("#" + id);
+        if (!target) {
+            target = findElementByIdRecursive(root, id);
+        }
+    }
+    if (!target) return;
+
+    litehtml::position placement = target->get_placement();
+    int targetY = std::max(0, static_cast<int>(placement.y) - 2);
+    setScrollY(targetY);
 }
 
 void HtmlWidget::scrollToTop() {

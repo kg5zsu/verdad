@@ -202,7 +202,7 @@ void BiblePane::navigateTo(const std::string& book, int chapter, int verse) {
     }
 
     updateDisplay();
-    if (htmlWidget_ && currentVerse_ > 1) {
+    if (htmlWidget_ && currentVerse_ > 0) {
         htmlWidget_->scrollToAnchor("v" + std::to_string(currentVerse_));
     }
     populateChapters();
@@ -347,6 +347,12 @@ void BiblePane::refresh() {
     updateDisplay();
 }
 
+void BiblePane::setHtmlStyleOverride(const std::string& css) {
+    if (htmlWidget_) {
+        htmlWidget_->setStyleOverrideCss(css);
+    }
+}
+
 void BiblePane::redrawChrome() {
     damage(FL_DAMAGE_ALL);
     if (navBar_) {
@@ -371,10 +377,12 @@ void BiblePane::selectVerse(int verse) {
     int maxVerse = app_->swordManager().getVerseCount(moduleName_, currentBook_, currentChapter_);
     if (maxVerse <= 0) maxVerse = 1;
     int clampedVerse = std::max(1, std::min(verse, maxVerse));
-    if (clampedVerse == currentVerse_) return;
+    bool changed = (clampedVerse != currentVerse_);
 
     currentVerse_ = clampedVerse;
-    updateDisplay();
+    if (changed) {
+        updateDisplay();
+    }
     if (htmlWidget_) {
         htmlWidget_->scrollToAnchor("v" + std::to_string(currentVerse_));
     }
@@ -633,7 +641,11 @@ void BiblePane::updateDisplay() {
     htmlWidget_->resize(x(), textY, w(), textH);
 
     htmlWidget_->setHtml(html);
-    htmlWidget_->scrollToTop();
+    if (currentVerse_ > 0) {
+        htmlWidget_->scrollToAnchor("v" + std::to_string(currentVerse_));
+    } else {
+        htmlWidget_->scrollToTop();
+    }
     htmlWidget_->redraw();
     redrawChrome();
 }

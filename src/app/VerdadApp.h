@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <string>
+#include <FL/Enumerations.H>
 
 namespace verdad {
 
@@ -14,6 +15,14 @@ class MainWindow;
 /// Main application class - owns all managers and the main window
 class VerdadApp {
 public:
+    struct AppearanceSettings {
+        std::string appFontName = "Helvetica";
+        int appFontSize = 14;
+        std::string textFontFamily = "DejaVu Serif";
+        int textFontSize = 14;
+        int hoverDelayMs = 1000;
+    };
+
     VerdadApp();
     ~VerdadApp();
 
@@ -46,6 +55,18 @@ public:
     /// Get the singleton instance
     static VerdadApp* instance() { return instance_; }
 
+    /// Current appearance settings.
+    const AppearanceSettings& appearanceSettings() const { return appearanceSettings_; }
+
+    /// Update appearance settings and apply them immediately.
+    void setAppearanceSettings(const AppearanceSettings& settings);
+
+    /// Resolve configured UI font to FLTK font enum.
+    Fl_Font appFont() const;
+
+    /// Build runtime CSS overrides for HTML-rendered text panes.
+    std::string textStyleOverrideCss() const;
+
 private:
     static VerdadApp* instance_;
 
@@ -53,6 +74,7 @@ private:
     std::unique_ptr<SearchIndexer> searchIndexer_;
     std::unique_ptr<TagManager> tagMgr_;
     std::unique_ptr<MainWindow> mainWindow_;
+    AppearanceSettings appearanceSettings_;
 
     /// Ensure config directory exists
     void ensureConfigDir();

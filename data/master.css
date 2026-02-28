@@ -220,6 +220,20 @@ div.commentary {
     line-height: 1.5;
 }
 
+div.commentary-verse {
+    display: block;
+    margin: 0 0 0.45em 0;
+}
+
+div.commentary-verse-selected {
+    background-color: #eef6ff;
+}
+
+span.commentary-empty {
+    display: inline-block;
+    min-height: 1em;
+}
+
 /* Dictionary entries */
 div.dictionary {
     font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif;

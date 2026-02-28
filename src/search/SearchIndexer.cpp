@@ -354,10 +354,10 @@ bool SearchIndexer::ensureSchema(sqlite3* db) {
     return true;
 }
 
-void SearchIndexer::queueModuleIndex(const std::string& moduleName) {
+void SearchIndexer::queueModuleIndex(const std::string& moduleName, bool force) {
     std::string normalized = trimCopy(moduleName);
     if (!db_ || normalized.empty()) return;
-    if (isModuleIndexed(normalized)) return;
+    if (!force && isModuleIndexed(normalized)) return;
 
     std::lock_guard<std::mutex> lock(workerMutex_);
     if (pendingSet_.insert(normalized).second) {
@@ -368,7 +368,7 @@ void SearchIndexer::queueModuleIndex(const std::string& moduleName) {
 
 void SearchIndexer::queueModuleIndex(const std::vector<std::string>& moduleNames) {
     for (const auto& module : moduleNames) {
-        queueModuleIndex(module);
+        queueModuleIndex(module, false);
     }
 }
 

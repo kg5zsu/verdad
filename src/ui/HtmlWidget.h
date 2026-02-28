@@ -45,6 +45,9 @@ public:
     /// Set the master CSS stylesheet
     void setMasterCSS(const std::string& css);
 
+    /// Set runtime CSS overrides (applied after master CSS).
+    void setStyleOverrideCss(const std::string& css);
+
     /// Scroll to a named anchor
     void scrollToAnchor(const std::string& anchor);
 
@@ -152,6 +155,7 @@ protected:
 private:
     std::shared_ptr<litehtml::document> doc_;
     std::string masterCSS_;
+    std::string styleOverrideCSS_;
     std::string currentHtml_;
     std::string baseUrl_;
     int scrollY_ = 0;

@@ -1846,7 +1846,7 @@ std::string SwordManager::getParallelText(
 
     // Verse rows
     for (int v = 1; v <= verseCount; ++v) {
-        html << "<div class=\"parallel-row\">\n";
+        html << "<div class=\"parallel-row\" id=\"v" << v << "\">\n";
         for (size_t i = 0; i < moduleNames.size(); ++i) {
             bool isLast = (i + 1 == moduleNames.size());
             int w = isLast ? lastColWidth : colWidth;
@@ -1901,17 +1901,81 @@ std::string SwordManager::getCommentaryText(const std::string& moduleName,
     sword::SWModule* mod = getModule(moduleName);
     if (!mod) return "<p><i>Commentary module not found: " + moduleName + "</i></p>";
 
-    mod->setKey(key.c_str());
-    std::string text = std::string(mod->renderText().c_str());
+    VerseRef ref;
+    bool hasChapterContext = false;
+    try {
+        ref = parseVerseRef(key);
+        hasChapterContext = !ref.book.empty() && ref.chapter > 0;
+    } catch (...) {
+        ref = VerseRef{};
+    }
 
-    if (text.empty()) {
+    if (!hasChapterContext) {
+        mod->setKey(key.c_str());
+        std::string text = std::string(mod->renderText().c_str());
+
+        if (text.empty()) {
+            return "<p><i>No commentary available for " + key + "</i></p>";
+        }
+
+        std::ostringstream html;
+        html << "<div class=\"commentary\">\n";
+        html << "<h3>" << key << "</h3>\n";
+        html << text;
+        html << "</div>\n";
+        return html.str();
+    }
+
+    sword::VerseKey* vk = dynamic_cast<sword::VerseKey*>(mod->getKey());
+    if (!vk) {
+        sword::VerseKey tempKey;
+        mod->setKey(tempKey);
+        vk = dynamic_cast<sword::VerseKey*>(mod->getKey());
+    }
+    if (!vk) {
+        mod->setKey(key.c_str());
+        std::string text = std::string(mod->renderText().c_str());
+        if (text.empty()) {
+            return "<p><i>No commentary available for " + key + "</i></p>";
+        }
+        std::ostringstream html;
+        html << "<div class=\"commentary\">\n";
+        html << "<h3>" << key << "</h3>\n";
+        html << text;
+        html << "</div>\n";
+        return html.str();
+    }
+
+    std::string startRef = ref.book + " " + std::to_string(ref.chapter) + ":1";
+    vk->setText(startRef.c_str());
+    if (mod->popError()) {
         return "<p><i>No commentary available for " + key + "</i></p>";
     }
 
+    int chapter = vk->getChapter();
     std::ostringstream html;
     html << "<div class=\"commentary\">\n";
-    html << "<h3>" << key << "</h3>\n";
-    html << text;
+    html << "<h3>" << htmlEscapeAttr(ref.book) << " " << ref.chapter << "</h3>\n";
+
+    while (!mod->popError() && vk->getChapter() == chapter) {
+        int verse = vk->getVerse();
+        std::string verseText = std::string(mod->renderText().c_str());
+        std::string verseClass = "commentary-verse";
+        if (ref.verse > 0 && verse == ref.verse) {
+            verseClass += " commentary-verse-selected";
+        }
+        html << "<div class=\"" << verseClass << "\" id=\"v" << verse << "\">";
+        html << "<a class=\"versenum-link\" href=\"verse:" << verse << "\">"
+             << "<sup class=\"versenum\">" << verse << "</sup></a> ";
+        if (!trimCopy(verseText).empty()) {
+            html << verseText;
+        } else {
+            html << "<span class=\"commentary-empty\"></span>";
+        }
+        html << "</div>\n";
+        (*mod)++;
+    }
+
     html << "</div>\n";
     return html.str();
 }
