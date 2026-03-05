@@ -3,7 +3,7 @@
 body {
     font-family: "DejaVu Serif", "Liberation Serif", Georgia, serif;
     font-size: 14px;
-    line-height: 1.6;
+    line-height: 1.4;
     color: #2c2c2c;
     background-color: #fefefe;
     margin: 4px;
@@ -226,7 +226,18 @@ div.commentary-verse {
 }
 
 div.commentary-verse + div.commentary-verse {
-    padding-top: 0.5em;
+    margin-top: 1em;
+    padding-top: 0.8em;
+    border-top: 1px solid #ddd;
+}
+
+/* Make commentary verse numbers more prominent than Bible text superscripts */
+div.commentary-verse > a.versenum-link > sup.versenum {
+    font-size: 0.9em;
+    font-weight: bold;
+    color: #1a5276;
+    vertical-align: baseline;
+    padding-right: 4px;
 }
 
 span.commentary-empty {
