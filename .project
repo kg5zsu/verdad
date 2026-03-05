@@ -105,4 +105,5 @@
 		<nature>org.eclipse.cdt.core.ccnature</nature>
 		<nature>org.eclipse.cdt.core.cnature</nature>
 	</natures>
+	<linkedResources/>
 </projectDescription>
