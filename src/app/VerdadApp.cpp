@@ -14,6 +14,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <set>
 #include <sstream>
 #include <unordered_map>
@@ -445,31 +446,84 @@ std::string VerdadApp::textStyleOverrideCss() const {
     return css.str();
 }
 
+/// Minimal suffix stripping — only remove suffixes that distinguish the regular
+/// face of a family (where the bold variant uses a different naming convention).
+/// E.g. "aakar medium" (regular) vs "aakar Bold", "CentSchbook BT Roman" vs
+/// "CentSchbook BT Bold".  Weight/width variants like " Thin", " Narrow",
+/// " Medium" are NOT stripped — they denote separate sub-families.
+static std::string stripRegularSuffix(const char* name) {
+    if (!name) return {};
+    std::string s(name);
+    static const char* suffixes[] = {
+        " Regular", " medium", " Book", " Roman", nullptr
+    };
+    for (int i = 0; suffixes[i]; ++i) {
+        size_t slen = std::strlen(suffixes[i]);
+        if (s.size() > slen && s.compare(s.size() - slen, slen, suffixes[i]) == 0) {
+            return s.substr(0, s.size() - slen);
+        }
+    }
+    return s;
+}
+
 void VerdadApp::enumerateSystemFonts() {
     Fl_Font count = Fl::set_fonts("-*");
 
-    // Collect unique family names. FLTK groups bold/italic variants after
-    // the regular face — we only want the base family name (attributes==0).
     std::set<std::string> families;
+
+    // Build a name-based lookup: lowercase bold name → font index.
+    std::unordered_map<std::string, Fl_Font> boldByName;
     for (Fl_Font f = 0; f < count; ++f) {
         int attrs = 0;
         const char* name = Fl::get_font_name(f, &attrs);
         if (!name || !name[0]) continue;
+        // Only pure bold (attrs==1), not bold-italic (attrs==3).
+        if (attrs != 1) continue;
+        std::string lower(name);
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        if (boldByName.find(lower) == boldByName.end())
+            boldByName[lower] = f;
+    }
 
-        // Skip bold/italic variants — they share the family prefix
-        if (attrs != 0) continue;
+    // Build fontFamilyMap_ and boldVariantMap_ from regular fonts.
+    for (Fl_Font f = 0; f < count; ++f) {
+        int attrs = 0;
+        const char* name = Fl::get_font_name(f, &attrs);
+        if (!name || !name[0] || attrs != 0) continue;
 
         std::string familyName(name);
-        // FLTK may prefix with space for bold (' ') or 'B'/'I'/'P' — skip those
         if (familyName[0] == ' ') continue;
 
+        // Font family list and name→index map.
         std::string lower = familyName;
         std::transform(lower.begin(), lower.end(), lower.begin(),
                        [](unsigned char c) { return std::tolower(c); });
-        if (fontFamilyMap_.find(lower) == fontFamilyMap_.end()) {
+        if (fontFamilyMap_.find(lower) == fontFamilyMap_.end())
             fontFamilyMap_[lower] = f;
-        }
         families.insert(familyName);
+
+        // Find the bold variant by name: look up "name Bold" first.
+        std::string boldTarget = lower + " bold";
+        auto it = boldByName.find(boldTarget);
+        if (it != boldByName.end()) {
+            boldVariantMap_[f] = it->second;
+            continue;
+        }
+
+        // Fallback: strip regular-only suffixes and retry.
+        // E.g. "aakar medium" → "aakar" → look up "aakar bold".
+        std::string stripped = stripRegularSuffix(name);
+        if (stripped != familyName) {
+            std::string strippedLower = stripped;
+            std::transform(strippedLower.begin(), strippedLower.end(),
+                           strippedLower.begin(),
+                           [](unsigned char c) { return std::tolower(c); });
+            std::string target2 = strippedLower + " bold";
+            auto it2 = boldByName.find(target2);
+            if (it2 != boldByName.end())
+                boldVariantMap_[f] = it2->second;
+        }
     }
 
     systemFontFamilies_.assign(families.begin(), families.end());
@@ -496,6 +550,12 @@ Fl_Font VerdadApp::fltkFontFromFamily(const std::string& family) const {
         }
     }
     return FL_HELVETICA;
+}
+
+Fl_Font VerdadApp::boldFltkFont(Fl_Font regular) const {
+    auto it = boldVariantMap_.find(regular);
+    if (it != boldVariantMap_.end()) return it->second;
+    return regular;  // no bold variant found; return font unchanged
 }
 
 } // namespace verdad

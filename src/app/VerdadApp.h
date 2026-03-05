@@ -75,6 +75,9 @@ public:
     /// Look up an FLTK font index by family name.  Returns FL_HELVETICA if not found.
     Fl_Font fltkFontFromFamily(const std::string& family) const;
 
+    /// Return the bold variant of a given FLTK font index.
+    Fl_Font boldFltkFont(Fl_Font regular) const;
+
 private:
     static VerdadApp* instance_;
 
@@ -86,6 +89,8 @@ private:
     std::vector<std::string> systemFontFamilies_;
     /// Map from family name (lowercase) to FLTK font index
     std::unordered_map<std::string, Fl_Font> fontFamilyMap_;
+    /// Map from regular font index to bold font index
+    std::unordered_map<Fl_Font, Fl_Font> boldVariantMap_;
 
     /// Ensure config directory exists
     void ensureConfigDir();

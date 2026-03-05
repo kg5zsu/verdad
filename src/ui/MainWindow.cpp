@@ -185,12 +185,17 @@ std::vector<std::string> extractStrongsTokens(const std::string& strongs) {
     return numeric;
 }
 
-void applyUiFontRecursively(Fl_Widget* w, Fl_Font font, int size) {
+void applyUiFontRecursively(Fl_Widget* w, Fl_Font font, Fl_Font boldFont, int size) {
     if (!w) return;
     int clampedSize = std::clamp(size, 8, 36);
 
     w->labelfont(font);
     w->labelsize(clampedSize);
+
+    // Propagate explicit regular/bold pair to StyledTabs instances.
+    if (auto* stabs = dynamic_cast<verdad::StyledTabs*>(w)) {
+        stabs->setLabelFonts(font, boldFont);
+    }
 
     if (auto* input = dynamic_cast<Fl_Input_*>(w)) {
         input->textfont(font);
@@ -208,7 +213,7 @@ void applyUiFontRecursively(Fl_Widget* w, Fl_Font font, int size) {
 
     if (auto* group = dynamic_cast<Fl_Group*>(w)) {
         for (int i = 0; i < group->children(); ++i) {
-            applyUiFontRecursively(group->child(i), font, clampedSize);
+            applyUiFontRecursively(group->child(i), font, boldFont, clampedSize);
         }
     }
 }
@@ -1263,7 +1268,8 @@ void MainWindow::applyAppearanceSettings(Fl_Font appFont,
 
     // Re-apply widget fonts only when needed.
     if (!appearanceApplied_ || uiFontChanged) {
-        applyUiFontRecursively(this, appFont, clampedSize);
+        Fl_Font boldFont = app_ ? app_->boldFltkFont(appFont) : appFont;
+        applyUiFontRecursively(this, appFont, boldFont, clampedSize);
     }
 
     // Re-apply HTML CSS only when needed.

@@ -10,6 +10,8 @@ StyledTabs::StyledTabs(int X, int Y, int W, int H, const char* L)
     : Fl_Tabs(X, Y, W, H, L) {}
 
 void StyledTabs::draw() {
+    closeBtnValid_ = false;
+
     if (fillParentBackground_) {
         fl_push_clip(x(), y(), w(), h());
         Fl_Color bg = parent() ? parent()->color() : FL_BACKGROUND_COLOR;
@@ -24,52 +26,102 @@ void StyledTabs::draw() {
 
 void StyledTabs::resize(int X, int Y, int W, int H) {
     Fl_Tabs::resize(X, Y, W, H);
+    closeBtnValid_ = false;
     damage(FL_DAMAGE_ALL);
     redraw();
 }
 
-Fl_Font StyledTabs::regularTabFont(Fl_Font font) {
-    // Built-in fonts (0-15): explicit mapping
-    switch (font) {
-    case FL_HELVETICA_BOLD: return FL_HELVETICA;
-    case FL_HELVETICA_BOLD_ITALIC: return FL_HELVETICA_ITALIC;
-    case FL_COURIER_BOLD: return FL_COURIER;
-    case FL_COURIER_BOLD_ITALIC: return FL_COURIER_ITALIC;
-    case FL_TIMES_BOLD: return FL_TIMES;
-    case FL_TIMES_BOLD_ITALIC: return FL_TIMES_ITALIC;
-    default: break;
+int StyledTabs::tab_positions() {
+    int ret = Fl_Tabs::tab_positions();
+    if (!showClose_ || children() <= 1) return ret;
+
+    Fl_Widget* sel = value();
+    int n = children();
+    for (int i = 0; i < n; i++) {
+        if (child(i) == sel) {
+            int extra = kCloseBtnSize + kCloseBtnPad * 2;
+            tab_width[i] += extra;
+            // Shift all subsequent tab positions to accommodate the wider tab.
+            for (int j = i + 1; j <= n; j++)
+                tab_pos[j] += extra;
+            break;
+        }
     }
-    // System fonts (≥16): FLTK groups families in sets of 4 (regular, bold, italic, bold-italic).
-    // Clear the bold bit to get the regular variant.
-    if (font >= 16)
-        return static_cast<Fl_Font>(font & ~1);
-    return font;
+    return ret;
 }
 
-Fl_Font StyledTabs::boldTabFont(Fl_Font font) {
-    // Built-in fonts (0-15): explicit mapping
-    switch (font) {
-    case FL_HELVETICA:
-    case FL_HELVETICA_BOLD:
-    case FL_HELVETICA_ITALIC:
-    case FL_HELVETICA_BOLD_ITALIC:
-        return FL_HELVETICA_BOLD;
-    case FL_COURIER:
-    case FL_COURIER_BOLD:
-    case FL_COURIER_ITALIC:
-    case FL_COURIER_BOLD_ITALIC:
-        return FL_COURIER_BOLD;
-    case FL_TIMES:
-    case FL_TIMES_BOLD:
-    case FL_TIMES_ITALIC:
-    case FL_TIMES_BOLD_ITALIC:
-        return FL_TIMES_BOLD;
-    default: break;
+void StyledTabs::draw_tab(int x1, int x2, int W, int H,
+                           Fl_Widget* o, int flags, int sel) {
+    // Let FLTK draw the tab shape and label. The selected tab's W was
+    // increased by tab_positions(), so the label is centered with room
+    // left on the right for the close button.
+    Fl_Tabs::draw_tab(x1, x2, W, H, o, flags, sel);
+
+    if (sel && showClose_ && children() > 1) {
+        int tabH = (H > 0) ? H : -H;
+        int tabY = (H > 0) ? y() : (y() + h() + H);
+
+        closeBtnX_ = x1 + W - kCloseBtnSize - kCloseBtnPad;
+        closeBtnY_ = tabY + (tabH - kCloseBtnSize) / 2 + 1;
+        closeBtnValid_ = true;
+
+        // Button background — subtle highlight on hover.
+        Fl_Color btnBg = closeHovered_
+            ? fl_color_average(FL_BACKGROUND_COLOR, FL_FOREGROUND_COLOR, 0.82f)
+            : selection_color();  // match selected-tab background
+        fl_rectf(closeBtnX_, closeBtnY_, kCloseBtnSize, kCloseBtnSize, btnBg);
+
+        if (closeHovered_) {
+            fl_color(fl_color_average(FL_BACKGROUND_COLOR, FL_FOREGROUND_COLOR, 0.65f));
+            fl_rect(closeBtnX_, closeBtnY_, kCloseBtnSize, kCloseBtnSize);
+        }
+
+        // Draw the X glyph.
+        fl_color(closeHovered_ ? FL_FOREGROUND_COLOR : fl_inactive(FL_FOREGROUND_COLOR));
+        int p = 4;  // padding inside the button
+        int bx = closeBtnX_, by = closeBtnY_;
+        fl_line(bx + p, by + p, bx + kCloseBtnSize - p - 1, by + kCloseBtnSize - p - 1);
+        fl_line(bx + p, by + kCloseBtnSize - p - 1, bx + kCloseBtnSize - p - 1, by + p);
     }
-    // System fonts (≥16): set the bold bit (bit 0).
-    if (font >= 16)
-        return static_cast<Fl_Font>(font | 1);
-    return font;
+}
+
+int StyledTabs::handle(int event) {
+    if (showClose_ && children() > 1) {
+        switch (event) {
+        case FL_PUSH:
+            if (closeBtnValid_) {
+                int ex = Fl::event_x(), ey = Fl::event_y();
+                if (ex >= closeBtnX_ && ex < closeBtnX_ + kCloseBtnSize &&
+                    ey >= closeBtnY_ && ey < closeBtnY_ + kCloseBtnSize) {
+                    Fl_Widget* sel = value();
+                    if (sel && closeCb_) closeCb_(sel);
+                    return 1;
+                }
+            }
+            break;
+        case FL_MOVE:
+        case FL_ENTER: {
+            bool hover = false;
+            if (closeBtnValid_) {
+                int ex = Fl::event_x(), ey = Fl::event_y();
+                hover = (ex >= closeBtnX_ && ex < closeBtnX_ + kCloseBtnSize &&
+                         ey >= closeBtnY_ && ey < closeBtnY_ + kCloseBtnSize);
+            }
+            if (hover != closeHovered_) {
+                closeHovered_ = hover;
+                redraw_tabs();
+            }
+            break;
+        }
+        case FL_LEAVE:
+            if (closeHovered_) {
+                closeHovered_ = false;
+                redraw_tabs();
+            }
+            break;
+        }
+    }
+    return Fl_Tabs::handle(event);
 }
 
 void StyledTabs::applySelectedTabFonts() {
@@ -77,32 +129,15 @@ void StyledTabs::applySelectedTabFonts() {
     for (int i = 0; i < children(); ++i) {
         Fl_Widget* child = this->child(i);
         if (!child) continue;
-
-        Fl_Font regular = regularTabFont(child->labelfont());
-        child->labelfont(child == selected ? boldTabFont(regular) : regular);
+        child->labelfont(child == selected ? boldLabelFont_ : baseLabelFont_);
     }
 }
 
 void StyledTabs::updateCloseButtons() {
-    bool showClose = children() > 1;
-    for (int i = 0; i < children(); ++i) {
-        Fl_Widget* child = this->child(i);
-        if (!child) continue;
-        if (showClose) {
-            child->when(child->when() | FL_WHEN_CLOSED);
-            child->callback(onChildCallback, this);
-        } else {
-            child->when(child->when() & ~FL_WHEN_CLOSED);
-        }
-    }
+    showClose_ = children() > 1;
+    closeBtnValid_ = false;
+    closeHovered_ = false;
     redraw();
-}
-
-void StyledTabs::onChildCallback(Fl_Widget* w, void* data) {
-    if (Fl::callback_reason() != FL_REASON_CLOSED) return;
-    auto* tabs = static_cast<StyledTabs*>(data);
-    if (tabs && tabs->closeCb_)
-        tabs->closeCb_(w);
 }
 
 } // namespace verdad
