@@ -224,7 +224,6 @@ MainWindow::MainWindow(VerdadApp* app, int W, int H, const char* title)
     , leftPane_(nullptr)
     , studyArea_(nullptr)
     , newStudyTabButton_(nullptr)
-    , closeStudyTabButton_(nullptr)
     , studyTabsWidget_(nullptr)
     , contentTile_(nullptr)
     , biblePane_(nullptr)
@@ -247,7 +246,6 @@ MainWindow::MainWindow(VerdadApp* app, int W, int H, const char* title)
     int studyX = leftW;
     int studyW = W - leftW;
     const int newTabButtonW = 24;
-    const int closeTabButtonW = 24;
     const int tabButtonPad = 2;
     const int tabsHeaderH = 25;
     studyArea_ = new Fl_Group(studyX, menuH, studyW, mainTile_->h());
@@ -260,20 +258,17 @@ MainWindow::MainWindow(VerdadApp* app, int W, int H, const char* title)
     newStudyTabButton_->callback(onViewNewStudyTab, this);
     newStudyTabButton_->tooltip("Duplicate current study tab");
 
-    closeStudyTabButton_ = new Fl_Button(studyX + studyW - closeTabButtonW - tabButtonPad,
-                                         menuH + tabButtonPad,
-                                         closeTabButtonW, 21, "x");
-    closeStudyTabButton_->callback(onViewCloseStudyTab, this);
-    closeStudyTabButton_->tooltip("Close current study tab");
-
     studyTabsWidget_ = new StyledTabs(
         studyX + newTabButtonW + (tabButtonPad * 2),
         menuH,
-        studyW - newTabButtonW - closeTabButtonW - (tabButtonPad * 4),
+        studyW - newTabButtonW - (tabButtonPad * 3),
         tabsHeaderH);
     //studyTabsWidget_->box(FL_FLAT_BOX);
     studyTabsWidget_->selection_color(studyTabsWidget_->color());
     studyTabsWidget_->callback(onStudyTabChange, this);
+    studyTabsWidget_->setCloseCallback([this](Fl_Widget* w) {
+        closeStudyTab(w);
+    });
     // Close the tabs group so subsequent widgets are added to studyArea_,
     // not as tab page children.
     studyTabsWidget_->end();
@@ -461,6 +456,49 @@ void MainWindow::closeActiveStudyTab() {
     layoutStudyTabHeader();
 }
 
+void MainWindow::closeStudyTab(Fl_Widget* tabGroup) {
+    if (!studyTabsWidget_ || studyTabs_.size() <= 1 || !tabGroup) return;
+
+    // Find the index of the tab to close.
+    int closeIndex = -1;
+    for (size_t i = 0; i < studyTabs_.size(); ++i) {
+        if (studyTabs_[i].tabGroup == tabGroup) {
+            closeIndex = static_cast<int>(i);
+            break;
+        }
+    }
+    if (closeIndex < 0) return;
+
+    // If closing the active tab, capture its state first.
+    if (closeIndex == activeStudyTab_)
+        captureActiveTabState();
+
+    studyTabsWidget_->remove(tabGroup);
+    delete tabGroup;
+    studyTabs_.erase(studyTabs_.begin() + closeIndex);
+
+    // Adjust activeStudyTab_ after erasing.
+    if (activeStudyTab_ > closeIndex)
+        --activeStudyTab_;
+    else if (activeStudyTab_ == closeIndex)
+        activeStudyTab_ = -1;
+
+    if (studyTabs_.empty()) {
+        activeStudyTab_ = -1;
+        addStudyTab("", "Genesis", 1, 1);
+        layoutStudyTabHeader();
+        return;
+    }
+
+    int nextIndex = (activeStudyTab_ >= 0)
+        ? activeStudyTab_
+        : std::min(closeIndex, static_cast<int>(studyTabs_.size()) - 1);
+    studyTabsWidget_->value(studyTabs_[nextIndex].tabGroup);
+    if (activeStudyTab_ < 0)
+        activateStudyTab(nextIndex);
+    layoutStudyTabHeader();
+}
+
 void MainWindow::clearStudyTabs() {
     if (!studyTabsWidget_) return;
 
@@ -520,13 +558,12 @@ void MainWindow::activateStudyTab(int index) {
 }
 
 void MainWindow::layoutStudyTabHeader() {
-    if (!studyArea_ || !studyTabsWidget_ || !newStudyTabButton_ || !closeStudyTabButton_) {
+    if (!studyArea_ || !studyTabsWidget_ || !newStudyTabButton_) {
         return;
     }
 
     const int tabButtonPad = 2;
     const int newW = newStudyTabButton_->w();
-    const int closeW = closeStudyTabButton_->w();
 
     int headerY = studyArea_->y();
     int headerW = studyArea_->w();
@@ -537,22 +574,11 @@ void MainWindow::layoutStudyTabHeader() {
                                newW,
                                newStudyTabButton_->h());
 
-    closeStudyTabButton_->resize(studyArea_->x() + headerW - closeW - tabButtonPad,
-                                 headerY + tabButtonPad,
-                                 closeW,
-                                 closeStudyTabButton_->h());
-
     int tabsX = studyArea_->x() + newW + (tabButtonPad * 2);
-    int tabsW = headerW - newW - closeW - (tabButtonPad * 4);
+    int tabsW = headerW - newW - (tabButtonPad * 3);
     studyTabsWidget_->resize(tabsX, headerY, std::max(40, tabsW), tabsH);
 
-    if (studyTabs_.size() > 1 && activeStudyTab_ >= 0 &&
-        activeStudyTab_ < static_cast<int>(studyTabs_.size())) {
-        closeStudyTabButton_->activate();
-    } else {
-        closeStudyTabButton_->deactivate();
-    }
-    closeStudyTabButton_->redraw();
+    studyTabsWidget_->updateCloseButtons();
     newStudyTabButton_->redraw();
     studyTabsWidget_->redraw();
 }
@@ -1486,7 +1512,6 @@ int MainWindow::handle(int event) {
 
     if (event == FL_DRAG || event == FL_RELEASE) {
         if (newStudyTabButton_) newStudyTabButton_->redraw();
-        if (closeStudyTabButton_) closeStudyTabButton_->redraw();
         if (studyTabsWidget_) {
             studyTabsWidget_->damage(FL_DAMAGE_ALL);
             studyTabsWidget_->redraw();

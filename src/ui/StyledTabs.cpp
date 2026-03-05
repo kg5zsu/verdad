@@ -1,5 +1,7 @@
 #include "ui/StyledTabs.h"
 
+#include <FL/Fl.H>
+#include <FL/Enumerations.H>
 #include <FL/fl_draw.H>
 
 namespace verdad {
@@ -27,6 +29,7 @@ void StyledTabs::resize(int X, int Y, int W, int H) {
 }
 
 Fl_Font StyledTabs::regularTabFont(Fl_Font font) {
+    // Built-in fonts (0-15): explicit mapping
     switch (font) {
     case FL_HELVETICA_BOLD: return FL_HELVETICA;
     case FL_HELVETICA_BOLD_ITALIC: return FL_HELVETICA_ITALIC;
@@ -34,11 +37,17 @@ Fl_Font StyledTabs::regularTabFont(Fl_Font font) {
     case FL_COURIER_BOLD_ITALIC: return FL_COURIER_ITALIC;
     case FL_TIMES_BOLD: return FL_TIMES;
     case FL_TIMES_BOLD_ITALIC: return FL_TIMES_ITALIC;
-    default: return font;
+    default: break;
     }
+    // System fonts (≥16): FLTK groups families in sets of 4 (regular, bold, italic, bold-italic).
+    // Clear the bold bit to get the regular variant.
+    if (font >= 16)
+        return static_cast<Fl_Font>(font & ~1);
+    return font;
 }
 
 Fl_Font StyledTabs::boldTabFont(Fl_Font font) {
+    // Built-in fonts (0-15): explicit mapping
     switch (font) {
     case FL_HELVETICA:
     case FL_HELVETICA_BOLD:
@@ -55,9 +64,12 @@ Fl_Font StyledTabs::boldTabFont(Fl_Font font) {
     case FL_TIMES_ITALIC:
     case FL_TIMES_BOLD_ITALIC:
         return FL_TIMES_BOLD;
-    default:
-        return font;
+    default: break;
     }
+    // System fonts (≥16): set the bold bit (bit 0).
+    if (font >= 16)
+        return static_cast<Fl_Font>(font | 1);
+    return font;
 }
 
 void StyledTabs::applySelectedTabFonts() {
@@ -69,6 +81,28 @@ void StyledTabs::applySelectedTabFonts() {
         Fl_Font regular = regularTabFont(child->labelfont());
         child->labelfont(child == selected ? boldTabFont(regular) : regular);
     }
+}
+
+void StyledTabs::updateCloseButtons() {
+    bool showClose = children() > 1;
+    for (int i = 0; i < children(); ++i) {
+        Fl_Widget* child = this->child(i);
+        if (!child) continue;
+        if (showClose) {
+            child->when(child->when() | FL_WHEN_CLOSED);
+            child->callback(onChildCallback, this);
+        } else {
+            child->when(child->when() & ~FL_WHEN_CLOSED);
+        }
+    }
+    redraw();
+}
+
+void StyledTabs::onChildCallback(Fl_Widget* w, void* data) {
+    if (Fl::callback_reason() != FL_REASON_CLOSED) return;
+    auto* tabs = static_cast<StyledTabs*>(data);
+    if (tabs && tabs->closeCb_)
+        tabs->closeCb_(w);
 }
 
 } // namespace verdad

@@ -21,6 +21,7 @@ class VerdadApp;
 class LeftPane;
 class BiblePane;
 class RightPane;
+class StyledTabs;
 
 /// Main application window with left pane + tabbed Bible/Commentary workspaces.
 class MainWindow : public Fl_Double_Window {
@@ -168,8 +169,7 @@ private:
     LeftPane* leftPane_;
     Fl_Group* studyArea_;
     Fl_Button* newStudyTabButton_;
-    Fl_Button* closeStudyTabButton_;
-    Fl_Tabs* studyTabsWidget_;
+    StyledTabs* studyTabsWidget_;
     Fl_Tile* contentTile_;
 
     // Active workspace panes
@@ -212,6 +212,9 @@ private:
 
     /// Close the currently active workspace tab.
     void closeActiveStudyTab();
+
+    /// Close a specific study tab by its widget pointer.
+    void closeStudyTab(Fl_Widget* tabGroup);
 
     /// Remove all study tabs and reset active pointers.
     void clearStudyTabs();
