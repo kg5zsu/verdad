@@ -4,6 +4,7 @@
 #include <FL/Fl.H>
 #include <FL/fl_draw.H>
 #include <FL/Fl_Scrollbar.H>
+#include <litehtml/master_css.h>
 
 #include <algorithm>
 #include <cmath>
@@ -354,8 +355,8 @@ HtmlWidget::HtmlWidget(int X, int Y, int W, int H, const char* label)
     scrollbar_->callback(scrollbarCallback, this);
     scrollbar_->hide();
 
-    // Default CSS
-    masterCSS_ =
+    // Default CSS — built-in defaults + minimal overrides
+    masterCSS_ = std::string(litehtml::master_css) + "\n"
         "body { font-family: serif; font-size: 14px; }\n"
         "sup { font-size: 0.7em; vertical-align: super; }\n";
 }
@@ -413,7 +414,9 @@ void HtmlWidget::setHtml(const std::string& html, const std::string& baseUrl) {
 }
 
 void HtmlWidget::setMasterCSS(const std::string& css) {
-    masterCSS_ = css;
+    // Prepend litehtml's built-in user-agent styles so standard HTML elements
+    // (b, i, div, p, hr, etc.) get proper defaults before our overrides.
+    masterCSS_ = std::string(litehtml::master_css) + "\n" + css;
 }
 
 void HtmlWidget::setStyleOverrideCss(const std::string& css) {
