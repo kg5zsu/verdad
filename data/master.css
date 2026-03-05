@@ -225,10 +225,11 @@ div.commentary-verse {
     margin: 0;
 }
 
-div.commentary-verse + div.commentary-verse {
-    margin-top: 1em;
-    padding-top: 0.8em;
-    border-top: 1px solid #ddd;
+/* Horizontal rule separating commentary verse blocks */
+hr.commentary-sep {
+    border: none;
+    border-top: 1px solid #ccc;
+    margin: 0.8em 0;
 }
 
 /* Make commentary verse numbers more prominent than Bible text superscripts */

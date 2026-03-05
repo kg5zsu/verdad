@@ -1856,6 +1856,9 @@ std::string SwordManager::getCommentaryText(const std::string& moduleName,
     while (!mod->popError() && vk->getChapter() == chapter) {
         int verse = vk->getVerse();
         std::string verseText = std::string(mod->renderText().c_str());
+        if (verse > 1) {
+            html << "<hr class=\"commentary-sep\"/>\n";
+        }
         html << "<div class=\"commentary-verse\" id=\"v" << verse << "\">";
         html << "<a class=\"versenum-link\" href=\"verse:" << verse << "\">"
              << "<sup class=\"versenum\">" << verse << "</sup></a> ";
