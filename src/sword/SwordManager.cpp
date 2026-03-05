@@ -1651,6 +1651,31 @@ std::string SwordManager::getChapterText(const std::string& moduleName,
             if (selectedVerse > 0 && verse == selectedVerse) {
                 verseClass += " verse-selected";
             }
+            // In paragraph mode, a verse whose first visible content is ¶ (U+00B6,
+            // UTF-8: 0xC2 0xB6) marks a paragraph boundary — whether the pilcrow is
+            // at position 0 or after an opening HTML tag (e.g. <span class="wordsOfJesus">).
+            // Emit a line break before the verse span so the paragraph starts on its own line.
+            if (paragraphMode && verse > 1) {
+                size_t pos = 0;
+                // Skip any leading HTML tags and whitespace.
+                while (pos < verseText.size()) {
+                    if (verseText[pos] == '<') {
+                        size_t close = verseText.find('>', pos);
+                        if (close == std::string::npos) break;
+                        pos = close + 1;
+                    } else if (verseText[pos] == ' ' || verseText[pos] == '\t' ||
+                               verseText[pos] == '\n' || verseText[pos] == '\r') {
+                        ++pos;
+                    } else {
+                        break;
+                    }
+                }
+                if (pos + 1 < verseText.size() &&
+                    (unsigned char)verseText[pos]   == 0xC2 &&
+                    (unsigned char)verseText[pos+1] == 0xB6) {
+                    html << "<br><br>\n";
+                }
+            }
             html << "<" << verseTag << " class=\"" << verseClass
                  << "\" id=\"v" << verse << "\">";
             html << "<a class=\"versenum-link\" href=\"verse:" << verse << "\">"

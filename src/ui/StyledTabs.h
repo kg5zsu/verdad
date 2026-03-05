@@ -6,8 +6,8 @@
 
 namespace verdad {
 
-/// Fl_Tabs subclass with bold selected-tab labels, and a custom close button
-/// drawn on the right side of the active tab only.
+/// Fl_Tabs subclass with bold selected-tab labels, and a close button
+/// on the active tab using FLTK's native FL_WHEN_CLOSED mechanism.
 class StyledTabs : public Fl_Tabs {
 public:
     StyledTabs(int X, int Y, int W, int H, const char* L = nullptr);
@@ -31,24 +31,14 @@ public:
     void resize(int X, int Y, int W, int H) override;
     int handle(int event) override;
 
-protected:
-    void draw_tab(int x1, int x2, int W, int H, Fl_Widget* o, int flags, int sel) override;
-    int tab_positions() override;
-
 private:
-    static constexpr int kCloseBtnSize = 16;
-    static constexpr int kCloseBtnPad = 4;
-
     void applySelectedTabFonts();
+    void applyCloseFlags();
 
     bool fillParentBackground_ = true;
     Fl_Font baseLabelFont_ = FL_HELVETICA;
     Fl_Font boldLabelFont_ = FL_HELVETICA_BOLD;
     bool showClose_ = false;
-    bool closeHovered_ = false;
-    /// Close button screen rect, set during draw_tab for the selected tab.
-    int closeBtnX_ = 0, closeBtnY_ = 0;
-    bool closeBtnValid_ = false;
 
     std::function<void(Fl_Widget*)> closeCb_;
 };
