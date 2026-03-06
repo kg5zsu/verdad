@@ -3,6 +3,7 @@
 
 #include <FL/Fl_Group.H>
 #include <FL/Fl_Browser.H>
+#include <FL/Fl_Box.H>
 #include <FL/Fl_Choice.H>
 #include <FL/Fl_Check_Button.H>
 #include <string>
@@ -44,6 +45,9 @@ private:
     // Search type selector
     Fl_Choice* searchType_;
 
+    // Result status line
+    Fl_Box* resultStatus_;
+
     // Result list
     Fl_Browser* resultBrowser_;
 
@@ -55,6 +59,12 @@ private:
     std::string indexingModule_;
     bool swordSearchInProgress_ = false;
     std::string statusSuffix_;
+    std::string currentResultLabel_;
+    bool previewUpdateScheduled_ = false;
+    std::string pendingPreviewModule_;
+    std::string pendingPreviewKey_;
+    std::string lastPreviewModule_;
+    std::string lastPreviewKey_;
 
     /// Populate module choices
     void populateModules();
@@ -63,11 +73,15 @@ private:
     void stopIndexingIndicator();
     void updateIndexingIndicator();
     bool isSearchTabActive() const;
+    void cancelPendingPreviewUpdate();
+    void schedulePreviewUpdate(const SearchResult& result);
+    void applyPendingPreviewUpdate();
 
     // Callbacks
     static void onResultSelect(Fl_Widget* w, void* data);
     static void onResultDoubleClick(Fl_Widget* w, void* data);
     static void onIndexingPoll(void* data);
+    static void onDeferredPreviewUpdate(void* data);
 };
 
 } // namespace verdad

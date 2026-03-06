@@ -21,6 +21,8 @@
 namespace verdad {
 namespace {
 
+constexpr double kPreviewUpdateDelaySec = 0.08;
+
 std::string trimCopy(const std::string& text) {
     size_t start = 0;
     while (start < text.size() &&
@@ -235,6 +237,7 @@ SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
     , app_(app)
     , moduleChoice_(nullptr)
     , searchType_(nullptr)
+    , resultStatus_(nullptr)
     , resultBrowser_(nullptr) {
 
     begin();
@@ -259,14 +262,19 @@ SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
 
     cy += choiceH + padding;
 
+    resultStatus_ = new Fl_Box(X + padding, cy, W - 2 * padding, 20);
+    resultStatus_->box(FL_THIN_DOWN_BOX);
+    resultStatus_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+
+    cy += 20 + padding;
+
     // Result list (occupies full area below selectors).
     resultBrowser_ = new Fl_Hold_Browser(X + padding, cy,
                                          W - 2 * padding, H - (cy - Y) - padding);
     static int widths[] = { 100, 0 };  // widths for each column
     resultBrowser_->column_widths(widths); // assign array to widget
-    //resultBrowser_->type(FL_HOLD_BROWSER);
+    resultBrowser_->when(FL_WHEN_CHANGED);
     resultBrowser_->callback(onResultSelect, this);
-    //resultBrowser_->when(FL_WHEN_RELEASE);
 
     end();
     resizable(resultBrowser_);
@@ -281,6 +289,7 @@ SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
 }
 
 SearchPanel::~SearchPanel() {
+    cancelPendingPreviewUpdate();
     if (indexingIndicatorActive_) {
         Fl::remove_timeout(onIndexingPoll, this);
         indexingIndicatorActive_ = false;
@@ -289,6 +298,11 @@ SearchPanel::~SearchPanel() {
 
 void SearchPanel::search(const std::string& query,
                          const std::string& moduleOverride) {
+    cancelPendingPreviewUpdate();
+    pendingPreviewModule_.clear();
+    pendingPreviewKey_.clear();
+    lastPreviewModule_.clear();
+    lastPreviewKey_.clear();
     results_.clear();
     resultBrowser_->clear();
     resultBrowser_->value(0);
@@ -449,6 +463,11 @@ void SearchPanel::search(const std::string& query,
 }
 
 void SearchPanel::clear() {
+    cancelPendingPreviewUpdate();
+    pendingPreviewModule_.clear();
+    pendingPreviewKey_.clear();
+    lastPreviewModule_.clear();
+    lastPreviewKey_.clear();
     results_.clear();
     resultBrowser_->clear();
     resultBrowser_->value(0);
@@ -490,7 +509,7 @@ void SearchPanel::setSelectedModule(const std::string& moduleName) {
 }
 
 void SearchPanel::setResultCountLabel(const std::string& suffix) {
-    if (!resultBrowser_) return;
+    if (!resultStatus_) return;
     if (!suffix.empty()) {
         statusSuffix_ = suffix;
     } else {
@@ -500,7 +519,9 @@ void SearchPanel::setResultCountLabel(const std::string& suffix) {
     if (!statusSuffix_.empty()) {
         label += " " + statusSuffix_;
     }
-    resultBrowser_->copy_label(label.c_str());
+    if (label == currentResultLabel_) return;
+    currentResultLabel_ = label;
+    resultStatus_->copy_label(label.c_str());
 }
 
 void SearchPanel::startIndexingIndicator(const std::string& moduleName) {
@@ -571,12 +592,53 @@ bool SearchPanel::isSearchTabActive() const {
     return tabs->value() == this;
 }
 
+void SearchPanel::cancelPendingPreviewUpdate() {
+    if (!previewUpdateScheduled_) return;
+    Fl::remove_timeout(onDeferredPreviewUpdate, this);
+    previewUpdateScheduled_ = false;
+}
+
+void SearchPanel::schedulePreviewUpdate(const SearchResult& result) {
+    pendingPreviewModule_ = result.module;
+    pendingPreviewKey_ = result.key;
+    if (previewUpdateScheduled_) {
+        Fl::remove_timeout(onDeferredPreviewUpdate, this);
+    }
+
+    previewUpdateScheduled_ = true;
+    // Debounce rapid keyboard navigation so the browser can repaint smoothly.
+    Fl::add_timeout(kPreviewUpdateDelaySec, onDeferredPreviewUpdate, this);
+}
+
+void SearchPanel::applyPendingPreviewUpdate() {
+    previewUpdateScheduled_ = false;
+
+    if (pendingPreviewKey_.empty()) return;
+    if (pendingPreviewModule_ == lastPreviewModule_ &&
+        pendingPreviewKey_ == lastPreviewKey_) {
+        return;
+    }
+    if (!app_ || !app_->mainWindow() || !app_->mainWindow()->leftPane()) return;
+
+    std::string html = app_->swordManager().getVerseText(
+        pendingPreviewModule_, pendingPreviewKey_);
+    app_->mainWindow()->leftPane()->setPreviewText(html);
+    lastPreviewModule_ = pendingPreviewModule_;
+    lastPreviewKey_ = pendingPreviewKey_;
+}
+
 void SearchPanel::onIndexingPoll(void* data) {
     auto* self = static_cast<SearchPanel*>(data);
     if (!self || !self->indexingIndicatorActive_) return;
 
     self->updateIndexingIndicator();
     Fl::repeat_timeout(0.2, onIndexingPoll, self);
+}
+
+void SearchPanel::onDeferredPreviewUpdate(void* data) {
+    auto* self = static_cast<SearchPanel*>(data);
+    if (!self) return;
+    self->applyPendingPreviewUpdate();
 }
 
 void SearchPanel::onResultSelect(Fl_Widget* /*w*/, void* data) {
@@ -587,12 +649,7 @@ void SearchPanel::onResultSelect(Fl_Widget* /*w*/, void* data) {
         return;
     }
 
-    // Update preview in left pane
-    if (self->app_->mainWindow() && self->app_->mainWindow()->leftPane()) {
-        std::string html = self->app_->swordManager().getVerseText(
-            result->module, result->key);
-        self->app_->mainWindow()->leftPane()->setPreviewText(html);
-    }
+    self->schedulePreviewUpdate(*result);
 
     if (!self->app_->mainWindow()) return;
     int button = Fl::event_button();

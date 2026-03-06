@@ -25,10 +25,14 @@ void StyledTabs::draw() {
     closeBtnValid_ = false;
 
     if (fillParentBackground_) {
-        fl_push_clip(x(), y(), w(), h());
+        int headerH = std::abs(tab_height()) + Fl::box_dh(box()) + 10;
+        headerH = std::max(0, std::min(headerH, h()));
+        int headerY = tab_height() >= 0 ? y() : y() + h() - headerH;
+
+        fl_push_clip(x(), headerY, w(), headerH);
         Fl_Color bg = parent() ? parent()->color() : FL_BACKGROUND_COLOR;
         fl_color(bg);
-        fl_rectf(x(), y(), w(), h());
+        fl_rectf(x(), headerY, w(), headerH);
         fl_pop_clip();
     }
 
