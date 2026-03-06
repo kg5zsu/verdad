@@ -10,9 +10,46 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <functional>
 
 namespace verdad {
 namespace {
+
+class ResizeAwareTabs : public StyledTabs {
+public:
+    using ResizeCallback = std::function<void(int, int, int, int)>;
+
+    ResizeAwareTabs(int X, int Y, int W, int H, const char* L = nullptr)
+        : StyledTabs(X, Y, W, H, L) {}
+
+    void setResizeCallback(ResizeCallback cb) { resizeCb_ = std::move(cb); }
+
+    void resize(int X, int Y, int W, int H) override {
+        StyledTabs::resize(X, Y, W, H);
+        if (resizeCb_) resizeCb_(X, Y, W, H);
+    }
+
+private:
+    ResizeCallback resizeCb_;
+};
+
+class ResizeAwareGroup : public Fl_Group {
+public:
+    using ResizeCallback = std::function<void(int, int, int, int)>;
+
+    ResizeAwareGroup(int X, int Y, int W, int H, const char* L = nullptr)
+        : Fl_Group(X, Y, W, H, L) {}
+
+    void setResizeCallback(ResizeCallback cb) { resizeCb_ = std::move(cb); }
+
+    void resize(int X, int Y, int W, int H) override {
+        Fl_Group::resize(X, Y, W, H);
+        if (resizeCb_) resizeCb_(X, Y, W, H);
+    }
+
+private:
+    ResizeCallback resizeCb_;
+};
 
 void layoutTopTabs(int tabsX,
                    int tabsY,
@@ -71,6 +108,33 @@ void layoutTopTabs(int tabsX,
                             gbHtmlH);
 }
 
+void layoutDictionaryPaneContents(int paneX,
+                                  int paneY,
+                                  int paneW,
+                                  int paneH,
+                                  Fl_Input* dictionaryKeyInput,
+                                  Fl_Choice* dictionaryChoice,
+                                  HtmlWidget* dictionaryHtml) {
+    if (!dictionaryKeyInput || !dictionaryChoice || !dictionaryHtml) {
+        return;
+    }
+
+    const int choiceH = 25;
+
+    int clampedPaneW = std::max(20, paneW);
+    int clampedPaneH = std::max(20, paneH);
+
+    int rowW = std::max(20, clampedPaneW - 4);
+    int inputW = std::clamp(rowW / 3, 110, std::max(110, rowW - 150));
+    int choiceW = std::max(20, rowW - inputW - 2);
+    dictionaryKeyInput->resize(paneX + 2, paneY + 2, inputW, choiceH);
+    dictionaryChoice->resize(paneX + 2 + inputW + 2, paneY + 2, choiceW, choiceH);
+    dictionaryHtml->resize(paneX + 2,
+                           paneY + choiceH + 4,
+                           rowW,
+                           std::max(10, clampedPaneH - choiceH - 6));
+}
+
 void layoutDictionaryPane(int paneX,
                           int paneY,
                           int paneW,
@@ -90,16 +154,13 @@ void layoutDictionaryPane(int paneX,
     int clampedPaneH = std::max(20, paneH);
 
     dictionaryPaneGroup->resize(paneX, paneY, clampedPaneW, clampedPaneH);
-
-    int rowW = std::max(20, clampedPaneW - 4);
-    int inputW = std::clamp(rowW / 3, 110, std::max(110, rowW - 150));
-    int choiceW = std::max(20, rowW - inputW - 2);
-    dictionaryKeyInput->resize(paneX + 2, paneY + 2, inputW, choiceH);
-    dictionaryChoice->resize(paneX + 2 + inputW + 2, paneY + 2, choiceW, choiceH);
-    dictionaryHtml->resize(paneX + 2,
-                           paneY + choiceH + 4,
-                           rowW,
-                           std::max(10, clampedPaneH - choiceH - 6));
+    layoutDictionaryPaneContents(paneX,
+                                 paneY,
+                                 clampedPaneW,
+                                 clampedPaneH,
+                                 dictionaryKeyInput,
+                                 dictionaryChoice,
+                                 dictionaryHtml);
 }
 
 std::string initialDictionaryModuleForKey(VerdadApp* app,
@@ -199,7 +260,8 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
                                std::max(minBottomH, tileH - minTopH));
     int tabsInitH = std::max(minTopH, tileH - dictInitH);
 
-    tabs_ = new StyledTabs(tileX, tileY, tileW, tabsInitH);
+    auto* resizeTabs = new ResizeAwareTabs(tileX, tileY, tileW, tabsInitH);
+    tabs_ = resizeTabs;
     tabs_->begin();
 
     int panelY = tileY + tabsHeaderH;
@@ -246,10 +308,11 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     tabs_->value(commentaryGroup_);
     tabs_->callback(onTopTabChange, this);
 
-    dictionaryPaneGroup_ = new Fl_Group(tileX,
-                                        tileY + tabsInitH,
-                                        tileW,
-                                        tileH - tabsInitH);
+    auto* resizeDictionaryPane = new ResizeAwareGroup(tileX,
+                                                      tileY + tabsInitH,
+                                                      tileW,
+                                                      tileH - tabsInitH);
+    dictionaryPaneGroup_ = resizeDictionaryPane;
     dictionaryPaneGroup_->begin();
     int dictRowW = std::max(20, tileW - 4);
     int dictInputW = std::clamp(dictRowW / 3, 110, std::max(110, dictRowW - 150));
@@ -272,6 +335,32 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
                                      (tileH - tabsInitH) - choiceH - 6);
     dictionaryPaneGroup_->end();
     dictionaryPaneGroup_->resizable(dictionaryHtml_);
+
+    resizeTabs->setResizeCallback([this](int tabsX, int tabsY, int tabsW, int tabsH) {
+        layoutTopTabs(tabsX,
+                      tabsY,
+                      tabsW,
+                      tabsH,
+                      commentaryGroup_,
+                      commentaryChoice_,
+                      commentaryHtml_,
+                      generalBooksGroup_,
+                      generalBookChoice_,
+                      generalBookKeyInput_,
+                      generalBookGoButton_,
+                      generalBookHtml_);
+    });
+
+    resizeDictionaryPane->setResizeCallback(
+        [this](int paneX, int paneY, int paneW, int paneH) {
+            layoutDictionaryPaneContents(paneX,
+                                         paneY,
+                                         paneW,
+                                         paneH,
+                                         dictionaryKeyInput_,
+                                         dictionaryChoice_,
+                                         dictionaryHtml_);
+        });
 
     contentTile_->end();
     contentTile_->resizable(contentResizeBox_);
