@@ -169,6 +169,7 @@ private:
 
     // Dictionary pane (bottom pane)
     Fl_Group* dictionaryPaneGroup_;
+    Fl_Input* dictionaryKeyInput_;
     Fl_Choice* dictionaryChoice_;
     HtmlWidget* dictionaryHtml_;
     std::string currentDictionary_;
@@ -203,6 +204,7 @@ private:
     // Callbacks
     static void onCommentaryModuleChange(Fl_Widget* w, void* data);
     static void onDictionaryModuleChange(Fl_Widget* w, void* data);
+    static void onDictionaryKeyInput(Fl_Widget* w, void* data);
     static void onTopTabChange(Fl_Widget* w, void* data);
     static void onGeneralBookModuleChange(Fl_Widget* w, void* data);
     static void onGeneralBookGo(Fl_Widget* w, void* data);
