@@ -116,6 +116,12 @@ std::string cleanupLexiconText(const std::string& s) {
     return trimCopy(s);
 }
 
+bool isLikelyMorphFragmentToken(const std::string& token) {
+    return token.size() == 2 &&
+           std::isdigit(static_cast<unsigned char>(token[0])) &&
+           std::isalpha(static_cast<unsigned char>(token[1]));
+}
+
 std::string normalizeStrongsKey(const std::string& strongsNumber) {
     std::string key = trimCopy(strongsNumber);
     if (key.empty()) return key;
@@ -747,6 +753,7 @@ void appendUniqueTokens(std::string& dst, const std::string& src, char delim) {
 void addStrongToken(HoverMeta& meta, const std::string& token) {
     std::string norm = normalizeStrongsKey(token);
     if (norm.empty()) return;
+    if (isLikelyMorphFragmentToken(norm)) return;
     if (meta.strong.empty()) meta.strong = norm;
     else appendUniqueTokens(meta.strong, norm, '|');
 }
@@ -848,6 +855,7 @@ std::string firstStrongTokenFromText(const std::string& text) {
         }
 
         std::string token = normalizeStrongsKey(t.substr(i, j - i));
+        if (isLikelyMorphFragmentToken(token)) continue;
         if (!token.empty()) return token;
     }
 
@@ -869,7 +877,8 @@ bool looksLikeStrongsDisplay(const std::string& text) {
     if (t.empty()) return true;
 
     std::string norm = normalizeStrongsKey(t);
-    if (!norm.empty()) return true;
+    if (!norm.empty() && !isLikelyMorphFragmentToken(norm)) return true;
+    if (isLikelyMorphFragmentToken(t)) return false;
 
     bool hasDigit = false;
     for (char c : t) {
@@ -1940,13 +1949,17 @@ std::string SwordManager::getCommentaryText(const std::string& moduleName,
             html << "<hr class=\"commentary-sep\"/>\n";
         }
         html << "<div class=\"commentary-verse\" id=\"v" << verse << "\">";
-        html << "<a class=\"versenum-link\" href=\"verse:" << verse << "\">"
-             << "<sup class=\"versenum\">" << verse << "</sup></a> ";
+        html << "<div class=\"commentary-gutter\">"
+             << "<a class=\"versenum-link\" href=\"verse:" << verse << "\">"
+             << "<sup class=\"versenum\">" << verse << "</sup></a>"
+             << "</div>";
+        html << "<div class=\"commentary-text\">";
         if (!trimCopy(verseText).empty()) {
             html << verseText;
         } else {
             html << "<span class=\"commentary-empty\"></span>";
         }
+        html << "</div>";
         html << "</div>\n";
         (*mod)++;
     }

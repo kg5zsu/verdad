@@ -3,7 +3,7 @@
 body {
     font-family: "DejaVu Serif", "Liberation Serif", Georgia, serif;
     font-size: 14px;
-    line-height: 1.4;
+    line-height: 1.3;
     color: #2c2c2c;
     background-color: #fefefe;
     margin: 4px;
@@ -16,6 +16,7 @@ sup.versenum {
     font-weight: bold;
     color: #1a5276;
     padding: 0 2px;
+    line-height: 0;
     cursor: pointer;
 }
 
@@ -67,9 +68,14 @@ span.morph {
 }
 
 /* Verse display - verse-per-line mode (default) */
+div.chapter {
+    line-height: 1.24;
+}
+
 div.verse {
     display: block;
-    margin-bottom: 2px;
+    line-height: 1.24;
+    margin-bottom: 0;
 }
 
 .verse-selected,
@@ -217,12 +223,27 @@ div.mag-lite .mag-gap {
 div.commentary {
     font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif;
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 1.3;
 }
 
 div.commentary-verse {
-    display: block;
+    display: table;
+    table-layout: fixed;
+    width: 100%;
     margin: 0;
+}
+
+div.commentary-gutter {
+    display: table-cell;
+    width: 2.3em;
+    padding-right: 0.45em;
+    text-align: right;
+    vertical-align: top;
+}
+
+div.commentary-text {
+    display: table-cell;
+    vertical-align: top;
 }
 
 /* Horizontal rule separating commentary verse blocks */
@@ -233,12 +254,12 @@ hr.commentary-sep {
 }
 
 /* Make commentary verse numbers more prominent than Bible text superscripts */
-div.commentary-verse > a.versenum-link > sup.versenum {
+div.commentary-gutter > a.versenum-link > sup.versenum {
     font-size: 0.9em;
     font-weight: bold;
     color: #1a5276;
     vertical-align: baseline;
-    padding-right: 4px;
+    padding-right: 0;
 }
 
 span.commentary-empty {
@@ -250,6 +271,7 @@ span.commentary-empty {
 div.dictionary {
     font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif;
     font-size: 13px;
+    line-height: 1.3;
 }
 
 div.dictionary .entry-key {

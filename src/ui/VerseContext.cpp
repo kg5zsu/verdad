@@ -36,11 +36,19 @@ std::string trimCopy(const std::string& text) {
     return text.substr(start, end - start);
 }
 
+bool isLikelyMorphFragmentToken(const std::string& token) {
+    return token.size() == 2 &&
+           std::isdigit(static_cast<unsigned char>(token[0])) &&
+           std::isalpha(static_cast<unsigned char>(token[1]));
+}
+
 std::vector<std::string> extractStrongsTokens(const std::string& text) {
-    std::vector<std::string> tokens;
+    std::vector<std::string> prefixed;
+    std::vector<std::string> numeric;
     std::unordered_set<std::string> seen;
 
-    static const std::regex kToken(R"(([HhGg]?\d+[A-Za-z]?))");
+    static const std::regex kToken(
+        R"((?:^|[|,;\s:=?&#/])([HhGg]?\d+[A-Za-z]?)(?=$|[|,;\s:=?&#/]))");
     auto it = std::sregex_iterator(text.begin(), text.end(), kToken);
     auto end = std::sregex_iterator();
     for (; it != end; ++it) {
@@ -56,12 +64,19 @@ std::vector<std::string> extractStrongsTokens(const std::string& text) {
             tok[0] != 'H' && tok[0] != 'G') {
             continue;
         }
+        if (isLikelyMorphFragmentToken(tok)) continue;
         if (seen.insert(tok).second) {
-            tokens.push_back(tok);
+            if (!tok.empty() &&
+                std::isalpha(static_cast<unsigned char>(tok[0]))) {
+                prefixed.push_back(tok);
+            } else {
+                numeric.push_back(tok);
+            }
         }
     }
 
-    return tokens;
+    if (!prefixed.empty()) return prefixed;
+    return numeric;
 }
 
 std::string normalizeWordForSearch(const std::string& raw) {
