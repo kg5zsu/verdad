@@ -13,6 +13,7 @@
 namespace verdad {
 
 class VerdadApp;
+class SearchResultBrowser;
 
 /// Panel for displaying search results within the left pane tabs
 class SearchPanel : public Fl_Group {
@@ -37,6 +38,8 @@ public:
     int resultCount() const { return static_cast<int>(results_.size()); }
 
 private:
+    friend class SearchResultBrowser;
+
     VerdadApp* app_;
 
     // Module to search in
@@ -76,6 +79,7 @@ private:
     void cancelPendingPreviewUpdate();
     void schedulePreviewUpdate(const SearchResult& result);
     void applyPendingPreviewUpdate();
+    void activateResultLine(int line, int mouseButton, bool isDoubleClick);
 
     // Callbacks
     static void onResultSelect(Fl_Widget* w, void* data);

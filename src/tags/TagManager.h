@@ -1,11 +1,12 @@
 #ifndef VERDAD_TAG_MANAGER_H
 #define VERDAD_TAG_MANAGER_H
 
-#include <string>
-#include <vector>
 #include <map>
 #include <set>
-#include <fstream>
+#include <string>
+#include <vector>
+
+struct sqlite3;
 
 namespace verdad {
 
@@ -15,19 +16,19 @@ struct Tag {
     std::string color;   // hex color like "#4a86c8"
 };
 
-/// Manages verse tags - persisted to a simple file
+/// Manages verse tags persisted in an SQLite database
 class TagManager {
 public:
     TagManager();
     ~TagManager();
 
-    /// Load tags from file. Returns true on success.
+    /// Load tags from database. Returns true on success.
     bool load(const std::string& filepath);
 
-    /// Save tags to file. Returns true on success.
+    /// Save tags to database. Returns true on success.
     bool save(const std::string& filepath);
 
-    /// Save to the last loaded file
+    /// Save to the last loaded database
     bool save();
 
     /// Create a new tag. Returns true if created (false if already exists).
@@ -66,9 +67,18 @@ public:
     int getTagCount(const std::string& tagName) const;
 
 private:
+    bool openDatabase(const std::string& filepath);
+    void closeDatabase();
+    bool loadFromDatabase();
+    bool persistToDatabase();
+    bool hasStoredData() const;
+    bool importLegacyFile(const std::string& legacyPath);
+
     std::string filepath_;
+    sqlite3* db_ = nullptr;
     std::map<std::string, Tag> tags_;                        // tagName -> Tag
     std::map<std::string, std::set<std::string>> verseTags_; // verseKey -> set of tag names
+    bool dirty_ = false;
 };
 
 } // namespace verdad

@@ -519,22 +519,26 @@ std::vector<SearchResult> SearchIndexer::searchWord(
 
     std::lock_guard<std::mutex> lock(dbMutex_);
 
-    const char* sql =
+    std::string sql =
         "SELECT module_name, key_text, "
         "snippet(verse_index, 5, '', '', ' ... ', 18) "
         "FROM verse_index "
         "WHERE verse_index MATCH ? AND module_name = ? "
-        "ORDER BY bm25(verse_index) "
-        "LIMIT ?";
+        "ORDER BY bm25(verse_index)";
+    if (maxResults > 0) {
+        sql += " LIMIT ?";
+    }
 
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         return results;
     }
 
     bindText(stmt, 1, ftsQuery);
     bindText(stmt, 2, moduleName);
-    sqlite3_bind_int(stmt, 3, std::max(1, maxResults));
+    if (maxResults > 0) {
+        sqlite3_bind_int(stmt, 3, maxResults);
+    }
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         SearchResult result;
@@ -564,22 +568,26 @@ std::vector<SearchResult> SearchIndexer::searchStrongs(
 
     std::lock_guard<std::mutex> lock(dbMutex_);
 
-    const char* sql =
+    std::string sql =
         "SELECT module_name, key_text, "
         "snippet(verse_index, 5, '', '', ' ... ', 18) "
         "FROM verse_index "
         "WHERE verse_index MATCH ? AND module_name = ? "
-        "ORDER BY bm25(verse_index) "
-        "LIMIT ?";
+        "ORDER BY bm25(verse_index)";
+    if (maxResults > 0) {
+        sql += " LIMIT ?";
+    }
 
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         return results;
     }
 
     bindText(stmt, 1, ftsQuery);
     bindText(stmt, 2, moduleName);
-    sqlite3_bind_int(stmt, 3, std::max(1, maxResults));
+    if (maxResults > 0) {
+        sqlite3_bind_int(stmt, 3, maxResults);
+    }
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         SearchResult result;
@@ -629,8 +637,7 @@ std::vector<SearchResult> SearchIndexer::searchRegex(
 
     bindText(stmt, 1, moduleName);
 
-    while (sqlite3_step(stmt) == SQLITE_ROW &&
-           static_cast<int>(results.size()) < std::max(1, maxResults)) {
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
         const char* module = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
         const char* key = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
         const char* plain = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
@@ -646,6 +653,10 @@ std::vector<SearchResult> SearchIndexer::searchRegex(
         result.key = key ? key : "";
         result.text = buildRegexSnippet(plainText, match);
         results.push_back(std::move(result));
+
+        if (maxResults > 0 && static_cast<int>(results.size()) >= maxResults) {
+            break;
+        }
     }
 
     sqlite3_finalize(stmt);

@@ -19,6 +19,53 @@
 #include <unordered_map>
 
 namespace verdad {
+class SearchResultBrowser : public Fl_Hold_Browser {
+public:
+    SearchResultBrowser(SearchPanel* owner, int X, int Y, int W, int H)
+        : Fl_Hold_Browser(X, Y, W, H)
+        , owner_(owner) {}
+
+    int handle(int event) override {
+        if (event == FL_PUSH) {
+            int button = Fl::event_button();
+            if (button == FL_LEFT_MOUSE || button == FL_MIDDLE_MOUSE) {
+                pressedLine_ = lineAtEvent();
+            } else {
+                pressedLine_ = 0;
+            }
+        }
+
+        const int button = (event == FL_RELEASE) ? Fl::event_button() : 0;
+        const int line = (event == FL_RELEASE) ? lineAtEvent() : 0;
+        const bool isDoubleClick = (event == FL_RELEASE) ? (Fl::event_clicks() > 0) : false;
+        const int handled = Fl_Hold_Browser::handle(event);
+
+        if (event == FL_RELEASE && owner_ &&
+            (button == FL_LEFT_MOUSE || button == FL_MIDDLE_MOUSE)) {
+            int targetLine = line;
+            if (pressedLine_ > 0 && (targetLine <= 0 || targetLine == pressedLine_)) {
+                targetLine = pressedLine_;
+            }
+            owner_->activateResultLine(targetLine > 0 ? targetLine : value(),
+                                       button, isDoubleClick);
+            pressedLine_ = 0;
+            return 1;
+        }
+
+        return handled;
+    }
+
+    private:
+    int lineAtEvent() {
+        // Fl_Browser_::find_item expects the window-relative event y-coordinate.
+        void* item = find_item(Fl::event_y());
+        return item ? lineno(item) : 0;
+    }
+
+    SearchPanel* owner_ = nullptr;
+    int pressedLine_ = 0;
+};
+
 namespace {
 
 constexpr double kPreviewUpdateDelaySec = 0.08;
@@ -269,10 +316,12 @@ SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
     cy += 20 + padding;
 
     // Result list (occupies full area below selectors).
-    resultBrowser_ = new Fl_Hold_Browser(X + padding, cy,
-                                         W - 2 * padding, H - (cy - Y) - padding);
+    resultBrowser_ = new SearchResultBrowser(this, X + padding, cy,
+                                             W - 2 * padding, H - (cy - Y) - padding);
     static int widths[] = { 100, 0 };  // widths for each column
     resultBrowser_->column_widths(widths); // assign array to widget
+    // Preview updates should follow selection changes, but navigation/opening
+    // is handled directly from mouse-release events in SearchResultBrowser.
     resultBrowser_->when(FL_WHEN_CHANGED);
     resultBrowser_->callback(onResultSelect, this);
 
@@ -627,6 +676,22 @@ void SearchPanel::applyPendingPreviewUpdate() {
     lastPreviewKey_ = pendingPreviewKey_;
 }
 
+void SearchPanel::activateResultLine(int line, int mouseButton, bool isDoubleClick) {
+    if (!app_ || !app_->mainWindow()) return;
+    if (line <= 0 || line > static_cast<int>(results_.size())) return;
+
+    const SearchResult& result = results_[line - 1];
+
+    if (mouseButton == FL_MIDDLE_MOUSE) {
+        app_->mainWindow()->openInNewStudyTab(result.module, result.key);
+        return;
+    }
+
+    if (mouseButton == FL_LEFT_MOUSE && isDoubleClick) {
+        app_->mainWindow()->navigateTo(result.module, result.key);
+    }
+}
+
 void SearchPanel::onIndexingPoll(void* data) {
     auto* self = static_cast<SearchPanel*>(data);
     if (!self || !self->indexingIndicatorActive_) return;
@@ -650,17 +715,6 @@ void SearchPanel::onResultSelect(Fl_Widget* /*w*/, void* data) {
     }
 
     self->schedulePreviewUpdate(*result);
-
-    if (!self->app_->mainWindow()) return;
-    int button = Fl::event_button();
-    if (button == FL_MIDDLE_MOUSE) {
-        self->app_->mainWindow()->openInNewStudyTab(result->module, result->key);
-        return;
-    }
-
-    if (button == FL_LEFT_MOUSE && Fl::event_clicks() > 0) {
-        self->app_->mainWindow()->navigateTo(result->module, result->key);
-    }
 }
 
 void SearchPanel::onResultDoubleClick(Fl_Widget* /*w*/, void* data) {

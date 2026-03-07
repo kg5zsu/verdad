@@ -47,21 +47,24 @@ public:
     bool activeIndexingTask(std::string& moduleName, int& percent) const;
 
     /// Search plain verse text (multi-word or exact phrase).
+    /// maxResults <= 0 means no result limit.
     std::vector<SearchResult> searchWord(const std::string& moduleName,
                                          const std::string& query,
                                          bool exactPhrase = false,
-                                         int maxResults = 500) const;
+                                         int maxResults = 0) const;
 
     /// Search for Strong's/Lemma references in indexed XHTML.
+    /// maxResults <= 0 means no result limit.
     std::vector<SearchResult> searchStrongs(const std::string& moduleName,
                                             const std::string& strongsQuery,
-                                            int maxResults = 500) const;
+                                            int maxResults = 0) const;
 
     /// Search plain verse text using a regex pattern.
+    /// maxResults <= 0 means no result limit.
     std::vector<SearchResult> searchRegex(const std::string& moduleName,
                                           const std::string& pattern,
                                           bool caseSensitive = false,
-                                          int maxResults = 500) const;
+                                          int maxResults = 0) const;
 
 private:
     void workerLoop();

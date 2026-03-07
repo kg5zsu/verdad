@@ -238,8 +238,8 @@ bool VerdadApp::initialize(int argc, char* argv[]) {
         // Continue anyway - app can still run without modules
     }
 
-    // Load tags
-    tagMgr_->load(getConfigDir() + "/tags.dat");
+    // Load tags from the SQLite tag database.
+    tagMgr_->load(getConfigDir() + "/tags.db");
 
     // Initialize FTS5 index database (separate from tags/settings data).
     searchIndexer_ = std::make_unique<SearchIndexer>(

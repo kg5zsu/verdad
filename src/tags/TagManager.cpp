@@ -1,105 +1,121 @@
 #include "tags/TagManager.h"
-#include <fstream>
-#include <sstream>
+
+#include <sqlite3.h>
+
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sstream>
 
 namespace verdad {
+namespace {
+
+constexpr const char* kDefaultTagColor = "#4a86c8";
+
+bool execSql(sqlite3* db, const char* sql) {
+    char* err = nullptr;
+    int rc = sqlite3_exec(db, sql, nullptr, nullptr, &err);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SQLite error: "
+                  << (err ? err : sqlite3_errmsg(db))
+                  << "\n";
+    }
+    if (err) sqlite3_free(err);
+    return rc == SQLITE_OK;
+}
+
+bool bindText(sqlite3_stmt* stmt, int index, const std::string& value) {
+    return sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK;
+}
+
+bool ensureSchema(sqlite3* db) {
+    static const char* kSchemaSql = R"SQL(
+        CREATE TABLE IF NOT EXISTS tags (
+            name TEXT PRIMARY KEY,
+            color TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS verse_tags (
+            verse_key TEXT NOT NULL,
+            tag_name TEXT NOT NULL,
+            PRIMARY KEY (verse_key, tag_name),
+            FOREIGN KEY (tag_name) REFERENCES tags(name)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_verse_tags_tag_name
+            ON verse_tags(tag_name, verse_key);
+
+        PRAGMA user_version = 1;
+    )SQL";
+
+    return execSql(db, kSchemaSql);
+}
+
+void applyPragmas(sqlite3* db) {
+    if (!db) return;
+    sqlite3_busy_timeout(db, 5000);
+    execSql(db, "PRAGMA foreign_keys=ON;");
+    execSql(db, "PRAGMA journal_mode=WAL;");
+    execSql(db, "PRAGMA synchronous=NORMAL;");
+}
+
+bool fileExists(const std::string& path) {
+    if (path.empty()) return false;
+    std::error_code ec;
+    return std::filesystem::exists(path, ec);
+}
+
+} // namespace
 
 TagManager::TagManager() = default;
+
 TagManager::~TagManager() {
-    if (!filepath_.empty()) {
+    if (dirty_ && !filepath_.empty()) {
         save();
     }
+    closeDatabase();
 }
 
 bool TagManager::load(const std::string& filepath) {
-    filepath_ = filepath;
     tags_.clear();
     verseTags_.clear();
+    dirty_ = false;
 
-    std::ifstream file(filepath);
-    if (!file.is_open()) return true; // No file yet is OK
+    if (!openDatabase(filepath)) {
+        return false;
+    }
 
-    std::string line;
-    std::string section;
-
-    while (std::getline(file, line)) {
-        // Skip empty lines and comments
-        if (line.empty() || line[0] == '#') continue;
-
-        // Section headers
-        if (line == "[tags]") {
-            section = "tags";
-            continue;
-        }
-        if (line == "[verses]") {
-            section = "verses";
-            continue;
-        }
-
-        if (section == "tags") {
-            // Format: name|color
-            size_t sep = line.find('|');
-            if (sep != std::string::npos) {
-                Tag tag;
-                tag.name = line.substr(0, sep);
-                tag.color = line.substr(sep + 1);
-                tags_[tag.name] = tag;
-            }
-        } else if (section == "verses") {
-            // Format: verseKey|tag1,tag2,tag3
-            size_t sep = line.find('|');
-            if (sep != std::string::npos) {
-                std::string verseKey = line.substr(0, sep);
-                std::string tagList = line.substr(sep + 1);
-
-                std::istringstream iss(tagList);
-                std::string tagName;
-                while (std::getline(iss, tagName, ',')) {
-                    if (!tagName.empty()) {
-                        verseTags_[verseKey].insert(tagName);
-                    }
-                }
-            }
+    if (!hasStoredData()) {
+        std::filesystem::path legacyPath(filepath);
+        legacyPath.replace_extension(".dat");
+        if (fileExists(legacyPath.string()) && !importLegacyFile(legacyPath.string())) {
+            return false;
         }
     }
 
-    return true;
+    return loadFromDatabase();
 }
 
 bool TagManager::save(const std::string& filepath) {
-    std::ofstream file(filepath);
-    if (!file.is_open()) return false;
-
-    file << "# Verdad verse tags\n";
-
-    // Write tags
-    file << "[tags]\n";
-    for (const auto& pair : tags_) {
-        file << pair.second.name << "|" << pair.second.color << "\n";
+    bool pathChanged = filepath_ != filepath || db_ == nullptr;
+    if (!openDatabase(filepath)) {
+        return false;
     }
-
-    // Write verse-tag associations
-    file << "[verses]\n";
-    for (const auto& pair : verseTags_) {
-        if (pair.second.empty()) continue;
-        file << pair.first << "|";
-        bool first = true;
-        for (const auto& tag : pair.second) {
-            if (!first) file << ",";
-            file << tag;
-            first = false;
-        }
-        file << "\n";
+    if (pathChanged) {
+        dirty_ = true;
     }
-
-    filepath_ = filepath;
-    return true;
+    return persistToDatabase();
 }
 
 bool TagManager::save() {
     if (filepath_.empty()) return false;
-    return save(filepath_);
+    if (!openDatabase(filepath_)) {
+        return false;
+    }
+    return persistToDatabase();
 }
 
 bool TagManager::createTag(const std::string& name, const std::string& color) {
@@ -109,6 +125,7 @@ bool TagManager::createTag(const std::string& name, const std::string& color) {
     tag.name = name;
     tag.color = color;
     tags_[name] = tag;
+    dirty_ = true;
     return true;
 }
 
@@ -118,11 +135,16 @@ bool TagManager::deleteTag(const std::string& name) {
 
     tags_.erase(it);
 
-    // Remove from all verses
-    for (auto& pair : verseTags_) {
-        pair.second.erase(name);
+    for (auto verseIt = verseTags_.begin(); verseIt != verseTags_.end();) {
+        verseIt->second.erase(name);
+        if (verseIt->second.empty()) {
+            verseIt = verseTags_.erase(verseIt);
+        } else {
+            ++verseIt;
+        }
     }
 
+    dirty_ = true;
     return true;
 }
 
@@ -136,35 +158,39 @@ bool TagManager::renameTag(const std::string& oldName, const std::string& newNam
     tags_.erase(it);
     tags_[newName] = tag;
 
-    // Update verse associations
     for (auto& pair : verseTags_) {
         if (pair.second.erase(oldName) > 0) {
             pair.second.insert(newName);
         }
     }
 
+    dirty_ = true;
     return true;
 }
 
 void TagManager::setTagColor(const std::string& name, const std::string& color) {
     auto it = tags_.find(name);
-    if (it != tags_.end()) {
+    if (it != tags_.end() && it->second.color != color) {
         it->second.color = color;
+        dirty_ = true;
     }
 }
 
 void TagManager::tagVerse(const std::string& verseKey, const std::string& tagName) {
-    // Ensure tag exists
     if (tags_.find(tagName) == tags_.end()) {
         createTag(tagName);
     }
-    verseTags_[verseKey].insert(tagName);
+    if (verseTags_[verseKey].insert(tagName).second) {
+        dirty_ = true;
+    }
 }
 
 void TagManager::untagVerse(const std::string& verseKey, const std::string& tagName) {
     auto it = verseTags_.find(verseKey);
     if (it != verseTags_.end()) {
-        it->second.erase(tagName);
+        if (it->second.erase(tagName) > 0) {
+            dirty_ = true;
+        }
         if (it->second.empty()) {
             verseTags_.erase(it);
         }
@@ -209,7 +235,7 @@ std::vector<std::string> TagManager::getVersesWithTag(const std::string& tagName
 }
 
 bool TagManager::verseHasTag(const std::string& verseKey,
-                              const std::string& tagName) const {
+                             const std::string& tagName) const {
     auto it = verseTags_.find(verseKey);
     if (it != verseTags_.end()) {
         return it->second.count(tagName) > 0;
@@ -225,6 +251,254 @@ int TagManager::getTagCount(const std::string& tagName) const {
         }
     }
     return count;
+}
+
+bool TagManager::openDatabase(const std::string& filepath) {
+    if (filepath.empty()) return false;
+    if (db_ && filepath_ == filepath) return true;
+
+    sqlite3* newDb = nullptr;
+    int rc = sqlite3_open_v2(
+        filepath.c_str(), &newDb,
+        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+        nullptr);
+    if (rc != SQLITE_OK) {
+        std::cerr << "Failed to open tags database: " << filepath
+                  << " (" << (newDb ? sqlite3_errmsg(newDb) : "unknown error")
+                  << ")\n";
+        if (newDb) sqlite3_close(newDb);
+        return false;
+    }
+
+    applyPragmas(newDb);
+    if (!ensureSchema(newDb)) {
+        sqlite3_close(newDb);
+        return false;
+    }
+
+    closeDatabase();
+    db_ = newDb;
+    filepath_ = filepath;
+    return true;
+}
+
+void TagManager::closeDatabase() {
+    if (db_) {
+        sqlite3_close(db_);
+        db_ = nullptr;
+    }
+}
+
+bool TagManager::loadFromDatabase() {
+    if (!db_) return false;
+
+    tags_.clear();
+    verseTags_.clear();
+
+    sqlite3_stmt* tagStmt = nullptr;
+    sqlite3_stmt* verseStmt = nullptr;
+    bool ok = true;
+
+    if (sqlite3_prepare_v2(
+            db_, "SELECT name, color FROM tags ORDER BY name;", -1, &tagStmt, nullptr) != SQLITE_OK) {
+        ok = false;
+    }
+
+    int rc = SQLITE_OK;
+    while (ok && (rc = sqlite3_step(tagStmt)) == SQLITE_ROW) {
+        const char* name = reinterpret_cast<const char*>(sqlite3_column_text(tagStmt, 0));
+        const char* color = reinterpret_cast<const char*>(sqlite3_column_text(tagStmt, 1));
+        if (!name || !*name) continue;
+
+        Tag tag;
+        tag.name = name;
+        tag.color = color ? color : kDefaultTagColor;
+        tags_[tag.name] = tag;
+    }
+    if (ok && rc != SQLITE_DONE) {
+        ok = false;
+    }
+
+    if (ok &&
+        sqlite3_prepare_v2(
+            db_, "SELECT verse_key, tag_name FROM verse_tags ORDER BY verse_key, tag_name;",
+            -1, &verseStmt, nullptr) != SQLITE_OK) {
+        ok = false;
+    }
+
+    rc = SQLITE_OK;
+    while (ok && (rc = sqlite3_step(verseStmt)) == SQLITE_ROW) {
+        const char* verseKey = reinterpret_cast<const char*>(sqlite3_column_text(verseStmt, 0));
+        const char* tagName = reinterpret_cast<const char*>(sqlite3_column_text(verseStmt, 1));
+        if (!verseKey || !tagName) continue;
+        if (tags_.find(tagName) == tags_.end()) continue;
+        verseTags_[verseKey].insert(tagName);
+    }
+    if (ok && rc != SQLITE_DONE) {
+        ok = false;
+    }
+
+    if (tagStmt) sqlite3_finalize(tagStmt);
+    if (verseStmt) sqlite3_finalize(verseStmt);
+
+    if (!ok) {
+        std::cerr << "Failed to load tag data from database.\n";
+        return false;
+    }
+
+    dirty_ = false;
+    return true;
+}
+
+bool TagManager::persistToDatabase() {
+    if (!db_) return false;
+    if (!dirty_) return true;
+
+    if (!execSql(db_, "BEGIN IMMEDIATE TRANSACTION;")) {
+        return false;
+    }
+
+    sqlite3_stmt* insertTag = nullptr;
+    sqlite3_stmt* insertVerseTag = nullptr;
+    bool ok = true;
+
+    if (!execSql(db_, "DELETE FROM verse_tags;")) ok = false;
+    if (ok && !execSql(db_, "DELETE FROM tags;")) ok = false;
+
+    if (ok &&
+        sqlite3_prepare_v2(
+            db_, "INSERT INTO tags(name, color) VALUES(?, ?);", -1, &insertTag, nullptr) != SQLITE_OK) {
+        ok = false;
+    }
+    if (ok &&
+        sqlite3_prepare_v2(
+            db_, "INSERT INTO verse_tags(verse_key, tag_name) VALUES(?, ?);",
+            -1, &insertVerseTag, nullptr) != SQLITE_OK) {
+        ok = false;
+    }
+
+    for (const auto& pair : tags_) {
+        if (!ok) break;
+        sqlite3_reset(insertTag);
+        sqlite3_clear_bindings(insertTag);
+        ok = bindText(insertTag, 1, pair.second.name) &&
+             bindText(insertTag, 2, pair.second.color) &&
+             sqlite3_step(insertTag) == SQLITE_DONE;
+    }
+
+    for (const auto& pair : verseTags_) {
+        if (!ok) break;
+        for (const auto& tagName : pair.second) {
+            if (tags_.find(tagName) == tags_.end()) continue;
+            sqlite3_reset(insertVerseTag);
+            sqlite3_clear_bindings(insertVerseTag);
+            ok = bindText(insertVerseTag, 1, pair.first) &&
+                 bindText(insertVerseTag, 2, tagName) &&
+                 sqlite3_step(insertVerseTag) == SQLITE_DONE;
+            if (!ok) break;
+        }
+    }
+
+    if (insertTag) sqlite3_finalize(insertTag);
+    if (insertVerseTag) sqlite3_finalize(insertVerseTag);
+
+    if (!ok) {
+        execSql(db_, "ROLLBACK;");
+        std::cerr << "Failed to save tag data to database.\n";
+        return false;
+    }
+
+    if (!execSql(db_, "COMMIT;")) {
+        execSql(db_, "ROLLBACK;");
+        return false;
+    }
+
+    dirty_ = false;
+    return true;
+}
+
+bool TagManager::hasStoredData() const {
+    if (!db_) return false;
+
+    sqlite3_stmt* stmt = nullptr;
+    bool hasData = false;
+
+    if (sqlite3_prepare_v2(
+            db_,
+            "SELECT EXISTS(SELECT 1 FROM tags LIMIT 1) "
+            "OR EXISTS(SELECT 1 FROM verse_tags LIMIT 1);",
+            -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        hasData = sqlite3_column_int(stmt, 0) != 0;
+    }
+
+    sqlite3_finalize(stmt);
+    return hasData;
+}
+
+bool TagManager::importLegacyFile(const std::string& legacyPath) {
+    std::ifstream file(legacyPath);
+    if (!file.is_open()) return false;
+
+    tags_.clear();
+    verseTags_.clear();
+
+    std::string line;
+    std::string section;
+
+    while (std::getline(file, line)) {
+        if (line.empty() || line[0] == '#') continue;
+
+        if (line == "[tags]") {
+            section = "tags";
+            continue;
+        }
+        if (line == "[verses]") {
+            section = "verses";
+            continue;
+        }
+
+        if (section == "tags") {
+            size_t sep = line.find('|');
+            if (sep == std::string::npos) continue;
+
+            Tag tag;
+            tag.name = line.substr(0, sep);
+            tag.color = line.substr(sep + 1);
+            if (tag.color.empty()) {
+                tag.color = kDefaultTagColor;
+            }
+            if (!tag.name.empty()) {
+                tags_[tag.name] = tag;
+            }
+            continue;
+        }
+
+        if (section == "verses") {
+            size_t sep = line.find('|');
+            if (sep == std::string::npos) continue;
+
+            std::string verseKey = line.substr(0, sep);
+            std::string tagList = line.substr(sep + 1);
+            if (verseKey.empty()) continue;
+
+            std::istringstream iss(tagList);
+            std::string tagName;
+            while (std::getline(iss, tagName, ',')) {
+                if (tagName.empty()) continue;
+                if (tags_.find(tagName) == tags_.end()) {
+                    tags_[tagName] = Tag{tagName, kDefaultTagColor};
+                }
+                verseTags_[verseKey].insert(tagName);
+            }
+        }
+    }
+
+    dirty_ = true;
+    return persistToDatabase();
 }
 
 } // namespace verdad

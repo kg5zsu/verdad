@@ -8,7 +8,7 @@ A desktop Bible study application built with C++17, featuring:
 
 ## Features
 
-### Three-Pane Layout (similar to Xiphos)
+### Three-Pane Layout
 
 - **Left Pane** — Tabs for:
   - **Modules**: Tree view of all installed SWORD modules (Bibles, commentaries, dictionaries)
@@ -28,9 +28,9 @@ A desktop Bible study application built with C++17, featuring:
   - Dictionary/lexicon tab with module selector
   - Auto-updates commentary when navigating Bible text
 
-### Additional Features (similar to BibleTime)
+### Additional Features
 
-- **Word Hover Tooltip**: Hovering over words shows Strong's numbers, definitions, and morphology in a floating tooltip (like BibleTime's MAG viewer)
+- **Word Hover Tooltip**: Hovering over words shows Strong's numbers, definitions, and morphology in a preview widget in the left pane
 - **Right-Click Context Menu**:
   - Search for underlying Strong's number
   - Look up word in dictionary/lexicon
@@ -45,8 +45,8 @@ A desktop Bible study application built with C++17, featuring:
 
 | Library | Purpose | Notes |
 |---------|---------|-------|
-| [FLTK](https://www.fltk.org/) ≥ 1.3 | GUI toolkit | Linked statically |
-| [litehtml](https://github.com/nicehash/nicehash-litehtml) | HTML/CSS renderer | |
+| [FLTK](https://www.fltk.org/) ≥ 1.4 | GUI toolkit | Linked statically |
+| [litehtml](https://github.com/litehtml/litehtml) | HTML/CSS renderer | |
 | [SWORD](https://crosswire.org/sword/) ≥ 1.8 | Bible module access | |
 | X11 / Xft / fontconfig | Display (Linux) | |
 
