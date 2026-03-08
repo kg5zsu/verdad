@@ -51,6 +51,7 @@ set(SOURCES
     src/ui/StyledTabs.cpp
     src/ui/ModuleManagerDialog.cpp
     src/ui/HtmlWidget.cpp
+    src/ui/HtmlEditorWidget.cpp
     src/ui/LeftPane.cpp
     src/ui/BiblePane.cpp
     src/ui/RightPane.cpp
@@ -70,6 +71,7 @@ set(HEADERS
     src/ui/StyledTabs.h
     src/ui/ModuleManagerDialog.h
     src/ui/HtmlWidget.h
+    src/ui/HtmlEditorWidget.h
     src/ui/LeftPane.h
     src/ui/BiblePane.h
     src/ui/RightPane.h

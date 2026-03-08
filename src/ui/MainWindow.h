@@ -56,6 +56,8 @@ public:
         int leftPaneWidth = 300;
         int leftPanePreviewHeight = 150;
         int activeStudyTab = 0;
+        bool documentsTabActive = false;
+        std::string documentPath;
         std::vector<StudyTabState> studyTabs;
     };
 
@@ -284,6 +286,10 @@ private:
     // Menu callbacks
     static void onFileQuit(Fl_Widget* w, void* data);
     static void onFileModuleManager(Fl_Widget* w, void* data);
+    static void onFileNewDocument(Fl_Widget* w, void* data);
+    static void onFileOpenDocument(Fl_Widget* w, void* data);
+    static void onFileSaveDocument(Fl_Widget* w, void* data);
+    static void onFileCloseDocument(Fl_Widget* w, void* data);
     static void onNavigateGo(Fl_Widget* w, void* data);
     static void onViewParallel(Fl_Widget* w, void* data);
     static void onViewSettings(Fl_Widget* w, void* data);

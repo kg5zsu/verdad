@@ -1,16 +1,21 @@
 #include "ui/RightPane.h"
 #include "app/VerdadApp.h"
+#include "ui/HtmlEditorWidget.h"
 #include "ui/HtmlWidget.h"
+#include "ui/MainWindow.h"
 #include "ui/StyledTabs.h"
 #include "sword/SwordManager.h"
 #include "app/PerfTrace.h"
 
 #include <FL/Fl.H>
+#include <FL/Fl_Native_File_Chooser.H>
+#include <FL/fl_ask.H>
 
 #include <algorithm>
 #include <cctype>
 #include <fstream>
 #include <functional>
+#include <sstream>
 
 namespace verdad {
 namespace {
@@ -50,63 +55,6 @@ public:
 private:
     ResizeCallback resizeCb_;
 };
-
-void layoutTopTabs(int tabsX,
-                   int tabsY,
-                   int tabsW,
-                   int tabsH,
-                   Fl_Group* commentaryGroup,
-                   Fl_Choice* commentaryChoice,
-                   HtmlWidget* commentaryHtml,
-                   Fl_Group* generalBooksGroup,
-                   Fl_Choice* generalBookChoice,
-                   Fl_Input* generalBookKeyInput,
-                   Fl_Button* generalBookGoButton,
-                   HtmlWidget* generalBookHtml) {
-    if (!commentaryGroup || !commentaryChoice || !commentaryHtml ||
-        !generalBooksGroup || !generalBookChoice || !generalBookKeyInput ||
-        !generalBookGoButton || !generalBookHtml) {
-        return;
-    }
-
-    const int tabsHeaderH = 25;
-    const int choiceH = 25;
-    const int goW = 42;
-
-    int clampedTabsW = std::max(20, tabsW);
-    int clampedTabsH = std::max(20, tabsH);
-    int panelY = tabsY + tabsHeaderH;
-    int panelH = std::max(20, clampedTabsH - tabsHeaderH);
-
-    commentaryGroup->resize(tabsX, panelY, clampedTabsW, panelH);
-    generalBooksGroup->resize(tabsX, panelY, clampedTabsW, panelH);
-
-    int choiceW = std::max(20, clampedTabsW - 4);
-    commentaryChoice->resize(tabsX + 2, panelY + 2, choiceW, choiceH);
-    commentaryHtml->resize(tabsX + 2,
-                           panelY + choiceH + 4,
-                           choiceW,
-                           std::max(10, panelH - choiceH - 6));
-
-    generalBookChoice->resize(tabsX + 2, panelY + 2, choiceW, choiceH);
-
-    int keyW = std::max(20, clampedTabsW - 4 - goW - 2);
-    generalBookKeyInput->resize(tabsX + 2,
-                                panelY + choiceH + 4,
-                                keyW,
-                                choiceH);
-    generalBookGoButton->resize(tabsX + clampedTabsW - goW - 2,
-                                panelY + choiceH + 4,
-                                goW,
-                                choiceH);
-
-    int gbHtmlY = panelY + (choiceH * 2) + 6;
-    int gbHtmlH = std::max(10, panelH - (choiceH * 2) - 8);
-    generalBookHtml->resize(tabsX + 2,
-                            gbHtmlY,
-                            choiceW,
-                            gbHtmlH);
-}
 
 void layoutDictionaryPaneContents(int paneX,
                                   int paneY,
@@ -208,6 +156,13 @@ void selectFirstDictionaryModule(Fl_Choice* dictionaryChoice,
     dictionaryChoice->value(0);
 }
 
+std::string pathLeaf(const std::string& path) {
+    if (path.empty()) return "";
+    size_t slash = path.find_last_of("/\\");
+    if (slash == std::string::npos) return path;
+    return path.substr(slash + 1);
+}
+
 } // namespace
 
 RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
@@ -218,7 +173,11 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     , tabs_(nullptr)
     , commentaryGroup_(nullptr)
     , commentaryChoice_(nullptr)
+    , commentaryEditButton_(nullptr)
+    , commentarySaveButton_(nullptr)
+    , commentaryCancelButton_(nullptr)
     , commentaryHtml_(nullptr)
+    , commentaryEditor_(nullptr)
     , currentCommentary_()
     , currentCommentaryRef_()
     , dictionaryPaneGroup_(nullptr)
@@ -233,7 +192,15 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     , generalBookGoButton_(nullptr)
     , generalBookHtml_(nullptr)
     , currentGeneralBook_()
-    , currentGeneralBookKey_() {
+    , currentGeneralBookKey_()
+    , documentsGroup_(nullptr)
+    , documentNewButton_(nullptr)
+    , documentOpenButton_(nullptr)
+    , documentSaveButton_(nullptr)
+    , documentCloseButton_(nullptr)
+    , documentPathLabel_(nullptr)
+    , documentsEditor_(nullptr)
+    , currentDocumentPath_() {
     box(FL_FLAT_BOX);
 
     begin();
@@ -271,10 +238,25 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     commentaryGroup_->begin();
     commentaryChoice_ = new Fl_Choice(tileX + 2, panelY + 2, tileW - 4, choiceH);
     commentaryChoice_->callback(onCommentaryModuleChange, this);
+    commentaryEditButton_ = new Fl_Button(tileX + tileW - 154, panelY + 2, 48, choiceH, "Edit");
+    commentaryEditButton_->callback(onCommentaryEdit, this);
+    commentarySaveButton_ = new Fl_Button(tileX + tileW - 104, panelY + 2, 48, choiceH, "Save");
+    commentarySaveButton_->callback(onCommentarySave, this);
+    commentaryCancelButton_ = new Fl_Button(tileX + tileW - 54, panelY + 2, 52, choiceH, "Cancel");
+    commentaryCancelButton_->callback(onCommentaryCancel, this);
     commentaryHtml_ = new HtmlWidget(tileX + 2,
                                      panelY + choiceH + 4,
                                      tileW - 4,
                                      panelH - choiceH - 6);
+    commentaryHtml_->setLinkCallback(
+        [this](const std::string& url) { onHtmlLink(url, true); });
+    commentaryEditor_ = new HtmlEditorWidget(tileX + 2,
+                                             panelY + choiceH + 4,
+                                             tileW - 4,
+                                             panelH - choiceH - 6);
+    commentaryEditor_->setMode(HtmlEditorWidget::Mode::Commentary);
+    commentaryEditor_->setChangeCallback([this]() { updateCommentaryEditorChrome(); });
+    commentaryEditor_->hide();
     commentaryGroup_->end();
     commentaryGroup_->resizable(commentaryHtml_);
 
@@ -301,8 +283,31 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
                                       panelY + (choiceH * 2) + 6,
                                       tileW - 4,
                                       panelH - (choiceH * 2) - 8);
+    generalBookHtml_->setLinkCallback(
+        [this](const std::string& url) { onHtmlLink(url, false); });
     generalBooksGroup_->end();
     generalBooksGroup_->resizable(generalBookHtml_);
+
+    documentsGroup_ = new Fl_Group(tileX, panelY, tileW, panelH, "Documents");
+    documentsGroup_->begin();
+    documentNewButton_ = new Fl_Button(tileX + 2, panelY + 2, 48, choiceH, "New");
+    documentNewButton_->callback(onDocumentNew, this);
+    documentOpenButton_ = new Fl_Button(tileX + 52, panelY + 2, 52, choiceH, "Open");
+    documentOpenButton_->callback(onDocumentOpen, this);
+    documentSaveButton_ = new Fl_Button(tileX + 106, panelY + 2, 52, choiceH, "Save");
+    documentSaveButton_->callback(onDocumentSave, this);
+    documentCloseButton_ = new Fl_Button(tileX + 160, panelY + 2, 52, choiceH, "Close");
+    documentCloseButton_->callback(onDocumentClose, this);
+    documentPathLabel_ = new Fl_Box(tileX + 216, panelY + 2, tileW - 218, choiceH);
+    documentPathLabel_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    documentsEditor_ = new HtmlEditorWidget(tileX + 2,
+                                            panelY + choiceH + 4,
+                                            tileW - 4,
+                                            panelH - choiceH - 6);
+    documentsEditor_->setMode(HtmlEditorWidget::Mode::Document);
+    documentsEditor_->setChangeCallback([this]() { updateDocumentChrome(); });
+    documentsGroup_->end();
+    documentsGroup_->resizable(documentsEditor_);
 
     tabs_->end();
     tabs_->value(commentaryGroup_);
@@ -333,22 +338,13 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
                                      tileY + tabsInitH + choiceH + 4,
                                      dictRowW,
                                      (tileH - tabsInitH) - choiceH - 6);
+    dictionaryHtml_->setLinkCallback(
+        [this](const std::string& url) { onHtmlLink(url, false); });
     dictionaryPaneGroup_->end();
     dictionaryPaneGroup_->resizable(dictionaryHtml_);
 
     resizeTabs->setResizeCallback([this](int tabsX, int tabsY, int tabsW, int tabsH) {
-        layoutTopTabs(tabsX,
-                      tabsY,
-                      tabsW,
-                      tabsH,
-                      commentaryGroup_,
-                      commentaryChoice_,
-                      commentaryHtml_,
-                      generalBooksGroup_,
-                      generalBookChoice_,
-                      generalBookKeyInput_,
-                      generalBookGoButton_,
-                      generalBookHtml_);
+        layoutTopTabContents(tabsX, tabsY, tabsW, tabsH);
     });
 
     resizeDictionaryPane->setResizeCallback(
@@ -385,15 +381,111 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     populateCommentaryModules();
     populateDictionaryModules();
     populateGeneralBookModules();
+    documentsEditor_->clearDocument();
+    documentsEditor_->setModified(false);
+    updateCommentaryEditorChrome();
+    updateDocumentChrome();
 }
 
 RightPane::~RightPane() = default;
+
+void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH) {
+    if (!commentaryGroup_ || !commentaryChoice_ || !commentaryEditButton_ ||
+        !commentarySaveButton_ || !commentaryCancelButton_ || !commentaryHtml_ ||
+        !commentaryEditor_ || !generalBooksGroup_ || !generalBookChoice_ ||
+        !generalBookKeyInput_ || !generalBookGoButton_ || !generalBookHtml_ ||
+        !documentsGroup_ || !documentNewButton_ || !documentOpenButton_ ||
+        !documentSaveButton_ || !documentCloseButton_ || !documentPathLabel_ ||
+        !documentsEditor_) {
+        return;
+    }
+
+    const int tabsHeaderH = 25;
+    const int rowH = 25;
+    const int goW = 42;
+    const int buttonGap = 2;
+
+    int clampedTabsW = std::max(20, tabsW);
+    int clampedTabsH = std::max(20, tabsH);
+    int panelY = tabsY + tabsHeaderH;
+    int panelH = std::max(20, clampedTabsH - tabsHeaderH);
+    int contentX = tabsX + 2;
+    int contentW = std::max(20, clampedTabsW - 4);
+
+    commentaryGroup_->resize(tabsX, panelY, clampedTabsW, panelH);
+    generalBooksGroup_->resize(tabsX, panelY, clampedTabsW, panelH);
+    documentsGroup_->resize(tabsX, panelY, clampedTabsW, panelH);
+
+    int commentaryButtonsW =
+        commentaryEditButton_->w() + commentarySaveButton_->w() +
+        commentaryCancelButton_->w() + (buttonGap * 2);
+    int commentaryChoiceW = std::max(20, contentW - commentaryButtonsW - buttonGap);
+    int commentaryButtonsX = contentX + commentaryChoiceW + buttonGap;
+    commentaryChoice_->resize(contentX, panelY + 2, commentaryChoiceW, rowH);
+    commentaryEditButton_->resize(commentaryButtonsX,
+                                  panelY + 2,
+                                  commentaryEditButton_->w(),
+                                  rowH);
+    commentarySaveButton_->resize(commentaryEditButton_->x() + commentaryEditButton_->w() + buttonGap,
+                                  panelY + 2,
+                                  commentarySaveButton_->w(),
+                                  rowH);
+    commentaryCancelButton_->resize(commentarySaveButton_->x() + commentarySaveButton_->w() + buttonGap,
+                                    panelY + 2,
+                                    commentaryCancelButton_->w(),
+                                    rowH);
+    int commentaryContentY = panelY + rowH + 4;
+    int commentaryContentH = std::max(10, panelH - rowH - 6);
+    commentaryHtml_->resize(contentX, commentaryContentY, contentW, commentaryContentH);
+    static_cast<Fl_Widget*>(commentaryEditor_)
+        ->resize(contentX, commentaryContentY, contentW, commentaryContentH);
+
+    generalBookChoice_->resize(contentX, panelY + 2, contentW, rowH);
+    int generalKeyW = std::max(20, contentW - goW - buttonGap);
+    generalBookKeyInput_->resize(contentX, panelY + rowH + 4, generalKeyW, rowH);
+    generalBookGoButton_->resize(contentX + generalKeyW + buttonGap,
+                                 panelY + rowH + 4,
+                                 goW,
+                                 rowH);
+    generalBookHtml_->resize(contentX,
+                             panelY + (rowH * 2) + 6,
+                             contentW,
+                             std::max(10, panelH - (rowH * 2) - 8));
+
+    int docsButtonsW = documentNewButton_->w() + documentOpenButton_->w() +
+                       documentSaveButton_->w() + documentCloseButton_->w() +
+                       (buttonGap * 3);
+    int pathX = contentX + docsButtonsW + buttonGap;
+    documentNewButton_->resize(contentX, panelY + 2, documentNewButton_->w(), rowH);
+    documentOpenButton_->resize(documentNewButton_->x() + documentNewButton_->w() + buttonGap,
+                                panelY + 2,
+                                documentOpenButton_->w(),
+                                rowH);
+    documentSaveButton_->resize(documentOpenButton_->x() + documentOpenButton_->w() + buttonGap,
+                                panelY + 2,
+                                documentSaveButton_->w(),
+                                rowH);
+    documentCloseButton_->resize(documentSaveButton_->x() + documentSaveButton_->w() + buttonGap,
+                                 panelY + 2,
+                                 documentCloseButton_->w(),
+                                 rowH);
+    documentPathLabel_->resize(pathX,
+                               panelY + 2,
+                               std::max(20, contentX + contentW - pathX),
+                               rowH);
+    static_cast<Fl_Widget*>(documentsEditor_)
+        ->resize(contentX,
+                 panelY + rowH + 4,
+                 contentW,
+                 std::max(10, panelH - rowH - 6));
+}
 
 void RightPane::resize(int X, int Y, int W, int H) {
     Fl_Group::resize(X, Y, W, H);
 
     if (!contentTile_ || !contentResizeBox_ || !tabs_ || !commentaryGroup_ ||
-        !commentaryChoice_ || !commentaryHtml_ || !dictionaryPaneGroup_ ||
+        !commentaryChoice_ || !commentaryHtml_ || !commentaryEditor_ ||
+        !documentsGroup_ || !documentsEditor_ || !dictionaryPaneGroup_ ||
         !dictionaryKeyInput_ || !dictionaryChoice_ || !dictionaryHtml_ ||
         !generalBooksGroup_ ||
         !generalBookChoice_ || !generalBookKeyInput_ ||
@@ -420,18 +512,7 @@ void RightPane::resize(int X, int Y, int W, int H) {
                            std::max(minTopH, tileH - minBottomH));
 
     tabs_->resize(tileX, tileY, tileW, tabsH);
-    layoutTopTabs(tileX,
-                  tileY,
-                  tileW,
-                  tabsH,
-                  commentaryGroup_,
-                  commentaryChoice_,
-                  commentaryHtml_,
-                  generalBooksGroup_,
-                  generalBookChoice_,
-                  generalBookKeyInput_,
-                  generalBookGoButton_,
-                  generalBookHtml_);
+    layoutTopTabContents(tileX, tileY, tileW, tabsH);
 
     int dictY = tileY + tabsH;
     int dictH = tileH - tabsH;
@@ -466,6 +547,16 @@ void RightPane::showCommentary(const std::string& reference) {
 void RightPane::showCommentary(const std::string& moduleName,
                                const std::string& reference) {
     perf::ScopeTimer timer("RightPane::showCommentary");
+
+    if (commentaryEditing_ &&
+        (!commentaryEditModule_.empty() || !commentaryEditReference_.empty()) &&
+        (moduleName != commentaryEditModule_ ||
+         reference != commentaryEditReference_)) {
+        if (!saveCommentaryEdit(false)) {
+            return;
+        }
+    }
+
     currentCommentary_ = moduleName;
     currentCommentaryRef_ = reference;
 
@@ -519,8 +610,16 @@ void RightPane::showCommentary(const std::string& moduleName,
         }
     }
 
-    if (tabs_) {
+    if (commentaryEditing_) {
+        loadCommentaryEditorForCurrentEntry();
+    }
+
+    updateCommentaryEditorChrome();
+
+    if (tabs_ && activeTopTab_ != TopTab::Documents) {
         tabs_->value(commentaryGroup_);
+        activeTopTab_ = TopTab::Commentary;
+        secondaryTabIsGeneralBooks_ = false;
     }
 }
 
@@ -607,6 +706,8 @@ void RightPane::setCommentaryModule(const std::string& moduleName) {
             break;
         }
     }
+
+    updateCommentaryEditorChrome();
 }
 
 void RightPane::setDictionaryModule(const std::string& moduleName) {
@@ -636,12 +737,32 @@ void RightPane::setGeneralBookModule(const std::string& moduleName) {
 }
 
 bool RightPane::isDictionaryTabActive() const {
-    return tabs_ && tabs_->value() == generalBooksGroup_;
+    return secondaryTabIsGeneralBooks_;
 }
 
 void RightPane::setDictionaryTabActive(bool dictionaryActive) {
-    if (!tabs_) return;
+    secondaryTabIsGeneralBooks_ = dictionaryActive;
+    if (!tabs_ || activeTopTab_ == TopTab::Documents) return;
     tabs_->value(dictionaryActive ? generalBooksGroup_ : commentaryGroup_);
+    activeTopTab_ = dictionaryActive ? TopTab::GeneralBooks : TopTab::Commentary;
+    tabs_->redraw();
+}
+
+bool RightPane::isDocumentsTabActive() const {
+    return activeTopTab_ == TopTab::Documents;
+}
+
+void RightPane::setDocumentsTabActive(bool active) {
+    if (!tabs_) return;
+    if (active) {
+        tabs_->value(documentsGroup_);
+        activeTopTab_ = TopTab::Documents;
+    } else {
+        tabs_->value(secondaryTabIsGeneralBooks_ ? generalBooksGroup_ : commentaryGroup_);
+        activeTopTab_ = secondaryTabIsGeneralBooks_
+                            ? TopTab::GeneralBooks
+                            : TopTab::Commentary;
+    }
     tabs_->redraw();
 }
 
@@ -661,8 +782,10 @@ void RightPane::setCommentaryScrollY(int y) {
 
 void RightPane::setDictionaryPaneHeight(int height) {
     if (!contentTile_ || !tabs_ || !commentaryGroup_ || !commentaryChoice_ ||
-        !commentaryHtml_ || !generalBooksGroup_ || !generalBookChoice_ ||
+        !commentaryHtml_ || !commentaryEditor_ ||
+        !generalBooksGroup_ || !generalBookChoice_ ||
         !generalBookKeyInput_ || !generalBookGoButton_ || !generalBookHtml_ ||
+        !documentsGroup_ || !documentsEditor_ ||
         !dictionaryPaneGroup_ || !dictionaryKeyInput_ ||
         !dictionaryChoice_ || !dictionaryHtml_) {
         return;
@@ -683,18 +806,7 @@ void RightPane::setDictionaryPaneHeight(int height) {
     int tabsH = tileH - bottomH;
 
     tabs_->resize(tileX, tileY, tileW, tabsH);
-    layoutTopTabs(tileX,
-                  tileY,
-                  tileW,
-                  tabsH,
-                  commentaryGroup_,
-                  commentaryChoice_,
-                  commentaryHtml_,
-                  generalBooksGroup_,
-                  generalBookChoice_,
-                  generalBookKeyInput_,
-                  generalBookGoButton_,
-                  generalBookHtml_);
+    layoutTopTabContents(tileX, tileY, tileW, tabsH);
 
     layoutDictionaryPane(tileX,
                          tileY + tabsH,
@@ -739,6 +851,7 @@ void RightPane::setStudyState(const std::string& commentaryModule,
     }
 
     setDictionaryTabActive(dictionaryActive);
+    updateCommentaryEditorChrome();
 }
 
 RightPane::DisplayBuffer RightPane::captureDisplayBuffer() const {
@@ -909,17 +1022,25 @@ void RightPane::redrawChrome() {
         tabs_->redraw();
     }
     if (commentaryChoice_) commentaryChoice_->redraw();
+    if (commentaryEditButton_) commentaryEditButton_->redraw();
+    if (commentarySaveButton_) commentarySaveButton_->redraw();
+    if (commentaryCancelButton_) commentaryCancelButton_->redraw();
     if (dictionaryKeyInput_) dictionaryKeyInput_->redraw();
     if (dictionaryChoice_) dictionaryChoice_->redraw();
     if (generalBookChoice_) generalBookChoice_->redraw();
     if (generalBookKeyInput_) generalBookKeyInput_->redraw();
     if (generalBookGoButton_) generalBookGoButton_->redraw();
+    if (documentNewButton_) documentNewButton_->redraw();
+    if (documentOpenButton_) documentOpenButton_->redraw();
+    if (documentSaveButton_) documentSaveButton_->redraw();
+    if (documentCloseButton_) documentCloseButton_->redraw();
+    if (documentPathLabel_) documentPathLabel_->redraw();
     redraw();
 }
 
 void RightPane::refresh() {
     perf::ScopeTimer timer("RightPane::refresh");
-    bool keepGeneralBooksTab = isDictionaryTabActive();
+    TopTab keepTab = activeTopTab_;
 
     if (!currentCommentary_.empty() && !currentCommentaryRef_.empty()) {
         showCommentary(currentCommentary_, currentCommentaryRef_);
@@ -930,11 +1051,17 @@ void RightPane::refresh() {
     // Lazy-load general books to avoid paying parse/render cost on every cold
     // tab activation when user is reading commentary.
     if (!currentGeneralBook_.empty() &&
-        (keepGeneralBooksTab || !currentGeneralBookKey_.empty())) {
+        (secondaryTabIsGeneralBooks_ || !currentGeneralBookKey_.empty())) {
         showGeneralBookEntry(currentGeneralBook_, currentGeneralBookKey_);
     }
 
-    setDictionaryTabActive(keepGeneralBooksTab);
+    if (keepTab == TopTab::Documents) {
+        setDocumentsTabActive(true);
+    } else {
+        setDictionaryTabActive(keepTab == TopTab::GeneralBooks);
+    }
+    updateCommentaryEditorChrome();
+    updateDocumentChrome();
 }
 
 std::string RightPane::commentaryChapterKeyForReference(const std::string& reference,
@@ -990,6 +1117,31 @@ void RightPane::storeCommentaryCache(const std::string& cacheKey,
     }
 }
 
+void RightPane::invalidateCommentaryCache(const std::string& moduleName,
+                                          const std::string& reference) {
+    int verse = 0;
+    std::string chapterKey = commentaryChapterKeyForReference(reference, &verse);
+    if (chapterKey.empty()) {
+        commentaryChapterCache_.clear();
+        commentaryChapterCacheOrder_.clear();
+    } else {
+        std::string cacheKey = moduleName + "|" + chapterKey;
+        commentaryChapterCache_.erase(cacheKey);
+        auto it = std::find(commentaryChapterCacheOrder_.begin(),
+                            commentaryChapterCacheOrder_.end(),
+                            cacheKey);
+        if (it != commentaryChapterCacheOrder_.end()) {
+            commentaryChapterCacheOrder_.erase(it);
+        }
+    }
+
+    if (loadedCommentaryModule_ == moduleName &&
+        loadedCommentaryChapterKey_ == chapterKey) {
+        loadedCommentaryModule_.clear();
+        loadedCommentaryChapterKey_.clear();
+    }
+}
+
 void RightPane::setHtmlStyleOverride(const std::string& css) {
     if (commentaryHtml_) commentaryHtml_->setStyleOverrideCss(css);
     if (dictionaryHtml_) dictionaryHtml_->setStyleOverrideCss(css);
@@ -1012,6 +1164,8 @@ void RightPane::populateCommentaryModules() {
             currentCommentary_ = item.label();
         }
     }
+
+    updateCommentaryEditorChrome();
 }
 
 void RightPane::populateDictionaryModules() {
@@ -1071,17 +1225,343 @@ void RightPane::populateGeneralBookModules() {
     }
 }
 
+void RightPane::updateCommentaryEditorChrome() {
+    bool writable = !currentCommentary_.empty() &&
+                    !currentCommentaryRef_.empty() &&
+                    app_ &&
+                    app_->swordManager().moduleIsWritable(currentCommentary_);
+
+    if (!writable && commentaryEditing_) {
+        commentaryEditing_ = false;
+        commentaryEditModule_.clear();
+        commentaryEditReference_.clear();
+    }
+
+    if (commentaryEditButton_) {
+        if (writable && !commentaryEditing_) commentaryEditButton_->activate();
+        else commentaryEditButton_->deactivate();
+    }
+    if (commentarySaveButton_) {
+        if (commentaryEditing_ && writable) commentarySaveButton_->activate();
+        else commentarySaveButton_->deactivate();
+    }
+    if (commentaryCancelButton_) {
+        if (commentaryEditing_) commentaryCancelButton_->activate();
+        else commentaryCancelButton_->deactivate();
+    }
+
+    if (commentaryHtml_ && commentaryEditor_) {
+        if (commentaryEditing_) {
+            commentaryHtml_->hide();
+            commentaryEditor_->show();
+        } else {
+            commentaryEditor_->hide();
+            commentaryHtml_->show();
+        }
+    }
+}
+
+void RightPane::updateDocumentChrome() {
+    if (documentPathLabel_) {
+        std::string label;
+        if (currentDocumentPath_.empty()) {
+            label = "Untitled";
+        } else {
+            label = pathLeaf(currentDocumentPath_);
+        }
+        if (documentsEditor_ && documentsEditor_->isModified()) {
+            label += " *";
+        }
+        documentPathLabel_->copy_label(label.c_str());
+    }
+
+    if (documentSaveButton_) documentSaveButton_->activate();
+    if (documentNewButton_) documentNewButton_->activate();
+    if (documentOpenButton_) documentOpenButton_->activate();
+    if (documentCloseButton_) {
+        bool hasContent = documentsEditor_ &&
+                          (documentsEditor_->isModified() ||
+                           !documentsEditor_->html().empty() ||
+                           !currentDocumentPath_.empty());
+        if (hasContent) documentCloseButton_->activate();
+        else documentCloseButton_->deactivate();
+    }
+}
+
+void RightPane::loadCommentaryEditorForCurrentEntry() {
+    if (!commentaryEditor_) return;
+
+    commentaryEditModule_ = currentCommentary_;
+    commentaryEditReference_ = currentCommentaryRef_;
+    std::string rawHtml;
+    if (app_ && !commentaryEditModule_.empty() && !commentaryEditReference_.empty()) {
+        rawHtml = app_->swordManager().getRawEntry(commentaryEditModule_,
+                                                   commentaryEditReference_);
+    }
+    commentaryEditor_->setHtml(rawHtml);
+    commentaryEditor_->setModified(false);
+    commentaryEditor_->focusEditor();
+    updateCommentaryEditorChrome();
+}
+
+bool RightPane::beginCommentaryEdit() {
+    if (!app_ || currentCommentary_.empty() || currentCommentaryRef_.empty()) {
+        return false;
+    }
+    if (!app_->swordManager().moduleIsWritable(currentCommentary_)) {
+        return false;
+    }
+
+    commentaryEditing_ = true;
+    activeTopTab_ = TopTab::Commentary;
+    secondaryTabIsGeneralBooks_ = false;
+    if (tabs_) tabs_->value(commentaryGroup_);
+    loadCommentaryEditorForCurrentEntry();
+    return true;
+}
+
+bool RightPane::saveCommentaryEdit(bool exitEditMode) {
+    if (!commentaryEditor_ || !app_) return false;
+
+    std::string module = !commentaryEditModule_.empty()
+                             ? commentaryEditModule_
+                             : currentCommentary_;
+    std::string reference = !commentaryEditReference_.empty()
+                                ? commentaryEditReference_
+                                : currentCommentaryRef_;
+    if (module.empty() || reference.empty()) return true;
+
+    if (!app_->swordManager().setRawEntry(module, reference, commentaryEditor_->html())) {
+        fl_alert("Failed to save commentary note for %s.",
+                 reference.c_str());
+        return false;
+    }
+
+    commentaryEditor_->setModified(false);
+    invalidateCommentaryCache(module, reference);
+
+    if (exitEditMode) {
+        commentaryEditing_ = false;
+        commentaryEditModule_.clear();
+        commentaryEditReference_.clear();
+        if (!currentCommentary_.empty() && !currentCommentaryRef_.empty()) {
+            showCommentary(currentCommentary_, currentCommentaryRef_);
+        }
+    }
+
+    updateCommentaryEditorChrome();
+    return true;
+}
+
+void RightPane::cancelCommentaryEdit() {
+    if (!commentaryEditing_) return;
+    commentaryEditing_ = false;
+    commentaryEditModule_.clear();
+    commentaryEditReference_.clear();
+    if (commentaryEditor_) commentaryEditor_->setModified(false);
+    if (!currentCommentary_.empty() && !currentCommentaryRef_.empty()) {
+        showCommentary(currentCommentary_, currentCommentaryRef_);
+    } else {
+        updateCommentaryEditorChrome();
+    }
+}
+
+bool RightPane::maybeSaveDocumentChanges() {
+    if (!documentsEditor_ || !documentsEditor_->isModified()) return true;
+
+    int choice = fl_choice("Save changes to the current document?",
+                           "Cancel",
+                           "Discard",
+                           "Save");
+    if (choice == 0) return false;
+    if (choice == 2) return saveDocument();
+    return true;
+}
+
+bool RightPane::saveDocumentToPath(const std::string& path) {
+    if (!documentsEditor_ || path.empty()) return false;
+
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        fl_alert("Failed to open document for writing:\n%s", path.c_str());
+        return false;
+    }
+
+    out << documentsEditor_->html();
+    out.close();
+    if (!out) {
+        fl_alert("Failed to save document:\n%s", path.c_str());
+        return false;
+    }
+
+    currentDocumentPath_ = path;
+    documentsEditor_->setModified(false);
+    updateDocumentChrome();
+    return true;
+}
+
+bool RightPane::saveDocumentAs() {
+    Fl_Native_File_Chooser chooser;
+    chooser.title("Save Document");
+    chooser.type(Fl_Native_File_Chooser::BROWSE_SAVE_FILE);
+    chooser.filter("HTML Files\t*.html\nAll Files\t*");
+    if (!currentDocumentPath_.empty()) {
+        chooser.preset_file(currentDocumentPath_.c_str());
+    } else {
+        chooser.preset_file("notes.html");
+    }
+
+    int result = chooser.show();
+    if (result != 0) {
+        if (result < 0) {
+            fl_alert("Unable to open the file chooser.");
+        }
+        return false;
+    }
+
+    std::string path = chooser.filename() ? chooser.filename() : "";
+    if (path.empty()) return false;
+    if (path.find('.') == std::string::npos) {
+        path += ".html";
+    }
+    return saveDocumentToPath(path);
+}
+
+bool RightPane::newDocument() {
+    if (!maybeSaveDocumentChanges() || !documentsEditor_) return false;
+    currentDocumentPath_.clear();
+    documentsEditor_->clearDocument();
+    documentsEditor_->setModified(false);
+    updateDocumentChrome();
+    setDocumentsTabActive(true);
+    documentsEditor_->focusEditor();
+    return true;
+}
+
+bool RightPane::openDocument() {
+    Fl_Native_File_Chooser chooser;
+    chooser.title("Open Document");
+    chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
+    chooser.filter("HTML Files\t*.html;*.htm\nAll Files\t*");
+    if (!currentDocumentPath_.empty()) {
+        chooser.preset_file(currentDocumentPath_.c_str());
+    }
+
+    int result = chooser.show();
+    if (result != 0) {
+        if (result < 0) {
+            fl_alert("Unable to open the file chooser.");
+        }
+        return false;
+    }
+
+    std::string path = chooser.filename() ? chooser.filename() : "";
+    return openDocument(path, true);
+}
+
+bool RightPane::openDocument(const std::string& path, bool activateTab) {
+    if (path.empty() || !documentsEditor_) return false;
+    if (!maybeSaveDocumentChanges()) return false;
+
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        fl_alert("Failed to open document:\n%s", path.c_str());
+        return false;
+    }
+
+    std::string html((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+    documentsEditor_->setHtml(html);
+    documentsEditor_->setModified(false);
+    currentDocumentPath_ = path;
+    updateDocumentChrome();
+
+    if (activateTab) {
+        setDocumentsTabActive(true);
+        documentsEditor_->focusEditor();
+    }
+    return true;
+}
+
+bool RightPane::saveDocument() {
+    if (!documentsEditor_) return false;
+    if (currentDocumentPath_.empty()) return saveDocumentAs();
+    return saveDocumentToPath(currentDocumentPath_);
+}
+
+bool RightPane::closeDocument() {
+    if (!maybeSaveDocumentChanges() || !documentsEditor_) return false;
+
+    currentDocumentPath_.clear();
+    documentsEditor_->clearDocument();
+    documentsEditor_->setModified(false);
+    updateDocumentChrome();
+    return true;
+}
+
+void RightPane::onHtmlLink(const std::string& url, bool commentarySource) {
+    if (!app_ || !app_->mainWindow()) return;
+
+    if (url.rfind("sword://", 0) == 0) {
+        app_->mainWindow()->navigateTo(url.substr(8));
+        return;
+    }
+    if (url.rfind("strongs:", 0) == 0 || url.rfind("strong:", 0) == 0) {
+        size_t colon = url.find(':');
+        if (colon != std::string::npos) {
+            app_->mainWindow()->showDictionary(url.substr(colon + 1));
+        }
+        return;
+    }
+    if (url.rfind("morph:", 0) == 0) {
+        app_->mainWindow()->showDictionary(url.substr(6));
+        return;
+    }
+    if (commentarySource && url.rfind("verse:", 0) == 0) {
+        try {
+            int verse = std::stoi(url.substr(6));
+            SwordManager::VerseRef ref = SwordManager::parseVerseRef(currentCommentaryRef_);
+            if (!ref.book.empty() && ref.chapter > 0 && verse > 0) {
+                std::ostringstream target;
+                target << ref.book << " " << ref.chapter << ":" << verse;
+                app_->mainWindow()->navigateTo(target.str());
+                return;
+            }
+        } catch (...) {
+        }
+    }
+}
+
 void RightPane::onCommentaryModuleChange(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self || !self->commentaryChoice_) return;
     const Fl_Menu_Item* item = self->commentaryChoice_->mvalue();
     if (item && item->label()) {
         self->currentCommentary_ = item->label();
+        self->updateCommentaryEditorChrome();
         if (!self->currentCommentaryRef_.empty()) {
             self->showCommentary(self->currentCommentary_,
                                  self->currentCommentaryRef_);
         }
     }
+}
+
+void RightPane::onCommentaryEdit(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self) return;
+    self->beginCommentaryEdit();
+}
+
+void RightPane::onCommentarySave(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self) return;
+    self->saveCommentaryEdit(true);
+}
+
+void RightPane::onCommentaryCancel(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self) return;
+    self->cancelCommentaryEdit();
 }
 
 void RightPane::onDictionaryModuleChange(Fl_Widget* /*w*/, void* data) {
@@ -1119,14 +1599,39 @@ void RightPane::onTopTabChange(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self || !self->tabs_) return;
 
-    if (self->tabs_->value() == self->generalBooksGroup_) {
+    Fl_Widget* active = self->tabs_->value();
+    if (!active) return;
+
+    if (self->commentaryEditing_ && active != self->commentaryGroup_) {
+        if (!self->saveCommentaryEdit(true)) {
+            self->tabs_->value(self->commentaryGroup_);
+            self->activeTopTab_ = TopTab::Commentary;
+            self->secondaryTabIsGeneralBooks_ = false;
+            return;
+        }
+    }
+
+    if (active == self->documentsGroup_) {
+        self->tabs_->value(self->documentsGroup_);
+        self->activeTopTab_ = TopTab::Documents;
+        self->updateDocumentChrome();
+        return;
+    }
+
+    if (active == self->generalBooksGroup_) {
+        self->tabs_->value(self->generalBooksGroup_);
+        self->activeTopTab_ = TopTab::GeneralBooks;
+        self->secondaryTabIsGeneralBooks_ = true;
         if (self->generalBookHtml_ &&
             self->generalBookHtml_->currentHtml().empty() &&
             !self->currentGeneralBook_.empty()) {
             self->showGeneralBookEntry(self->currentGeneralBook_,
                                        self->currentGeneralBookKey_);
         }
-    } else if (self->tabs_->value() == self->commentaryGroup_) {
+    } else if (active == self->commentaryGroup_) {
+        self->tabs_->value(self->commentaryGroup_);
+        self->activeTopTab_ = TopTab::Commentary;
+        self->secondaryTabIsGeneralBooks_ = false;
         if (self->commentaryHtml_ &&
             self->commentaryHtml_->currentHtml().empty() &&
             !self->currentCommentary_.empty() &&
@@ -1163,6 +1668,30 @@ void RightPane::onGeneralBookGo(Fl_Widget* /*w*/, void* data) {
 
 void RightPane::onGeneralBookKeyInput(Fl_Widget* /*w*/, void* data) {
     onGeneralBookGo(nullptr, data);
+}
+
+void RightPane::onDocumentNew(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self) return;
+    self->newDocument();
+}
+
+void RightPane::onDocumentOpen(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self) return;
+    self->openDocument();
+}
+
+void RightPane::onDocumentSave(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self) return;
+    self->saveDocument();
+}
+
+void RightPane::onDocumentClose(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self) return;
+    self->closeDocument();
 }
 
 } // namespace verdad

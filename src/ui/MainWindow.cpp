@@ -1514,6 +1514,10 @@ MainWindow::SessionState MainWindow::captureSessionState() {
         state.leftPanePreviewHeight = leftPane_->previewHeight();
     }
     state.activeStudyTab = activeStudyTab_;
+    if (rightPane_) {
+        state.documentsTabActive = rightPane_->isDocumentsTabActive();
+        state.documentPath = rightPane_->currentDocumentPath();
+    }
 
     int sharedBiblePaneWidth = biblePane_ ? biblePane_->w() : 0;
     for (const auto& ctx : studyTabs_) {
@@ -1566,6 +1570,14 @@ void MainWindow::restoreSessionState(const SessionState& state) {
 
     if (state.studyTabs.empty() || !studyTabsWidget_) {
         addStudyTab("", "Genesis", 1, 1);
+        if (rightPane_) {
+            if (!state.documentPath.empty()) {
+                rightPane_->openDocument(state.documentPath, false);
+            }
+            if (state.documentsTabActive) {
+                rightPane_->setDocumentsTabActive(true);
+            }
+        }
         redraw();
         return;
     }
@@ -1619,6 +1631,15 @@ void MainWindow::restoreSessionState(const SessionState& state) {
         studyTabsWidget_->value(studyTabs_[idx].tabGroup);
         activeStudyTab_ = -1;
         activateStudyTab(idx);
+    }
+
+    if (rightPane_) {
+        if (!state.documentPath.empty()) {
+            rightPane_->openDocument(state.documentPath, false);
+        }
+        if (state.documentsTabActive) {
+            rightPane_->setDocumentsTabActive(true);
+        }
     }
 
     redraw();
@@ -1786,6 +1807,10 @@ void MainWindow::onStudyTabChange(Fl_Widget* /*w*/, void* data) {
 }
 
 void MainWindow::buildMenu() {
+    menuBar_->add("&File/&New Document", FL_CTRL + 'n', onFileNewDocument, this);
+    menuBar_->add("&File/&Open Document...", FL_CTRL + 'o', onFileOpenDocument, this);
+    menuBar_->add("&File/&Save Document", FL_CTRL + 's', onFileSaveDocument, this);
+    menuBar_->add("&File/&Close Document", FL_CTRL + 'w', onFileCloseDocument, this);
     menuBar_->add("&File/&Module Manager...", 0, onFileModuleManager, this);
     menuBar_->add("&File/&Quit", FL_CTRL + 'q', onFileQuit, this);
     menuBar_->add("&Navigate/&Go to Verse...", FL_CTRL + 'g', onNavigateGo, this);
@@ -1807,6 +1832,30 @@ void MainWindow::onFileModuleManager(Fl_Widget* /*w*/, void* data) {
 
     ModuleManagerDialog dlg(self->app_);
     dlg.openModal();
+}
+
+void MainWindow::onFileNewDocument(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<MainWindow*>(data);
+    if (!self || !self->rightPane_) return;
+    self->rightPane_->newDocument();
+}
+
+void MainWindow::onFileOpenDocument(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<MainWindow*>(data);
+    if (!self || !self->rightPane_) return;
+    self->rightPane_->openDocument();
+}
+
+void MainWindow::onFileSaveDocument(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<MainWindow*>(data);
+    if (!self || !self->rightPane_) return;
+    self->rightPane_->saveDocument();
+}
+
+void MainWindow::onFileCloseDocument(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<MainWindow*>(data);
+    if (!self || !self->rightPane_) return;
+    self->rightPane_->closeDocument();
 }
 
 void MainWindow::onNavigateGo(Fl_Widget* /*w*/, void* data) {

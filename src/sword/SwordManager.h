@@ -119,6 +119,22 @@ public:
     std::string getCommentaryText(const std::string& moduleName,
                                   const std::string& key);
 
+    /// Return whether the given module supports writing entries.
+    bool moduleIsWritable(const std::string& moduleName) const;
+
+    /// Return the raw source text stored for an entry.
+    std::string getRawEntry(const std::string& moduleName,
+                            const std::string& key);
+
+    /// Write raw source text to an entry. Empty text deletes the entry.
+    bool setRawEntry(const std::string& moduleName,
+                     const std::string& key,
+                     const std::string& text);
+
+    /// Delete a module entry.
+    bool deleteEntry(const std::string& moduleName,
+                     const std::string& key);
+
     /// Get dictionary/lexicon entry
     std::string getDictionaryEntry(const std::string& moduleName,
                                    const std::string& key);

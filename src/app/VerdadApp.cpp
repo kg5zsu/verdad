@@ -398,6 +398,8 @@ void VerdadApp::loadPreferences() {
         state.leftPaneWidth = parseIntOr(prefs["left_pane_w"], 300);
         state.leftPanePreviewHeight = parseIntOr(prefs["left_pane_preview_h"], 150);
         state.activeStudyTab = parseIntOr(prefs["active_study_tab"], 0);
+        state.documentsTabActive = parseBoolOr(prefs["documents_tab_active"], false);
+        state.documentPath = prefs["document_path"];
 
         int tabCount = std::max(0, parseIntOr(prefs["study_tab_count"], 0));
         tabCount = std::min(tabCount, 64);
@@ -491,6 +493,8 @@ void VerdadApp::savePreferences() {
         file << "left_pane_w=" << state.leftPaneWidth << "\n";
         file << "left_pane_preview_h=" << state.leftPanePreviewHeight << "\n";
         file << "active_study_tab=" << state.activeStudyTab << "\n";
+        file << "documents_tab_active=" << (state.documentsTabActive ? 1 : 0) << "\n";
+        file << "document_path=" << state.documentPath << "\n";
         file << "study_tab_count=" << state.studyTabs.size() << "\n";
 
         for (size_t i = 0; i < state.studyTabs.size(); ++i) {

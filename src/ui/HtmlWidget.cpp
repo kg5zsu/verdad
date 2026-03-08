@@ -5,6 +5,7 @@
 #include <FL/Fl.H>
 #include <FL/fl_draw.H>
 #include <FL/Fl_Scrollbar.H>
+#include <FL/fl_utf8.h>
 #include <litehtml/master_css.h>
 
 #include <algorithm>
@@ -381,6 +382,180 @@ HtmlWidget::~HtmlWidget() {
     scrollbar_ = nullptr;
 }
 
+void HtmlWidget::clearSelection() {
+    selectionAnchor_ = SelectionPoint{};
+    selectionFocus_ = SelectionPoint{};
+    selecting_ = false;
+    dragSelecting_ = false;
+}
+
+bool HtmlWidget::selectionPointLess(const SelectionPoint& lhs,
+                                    const SelectionPoint& rhs) const {
+    if (lhs.fragmentIndex != rhs.fragmentIndex) {
+        return lhs.fragmentIndex < rhs.fragmentIndex;
+    }
+    return lhs.charIndex < rhs.charIndex;
+}
+
+bool HtmlWidget::hasSelection() const {
+    if (!selectionAnchor_.valid || !selectionFocus_.valid) return false;
+    return selectionAnchor_.fragmentIndex != selectionFocus_.fragmentIndex ||
+           selectionAnchor_.charIndex != selectionFocus_.charIndex;
+}
+
+HtmlWidget::SelectionPoint HtmlWidget::hitTestSelectionPoint(int screenX,
+                                                             int screenY) const {
+    SelectionPoint best;
+    if (textFragments_.empty()) return best;
+
+    long bestScore = std::numeric_limits<long>::max();
+
+    for (size_t i = 0; i < textFragments_.size(); ++i) {
+        const TextFragment& fragment = textFragments_[i];
+        if (fragment.byteOffsets.empty() || fragment.xOffsets.empty()) continue;
+
+        int left = static_cast<int>(fragment.pos.x);
+        int right = static_cast<int>(fragment.pos.x + fragment.pos.width);
+        int top = static_cast<int>(fragment.pos.y);
+        int bottom = static_cast<int>(fragment.pos.y + fragment.pos.height);
+
+        int verticalDistance = 0;
+        if (screenY < top) verticalDistance = top - screenY;
+        else if (screenY > bottom) verticalDistance = screenY - bottom;
+
+        int horizontalDistance = 0;
+        if (screenX < left) horizontalDistance = left - screenX;
+        else if (screenX > right) horizontalDistance = screenX - right;
+
+        long score = static_cast<long>(verticalDistance) * 100000L +
+                     static_cast<long>(horizontalDistance) * 100L +
+                     static_cast<long>(i);
+        if (score >= bestScore) continue;
+
+        int charCount = static_cast<int>(fragment.byteOffsets.size()) - 1;
+        int charIndex = 0;
+        if (screenX <= left) {
+            charIndex = 0;
+        } else if (screenX >= right) {
+            charIndex = charCount;
+        } else {
+            int localX = screenX - left;
+            charIndex = charCount;
+            for (int ch = 0; ch < charCount; ++ch) {
+                int startX = fragment.xOffsets[ch];
+                int endX = fragment.xOffsets[ch + 1];
+                int midX = startX + ((endX - startX) / 2);
+                if (localX < midX) {
+                    charIndex = ch;
+                    break;
+                }
+            }
+        }
+
+        best.fragmentIndex = static_cast<int>(i);
+        best.charIndex = std::clamp(charIndex, 0, charCount);
+        best.valid = true;
+        bestScore = score;
+    }
+
+    return best;
+}
+
+bool HtmlWidget::fragmentSelectionRange(int fragmentIndex,
+                                        int& startChar,
+                                        int& endChar) const {
+    startChar = 0;
+    endChar = 0;
+    if (!hasSelection() ||
+        fragmentIndex < 0 ||
+        fragmentIndex >= static_cast<int>(textFragments_.size())) {
+        return false;
+    }
+
+    SelectionPoint start = selectionAnchor_;
+    SelectionPoint end = selectionFocus_;
+    if (selectionPointLess(end, start)) std::swap(start, end);
+
+    if (fragmentIndex < start.fragmentIndex || fragmentIndex > end.fragmentIndex) {
+        return false;
+    }
+
+    const TextFragment& fragment = textFragments_[fragmentIndex];
+    int charCount = static_cast<int>(fragment.byteOffsets.size()) - 1;
+    startChar = 0;
+    endChar = charCount;
+    if (fragmentIndex == start.fragmentIndex) startChar = start.charIndex;
+    if (fragmentIndex == end.fragmentIndex) endChar = end.charIndex;
+
+    startChar = std::clamp(startChar, 0, charCount);
+    endChar = std::clamp(endChar, 0, charCount);
+    return endChar > startChar;
+}
+
+std::string HtmlWidget::selectedText() const {
+    if (!hasSelection()) return "";
+
+    SelectionPoint start = selectionAnchor_;
+    SelectionPoint end = selectionFocus_;
+    if (selectionPointLess(end, start)) std::swap(start, end);
+
+    std::string out;
+    int prevFragmentIndex = -1;
+    int prevEndChar = 0;
+
+    for (int i = start.fragmentIndex;
+         i <= end.fragmentIndex &&
+         i < static_cast<int>(textFragments_.size());
+         ++i) {
+        const TextFragment& fragment = textFragments_[i];
+        int charStart = 0;
+        int charEnd = 0;
+        if (!fragmentSelectionRange(i, charStart, charEnd)) continue;
+
+        int byteStart = fragment.byteOffsets[charStart];
+        int byteEnd = fragment.byteOffsets[charEnd];
+        if (byteEnd <= byteStart) continue;
+
+        std::string part = fragment.text.substr(byteStart, byteEnd - byteStart);
+        if (part.empty()) continue;
+
+        if (!out.empty() && prevFragmentIndex >= 0 &&
+            prevFragmentIndex < static_cast<int>(textFragments_.size())) {
+            const TextFragment& prev = textFragments_[prevFragmentIndex];
+            int prevLineThreshold =
+                std::max(static_cast<int>(prev.pos.height),
+                         static_cast<int>(fragment.pos.height)) / 2;
+            bool newLine =
+                std::abs(static_cast<int>(fragment.pos.y - prev.pos.y)) > prevLineThreshold;
+            if (newLine) {
+                if (out.back() != '\n') out.push_back('\n');
+            } else {
+                int prevEndX = static_cast<int>(prev.pos.x) + prev.xOffsets[prevEndChar];
+                int curStartX = static_cast<int>(fragment.pos.x) + fragment.xOffsets[charStart];
+                if (curStartX > prevEndX + 3 &&
+                    !std::isspace(static_cast<unsigned char>(out.back())) &&
+                    !std::isspace(static_cast<unsigned char>(part.front()))) {
+                    out.push_back(' ');
+                }
+            }
+        }
+
+        out += part;
+        prevFragmentIndex = i;
+        prevEndChar = charEnd;
+    }
+
+    return out;
+}
+
+bool HtmlWidget::copySelectionToClipboard() {
+    std::string text = selectedText();
+    if (text.empty()) return false;
+    Fl::copy(text.c_str(), static_cast<int>(text.size()), 0);
+    Fl::copy(text.c_str(), static_cast<int>(text.size()), 1);
+    return true;
+}
+
 void HtmlWidget::setHtml(const std::string& html, const std::string& baseUrl) {
     perf::ScopeTimer timer("HtmlWidget::setHtml");
     if (reflowScheduled_) {
@@ -391,6 +566,8 @@ void HtmlWidget::setHtml(const std::string& html, const std::string& baseUrl) {
     currentHtml_ = html;
     baseUrl_ = baseUrl;
     scrollY_ = 0;
+    clearSelection();
+    textFragments_.clear();
 
     // Wrap in basic HTML if not already
     std::string fullHtml = html;
@@ -511,6 +688,8 @@ HtmlWidget::Snapshot HtmlWidget::takeSnapshot() {
     lastHoverStrong_.clear();
     lastHoverMorph_.clear();
     lastHoverModule_.clear();
+    clearSelection();
+    textFragments_.clear();
     updateScrollbar();
 
     return snapshot;
@@ -534,6 +713,8 @@ void HtmlWidget::restoreSnapshot(const Snapshot& snapshot) {
     lastHoverStrong_.clear();
     lastHoverMorph_.clear();
     lastHoverModule_.clear();
+    clearSelection();
+    textFragments_.clear();
 
     bool reusedLayout = false;
     if (doc_) {
@@ -591,6 +772,8 @@ void HtmlWidget::restoreSnapshot(Snapshot&& snapshot) {
     lastHoverStrong_.clear();
     lastHoverMorph_.clear();
     lastHoverModule_.clear();
+    clearSelection();
+    textFragments_.clear();
 
     snapshot.doc.reset();
     snapshot.scrollY = 0;
@@ -697,6 +880,7 @@ void HtmlWidget::draw() {
     fl_rectf(x(), y(), w(), h());
 
     if (doc_) {
+        textFragments_.clear();
         // Set up clip for content area (exclude scrollbar)
         int sbW = scrollbar_->visible() ? 16 : 0;
         fl_push_clip(x(), y(), w() - sbW, h());
@@ -707,6 +891,7 @@ void HtmlWidget::draw() {
 
         fl_pop_clip();
     } else {
+        textFragments_.clear();
         // No content
         fl_color(FL_DARK3);
         fl_font(FL_HELVETICA, 12);
@@ -724,6 +909,7 @@ void HtmlWidget::draw() {
 int HtmlWidget::handle(int event) {
     switch (event) {
     case FL_PUSH: {
+        take_focus();
         if (Fl::event_button() == FL_RIGHT_MOUSE && contextCallback_) {
             // Right-click context menu
             if (doc_) {
@@ -801,6 +987,16 @@ int HtmlWidget::handle(int event) {
             return 1;
         }
 
+        if (Fl::event_button() == FL_LEFT_MOUSE) {
+            selectionAnchor_ = hitTestSelectionPoint(Fl::event_x(), Fl::event_y());
+            selectionFocus_ = selectionAnchor_;
+            selecting_ = selectionAnchor_.valid;
+            dragSelecting_ = false;
+            selectionStartX_ = Fl::event_x();
+            selectionStartY_ = Fl::event_y();
+            if (!hasSelection()) redraw();
+        }
+
         if (doc_) {
             litehtml::position::vector redraw;
             if (doc_->on_lbutton_down(Fl::event_x() - x(),
@@ -814,7 +1010,37 @@ int HtmlWidget::handle(int event) {
         return 1;
     }
 
+    case FL_DRAG: {
+        if (selecting_) {
+            SelectionPoint point = hitTestSelectionPoint(Fl::event_x(), Fl::event_y());
+            if (point.valid) {
+                selectionFocus_ = point;
+                dragSelecting_ =
+                    dragSelecting_ ||
+                    std::abs(Fl::event_x() - selectionStartX_) > 2 ||
+                    std::abs(Fl::event_y() - selectionStartY_) > 2;
+                redraw();
+            }
+            return 1;
+        }
+        return 1;
+    }
+
     case FL_RELEASE: {
+        if (Fl::event_button() == FL_LEFT_MOUSE && selecting_) {
+            SelectionPoint point = hitTestSelectionPoint(Fl::event_x(), Fl::event_y());
+            if (point.valid) {
+                selectionFocus_ = point;
+            }
+            selecting_ = false;
+            bool suppressClick = dragSelecting_ || hasSelection();
+            dragSelecting_ = false;
+            if (suppressClick) {
+                redraw();
+                return 1;
+            }
+        }
+
         if (doc_) {
             litehtml::position::vector redraw;
             if (doc_->on_lbutton_up(Fl::event_x() - x(),
@@ -932,6 +1158,27 @@ int HtmlWidget::handle(int event) {
         return 1;
     }
 
+    case FL_KEYBOARD:
+    case FL_SHORTCUT: {
+        const bool ctrl = (Fl::event_state() & FL_CTRL) != 0;
+        const int key = Fl::event_key();
+        if (ctrl && (key == 'c' || key == 'C')) {
+            return copySelectionToClipboard() ? 1 : 0;
+        }
+        if (ctrl && (key == 'a' || key == 'A') && !textFragments_.empty()) {
+            selectionAnchor_.fragmentIndex = 0;
+            selectionAnchor_.charIndex = 0;
+            selectionAnchor_.valid = true;
+            selectionFocus_.fragmentIndex = static_cast<int>(textFragments_.size()) - 1;
+            selectionFocus_.charIndex =
+                static_cast<int>(textFragments_.back().byteOffsets.size()) - 1;
+            selectionFocus_.valid = true;
+            redraw();
+            return 1;
+        }
+        break;
+    }
+
     case FL_ENTER:
         return 1;
 
@@ -961,6 +1208,8 @@ int HtmlWidget::handle(int event) {
 
 void HtmlWidget::resize(int X, int Y, int W, int H) {
     Fl_Widget::resize(X, Y, W, H);
+    clearSelection();
+    textFragments_.clear();
 
     if (scrollbar_) {
         const int sbW = 16;
@@ -1038,9 +1287,64 @@ void HtmlWidget::draw_text(litehtml::uint_ptr hdc, const char* text,
     if (it == fonts_.end()) return;
 
     fl_font(it->second.flFont, it->second.size);
-    fl_color(color.red, color.green, color.blue);
-    fl_draw(text, static_cast<int>(pos.x),
-            static_cast<int>(pos.y + pos.height) - fl_descent());
+
+    TextFragment fragment;
+    fragment.text = text ? text : "";
+    fragment.pos = pos;
+    fragment.byteOffsets.push_back(0);
+    fragment.xOffsets.push_back(0);
+
+    int cursorX = 0;
+    for (size_t i = 0; i < fragment.text.size();) {
+        int len = fl_utf8len1(static_cast<unsigned char>(fragment.text[i]));
+        if (len <= 0 || i + static_cast<size_t>(len) > fragment.text.size()) len = 1;
+        cursorX += static_cast<int>(fl_width(fragment.text.data() + i, len));
+        i += static_cast<size_t>(len);
+        fragment.byteOffsets.push_back(static_cast<int>(i));
+        fragment.xOffsets.push_back(cursorX);
+    }
+
+    const int baselineY = static_cast<int>(pos.y + pos.height) - fl_descent();
+    int fragmentIndex = static_cast<int>(textFragments_.size());
+    textFragments_.push_back(fragment);
+
+    auto drawRun = [&](int startChar,
+                       int endChar,
+                       Fl_Color fg,
+                       bool selected) {
+        if (startChar >= endChar) return;
+        const TextFragment& current = textFragments_.back();
+        int byteStart = current.byteOffsets[startChar];
+        int byteEnd = current.byteOffsets[endChar];
+        std::string chunk = current.text.substr(byteStart, byteEnd - byteStart);
+        int drawX = static_cast<int>(pos.x) + current.xOffsets[startChar];
+        int drawW = current.xOffsets[endChar] - current.xOffsets[startChar];
+        if (selected) {
+            fl_color(FL_SELECTION_COLOR);
+            fl_rectf(drawX,
+                     static_cast<int>(pos.y),
+                     std::max(1, drawW),
+                     static_cast<int>(pos.height));
+        }
+        fl_color(fg);
+        fl_draw(chunk.c_str(), static_cast<int>(chunk.size()), drawX, baselineY);
+    };
+
+    int selStart = 0;
+    int selEnd = 0;
+    if (fragmentSelectionRange(fragmentIndex, selStart, selEnd)) {
+        Fl_Color normalColor = fl_rgb_color(color.red, color.green, color.blue);
+        Fl_Color selectedColor = fl_contrast(FL_FOREGROUND_COLOR, FL_SELECTION_COLOR);
+        drawRun(0, selStart, normalColor, false);
+        drawRun(selStart, selEnd, selectedColor, true);
+        drawRun(selEnd,
+                static_cast<int>(fragment.byteOffsets.size()) - 1,
+                normalColor,
+                false);
+    } else {
+        fl_color(color.red, color.green, color.blue);
+        fl_draw(text, static_cast<int>(pos.x), baselineY);
+    }
 
     // Draw decorations
     if (it->second.decorationLine & litehtml::text_decoration_line_underline) {

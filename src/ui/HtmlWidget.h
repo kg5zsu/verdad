@@ -29,6 +29,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <vector>
 
 namespace verdad {
 
@@ -85,6 +86,9 @@ public:
 
     /// Restore rendered state snapshot (move).
     void restoreSnapshot(Snapshot&& snapshot);
+
+    /// Copy the current text selection to the clipboard.
+    bool copySelectionToClipboard();
 
     /// Handle widget geometry updates and rerender on resize.
     void resize(int X, int Y, int W, int H) override;
@@ -214,6 +218,27 @@ private:
     std::string lastHoverMorph_;
     std::string lastHoverModule_;
 
+    struct TextFragment {
+        std::string text;
+        litehtml::position pos;
+        std::vector<int> byteOffsets;
+        std::vector<int> xOffsets;
+    };
+
+    struct SelectionPoint {
+        int fragmentIndex = -1;
+        int charIndex = 0;
+        bool valid = false;
+    };
+
+    std::vector<TextFragment> textFragments_;
+    SelectionPoint selectionAnchor_;
+    SelectionPoint selectionFocus_;
+    bool selecting_ = false;
+    bool dragSelecting_ = false;
+    int selectionStartX_ = 0;
+    int selectionStartY_ = 0;
+
     // Clip stack
     struct ClipRect {
         int x, y, w, h;
@@ -237,6 +262,13 @@ private:
 
     /// Map an FLTK font from a face name
     Fl_Font mapFont(const char* faceName, int weight, bool italic);
+
+    void clearSelection();
+    bool hasSelection() const;
+    SelectionPoint hitTestSelectionPoint(int screenX, int screenY) const;
+    bool fragmentSelectionRange(int fragmentIndex, int& startChar, int& endChar) const;
+    bool selectionPointLess(const SelectionPoint& lhs, const SelectionPoint& rhs) const;
+    std::string selectedText() const;
 };
 
 } // namespace verdad

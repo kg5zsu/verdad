@@ -1479,6 +1479,68 @@ std::string sanitizeParallelVerseHtml(const std::string& html) {
     return collapseSpacesOutsideTags(out);
 }
 
+bool looksLikeHtmlMarkup(const std::string& text) {
+    static const std::regex tagRe(
+        R"(<\s*/?\s*(?:p|div|br|hr|ul|ol|li|strong|b|em|i|small|span|a)\b)",
+        std::regex::icase);
+    return std::regex_search(text, tagRe);
+}
+
+std::string plainTextToHtml(const std::string& text) {
+    std::string trimmed = trimCopy(text);
+    if (trimmed.empty()) return "";
+
+    std::ostringstream html;
+    std::istringstream input(text);
+    std::string line;
+    bool inParagraph = false;
+    bool firstLineInParagraph = true;
+
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+
+        if (trimCopy(line).empty()) {
+            if (inParagraph) {
+                html << "</p>\n";
+                inParagraph = false;
+            }
+            firstLineInParagraph = true;
+            continue;
+        }
+
+        if (!inParagraph) {
+            html << "<p>";
+            inParagraph = true;
+            firstLineInParagraph = true;
+        }
+
+        if (!firstLineInParagraph) html << "<br/>";
+        html << htmlEscapeAttr(line);
+        firstLineInParagraph = false;
+    }
+
+    if (inParagraph) html << "</p>\n";
+    return html.str();
+}
+
+std::string commentaryEntryHtml(sword::SWModule* mod) {
+    if (!mod) return "";
+
+    std::string raw;
+    if (mod->isWritable()) {
+        const char* rawEntry = mod->getRawEntry();
+        raw = rawEntry ? rawEntry : "";
+        if (looksLikeHtmlMarkup(raw)) {
+            return raw;
+        }
+    }
+
+    std::string rendered = std::string(mod->renderText().c_str());
+    if (!trimCopy(rendered).empty()) return rendered;
+    if (!trimCopy(raw).empty()) return plainTextToHtml(raw);
+    return "";
+}
+
 } // namespace
 
 SwordManager::SwordManager() = default;
@@ -1905,7 +1967,7 @@ std::string SwordManager::getCommentaryText(const std::string& moduleName,
 
     if (!hasChapterContext) {
         mod->setKey(key.c_str());
-        std::string text = std::string(mod->renderText().c_str());
+        std::string text = commentaryEntryHtml(mod);
 
         if (text.empty()) {
             return "<p><i>No commentary available for " + key + "</i></p>";
@@ -1927,7 +1989,7 @@ std::string SwordManager::getCommentaryText(const std::string& moduleName,
     }
     if (!vk) {
         mod->setKey(key.c_str());
-        std::string text = std::string(mod->renderText().c_str());
+        std::string text = commentaryEntryHtml(mod);
         if (text.empty()) {
             return "<p><i>No commentary available for " + key + "</i></p>";
         }
@@ -1952,7 +2014,7 @@ std::string SwordManager::getCommentaryText(const std::string& moduleName,
 
     while (!mod->popError() && vk->getChapter() == chapter) {
         int verse = vk->getVerse();
-        std::string verseText = std::string(mod->renderText().c_str());
+        std::string verseText = commentaryEntryHtml(mod);
         if (verse > 1) {
             html << "<hr class=\"commentary-sep\"/>\n";
         }
@@ -1974,6 +2036,56 @@ std::string SwordManager::getCommentaryText(const std::string& moduleName,
 
     html << "</div>\n";
     return html.str();
+}
+
+bool SwordManager::moduleIsWritable(const std::string& moduleName) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    sword::SWModule* mod = getModule(moduleName);
+    return mod && mod->isWritable();
+}
+
+std::string SwordManager::getRawEntry(const std::string& moduleName,
+                                      const std::string& key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    sword::SWModule* mod = getModule(moduleName);
+    if (!mod) return "";
+
+    mod->setKey(key.c_str());
+    if (mod->popError()) return "";
+
+    const char* raw = mod->getRawEntry();
+    return raw ? raw : "";
+}
+
+bool SwordManager::setRawEntry(const std::string& moduleName,
+                               const std::string& key,
+                               const std::string& text) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    sword::SWModule* mod = getModule(moduleName);
+    if (!mod || !mod->isWritable()) return false;
+
+    mod->setKey(key.c_str());
+    if (mod->popError()) return false;
+
+    if (trimCopy(text).empty()) {
+        mod->deleteEntry();
+    } else {
+        mod->setEntry(text.c_str());
+    }
+    return !mod->popError();
+}
+
+bool SwordManager::deleteEntry(const std::string& moduleName,
+                               const std::string& key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    sword::SWModule* mod = getModule(moduleName);
+    if (!mod || !mod->isWritable()) return false;
+
+    mod->setKey(key.c_str());
+    if (mod->popError()) return false;
+
+    mod->deleteEntry();
+    return !mod->popError();
 }
 
 std::string SwordManager::getDictionaryEntry(const std::string& moduleName,

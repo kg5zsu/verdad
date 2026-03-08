@@ -18,11 +18,18 @@ namespace verdad {
 
 class VerdadApp;
 class HtmlWidget;
+class HtmlEditorWidget;
 
 /// Right pane for commentary, dictionary, and general books.
 /// Commentary/General Books are top tabs; dictionary is a resizable bottom pane.
 class RightPane : public Fl_Group {
 public:
+    enum class TopTab {
+        Commentary,
+        GeneralBooks,
+        Documents,
+    };
+
     struct HtmlState {
         std::shared_ptr<void> doc;
         std::string html;
@@ -96,6 +103,16 @@ public:
     /// Returns true if the secondary tab is active (now General Books), false for Commentary.
     bool isDictionaryTabActive() const;
 
+    bool isDocumentsTabActive() const;
+    void setDocumentsTabActive(bool active);
+    const std::string& currentDocumentPath() const { return currentDocumentPath_; }
+
+    bool newDocument();
+    bool openDocument();
+    bool openDocument(const std::string& path, bool activateTab);
+    bool saveDocument();
+    bool closeDocument();
+
     /// Legacy naming kept for session compatibility.
     /// Select visible tab: true = General Books, false = Commentary.
     void setDictionaryTabActive(bool dictionaryActive);
@@ -158,7 +175,11 @@ private:
     // Commentary tab (top pane)
     Fl_Group* commentaryGroup_;
     Fl_Choice* commentaryChoice_;
+    Fl_Button* commentaryEditButton_;
+    Fl_Button* commentarySaveButton_;
+    Fl_Button* commentaryCancelButton_;
     HtmlWidget* commentaryHtml_;
+    HtmlEditorWidget* commentaryEditor_;
     std::string currentCommentary_;
     std::string currentCommentaryRef_;
     std::string loadedCommentaryModule_;
@@ -166,6 +187,9 @@ private:
     std::unordered_map<std::string, std::string> commentaryChapterCache_;
     std::deque<std::string> commentaryChapterCacheOrder_;
     static constexpr size_t kCommentaryChapterCacheLimit = 64;
+    bool commentaryEditing_ = false;
+    std::string commentaryEditModule_;
+    std::string commentaryEditReference_;
 
     // Dictionary pane (bottom pane)
     Fl_Group* dictionaryPaneGroup_;
@@ -184,6 +208,18 @@ private:
     std::string currentGeneralBook_;
     std::string currentGeneralBookKey_;
 
+    // Documents tab (global, not tied to study tabs)
+    Fl_Group* documentsGroup_;
+    Fl_Button* documentNewButton_;
+    Fl_Button* documentOpenButton_;
+    Fl_Button* documentSaveButton_;
+    Fl_Button* documentCloseButton_;
+    Fl_Box* documentPathLabel_;
+    HtmlEditorWidget* documentsEditor_;
+    std::string currentDocumentPath_;
+    TopTab activeTopTab_ = TopTab::Commentary;
+    bool secondaryTabIsGeneralBooks_ = false;
+
     /// Populate commentary module choices
     void populateCommentaryModules();
 
@@ -194,6 +230,8 @@ private:
     /// Commentary chapter cache helpers.
     bool lookupCommentaryCache(const std::string& cacheKey, std::string& htmlOut);
     void storeCommentaryCache(const std::string& cacheKey, const std::string& html);
+    void invalidateCommentaryCache(const std::string& moduleName,
+                                   const std::string& reference);
 
     /// Populate dictionary module choices
     void populateDictionaryModules();
@@ -201,14 +239,33 @@ private:
     /// Populate general book module choices
     void populateGeneralBookModules();
 
+    void layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH);
+    void updateCommentaryEditorChrome();
+    void updateDocumentChrome();
+    bool beginCommentaryEdit();
+    bool saveCommentaryEdit(bool exitEditMode);
+    void cancelCommentaryEdit();
+    bool maybeSaveDocumentChanges();
+    bool saveDocumentAs();
+    bool saveDocumentToPath(const std::string& path);
+    void loadCommentaryEditorForCurrentEntry();
+    void onHtmlLink(const std::string& url, bool commentarySource);
+
     // Callbacks
     static void onCommentaryModuleChange(Fl_Widget* w, void* data);
+    static void onCommentaryEdit(Fl_Widget* w, void* data);
+    static void onCommentarySave(Fl_Widget* w, void* data);
+    static void onCommentaryCancel(Fl_Widget* w, void* data);
     static void onDictionaryModuleChange(Fl_Widget* w, void* data);
     static void onDictionaryKeyInput(Fl_Widget* w, void* data);
     static void onTopTabChange(Fl_Widget* w, void* data);
     static void onGeneralBookModuleChange(Fl_Widget* w, void* data);
     static void onGeneralBookGo(Fl_Widget* w, void* data);
     static void onGeneralBookKeyInput(Fl_Widget* w, void* data);
+    static void onDocumentNew(Fl_Widget* w, void* data);
+    static void onDocumentOpen(Fl_Widget* w, void* data);
+    static void onDocumentSave(Fl_Widget* w, void* data);
+    static void onDocumentClose(Fl_Widget* w, void* data);
 };
 
 } // namespace verdad
