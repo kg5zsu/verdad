@@ -612,6 +612,10 @@ HtmlEditorWidget::HtmlEditorWidget(int X, int Y, int W, int H, const char* label
 }
 
 HtmlEditorWidget::~HtmlEditorWidget() {
+    if (editor_) {
+        editor_->highlight_data(nullptr, nullptr, 0, 'A', nullptr, nullptr);
+        editor_->buffer(static_cast<Fl_Text_Buffer*>(nullptr));
+    }
     if (textBuffer_) {
         textBuffer_->remove_modify_callback(onTextModified, this);
     }

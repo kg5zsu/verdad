@@ -240,6 +240,7 @@ private:
     void populateGeneralBookModules();
 
     void layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH);
+    TopTab visibleTopTab() const;
     void updateCommentaryEditorChrome();
     void updateDocumentChrome();
     bool beginCommentaryEdit();

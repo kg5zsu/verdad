@@ -480,6 +480,16 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
                  std::max(10, panelH - rowH - 6));
 }
 
+RightPane::TopTab RightPane::visibleTopTab() const {
+    if (tabs_) {
+        Fl_Widget* active = tabs_->value();
+        if (active == documentsGroup_) return TopTab::Documents;
+        if (active == generalBooksGroup_) return TopTab::GeneralBooks;
+        if (active == commentaryGroup_) return TopTab::Commentary;
+    }
+    return activeTopTab_;
+}
+
 void RightPane::resize(int X, int Y, int W, int H) {
     Fl_Group::resize(X, Y, W, H);
 
@@ -616,7 +626,7 @@ void RightPane::showCommentary(const std::string& moduleName,
 
     updateCommentaryEditorChrome();
 
-    if (tabs_ && activeTopTab_ != TopTab::Documents) {
+    if (tabs_ && visibleTopTab() != TopTab::Documents) {
         tabs_->value(commentaryGroup_);
         activeTopTab_ = TopTab::Commentary;
         secondaryTabIsGeneralBooks_ = false;
@@ -742,14 +752,18 @@ bool RightPane::isDictionaryTabActive() const {
 
 void RightPane::setDictionaryTabActive(bool dictionaryActive) {
     secondaryTabIsGeneralBooks_ = dictionaryActive;
-    if (!tabs_ || activeTopTab_ == TopTab::Documents) return;
+    if (!tabs_) return;
+    if (visibleTopTab() == TopTab::Documents) {
+        activeTopTab_ = TopTab::Documents;
+        return;
+    }
     tabs_->value(dictionaryActive ? generalBooksGroup_ : commentaryGroup_);
     activeTopTab_ = dictionaryActive ? TopTab::GeneralBooks : TopTab::Commentary;
     tabs_->redraw();
 }
 
 bool RightPane::isDocumentsTabActive() const {
-    return activeTopTab_ == TopTab::Documents;
+    return visibleTopTab() == TopTab::Documents;
 }
 
 void RightPane::setDocumentsTabActive(bool active) {
@@ -1040,7 +1054,7 @@ void RightPane::redrawChrome() {
 
 void RightPane::refresh() {
     perf::ScopeTimer timer("RightPane::refresh");
-    TopTab keepTab = activeTopTab_;
+    TopTab keepTab = visibleTopTab();
 
     if (!currentCommentary_.empty() && !currentCommentaryRef_.empty()) {
         showCommentary(currentCommentary_, currentCommentaryRef_);
@@ -1601,6 +1615,7 @@ void RightPane::onTopTabChange(Fl_Widget* /*w*/, void* data) {
 
     Fl_Widget* active = self->tabs_->value();
     if (!active) return;
+    self->activeTopTab_ = self->visibleTopTab();
 
     if (self->commentaryEditing_ && active != self->commentaryGroup_) {
         if (!self->saveCommentaryEdit(true)) {
