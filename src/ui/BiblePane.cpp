@@ -3,6 +3,7 @@
 #include "ui/HtmlWidget.h"
 #include "ui/MainWindow.h"
 #include "ui/LeftPane.h"
+#include "ui/ModuleChoiceUtils.h"
 #include "ui/TagPanel.h"
 #include "ui/VerseContext.h"
 #include "sword/SwordManager.h"
@@ -303,15 +304,7 @@ void BiblePane::setModule(const std::string& moduleName) {
         }
     }
 
-    if (moduleChoice_) {
-        for (int i = 0; i < moduleChoice_->size(); i++) {
-            const Fl_Menu_Item& item = moduleChoice_->menu()[i];
-            if (item.label() && moduleName_ == item.label()) {
-                moduleChoice_->value(i);
-                break;
-            }
-        }
-    }
+    applyModuleChoiceValue(moduleChoice_, moduleName_);
 
     populateBooks();
     updateDisplay();
@@ -528,15 +521,7 @@ void BiblePane::setStudyState(const std::string& module,
         moduleName_ = parallelModules_.front();
     }
 
-    if (moduleChoice_) {
-        for (int i = 0; i < moduleChoice_->size(); ++i) {
-            const Fl_Menu_Item& item = moduleChoice_->menu()[i];
-            if (item.label() && moduleName_ == item.label()) {
-                moduleChoice_->value(i);
-                break;
-            }
-        }
-    }
+    applyModuleChoiceValue(moduleChoice_, moduleName_);
 
     if (parallelButton_) {
         parallelButton_->value(parallelMode_ ? 1 : 0);
@@ -682,15 +667,10 @@ void BiblePane::buildNavBar() {
     moduleChoice_->tooltip("Select Bible module");
 
     auto bibles = app_->swordManager().getBibleModules();
-    for (const auto& mod : bibles) {
-        moduleChoice_->add(mod.name.c_str());
-    }
+    module_choice::populateChoice(moduleChoice_, bibles,
+                                  bibleChoiceModules_, bibleChoiceLabels_);
     if (moduleChoice_->size() > 0) {
-        moduleChoice_->value(0);
-        const Fl_Menu_Item& item = moduleChoice_->menu()[0];
-        if (item.label()) {
-            moduleName_ = item.label();
-        }
+        moduleName_ = bibleChoiceModules_.front();
     }
     cx += 102;
 
@@ -896,27 +876,16 @@ void BiblePane::clearParallelHeader() {
     parallelHeaderColumns_.clear();
 }
 
-void BiblePane::populateParallelChoice(Fl_Choice* choice) const {
+void BiblePane::populateParallelChoice(Fl_Choice* choice) {
     if (!choice) return;
-    choice->clear();
     auto bibles = app_->swordManager().getBibleModules();
-    for (const auto& mod : bibles) {
-        choice->add(mod.name.c_str());
-    }
-    if (choice->size() > 0) {
-        choice->value(0);
-    }
+    module_choice::populateChoice(choice, bibles,
+                                  bibleChoiceModules_, bibleChoiceLabels_);
 }
 
 void BiblePane::applyModuleChoiceValue(Fl_Choice* choice, const std::string& module) const {
-    if (!choice) return;
-    for (int i = 0; i < choice->size(); ++i) {
-        const Fl_Menu_Item& item = choice->menu()[i];
-        if (item.label() && module == item.label()) {
-            choice->value(i);
-            return;
-        }
-    }
+    module_choice::applyChoiceValue(choice, bibleChoiceModules_,
+                                    bibleChoiceLabels_, module);
 }
 
 int BiblePane::parallelColumnIndexForWidget(Fl_Widget* w) const {
@@ -1192,10 +1161,9 @@ void BiblePane::onChapterChange(Fl_Widget* /*w*/, void* data) {
 
 void BiblePane::onModuleChange(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<BiblePane*>(data);
-    const Fl_Menu_Item* item = self->moduleChoice_->mvalue();
-    if (item && item->label()) {
-        self->setModule(item->label());
-    }
+    std::string module = module_choice::selectedModuleName(
+        self->moduleChoice_, self->bibleChoiceModules_);
+    if (!module.empty()) self->setModule(module);
 }
 
 void BiblePane::onParallel(Fl_Widget* /*w*/, void* data) {
@@ -1270,10 +1238,9 @@ void BiblePane::onParallelModuleChange(Fl_Widget* w, void* data) {
 
     Fl_Choice* choice = self->parallelHeaderColumns_[index].moduleChoice;
     if (!choice) return;
-    const Fl_Menu_Item* item = choice->mvalue();
-    if (item && item->label()) {
-        self->setParallelModuleAt(index, item->label());
-    }
+    std::string module = module_choice::selectedModuleName(
+        choice, self->bibleChoiceModules_);
+    if (!module.empty()) self->setParallelModuleAt(index, module);
 }
 
 void BiblePane::onLinkClicked(const std::string& url) {

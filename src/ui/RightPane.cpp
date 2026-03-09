@@ -5,6 +5,7 @@
 #include "ui/HtmlWidget.h"
 #include "ui/LeftPane.h"
 #include "ui/MainWindow.h"
+#include "ui/ModuleChoiceUtils.h"
 #include "ui/StyledTabs.h"
 #include "sword/SwordManager.h"
 #include "app/PerfTrace.h"
@@ -175,14 +176,13 @@ std::string defaultDictionaryModuleForLookup(VerdadApp* app,
 }
 
 void selectFirstDictionaryModule(Fl_Choice* dictionaryChoice,
+                                 const std::vector<std::string>& moduleNames,
+                                 const std::vector<std::string>& displayLabels,
                                  std::string& currentDictionary) {
     if (!dictionaryChoice || dictionaryChoice->size() <= 0) return;
-
-    const Fl_Menu_Item& item = dictionaryChoice->menu()[0];
-    if (!item.label()) return;
-
-    currentDictionary = item.label();
-    dictionaryChoice->value(0);
+    currentDictionary = moduleNames.empty() ? "" : moduleNames.front();
+    module_choice::applyChoiceValue(dictionaryChoice, moduleNames,
+                                    displayLabels, currentDictionary);
 }
 
 std::string pathLeaf(const std::string& path) {
@@ -690,7 +690,10 @@ void RightPane::showDictionaryEntry(const std::string& key) {
     if (!moduleName.empty()) {
         setDictionaryModule(moduleName);
     } else if (currentDictionary_.empty()) {
-        selectFirstDictionaryModule(dictionaryChoice_, currentDictionary_);
+        selectFirstDictionaryModule(dictionaryChoice_,
+                                    dictionaryChoiceModules_,
+                                    dictionaryChoiceLabels_,
+                                    currentDictionary_);
     }
 
     if (!currentDictionary_.empty()) {
@@ -705,7 +708,10 @@ void RightPane::showDictionaryLookup(const std::string& key,
     if (!moduleName.empty()) {
         setDictionaryModule(moduleName);
     } else if (currentDictionary_.empty()) {
-        selectFirstDictionaryModule(dictionaryChoice_, currentDictionary_);
+        selectFirstDictionaryModule(dictionaryChoice_,
+                                    dictionaryChoiceModules_,
+                                    dictionaryChoiceLabels_,
+                                    currentDictionary_);
     }
 
     if (!currentDictionary_.empty()) {
@@ -775,15 +781,10 @@ void RightPane::setCommentaryModule(const std::string& moduleName,
     loadedCommentaryModule_.clear();
     loadedCommentaryChapterKey_.clear();
 
-    if (commentaryChoice_) {
-        for (int i = 0; i < commentaryChoice_->size(); i++) {
-            const Fl_Menu_Item& item = commentaryChoice_->menu()[i];
-            if (item.label() && moduleName == item.label()) {
-                commentaryChoice_->value(i);
-                break;
-            }
-        }
-    }
+    module_choice::applyChoiceValue(commentaryChoice_,
+                                    commentaryChoiceModules_,
+                                    commentaryChoiceLabels_,
+                                    moduleName);
 
     updateCommentaryEditorChrome();
 
@@ -799,27 +800,19 @@ void RightPane::setCommentaryModule(const std::string& moduleName,
 void RightPane::setDictionaryModule(const std::string& moduleName) {
     currentDictionary_ = moduleName;
 
-    if (!dictionaryChoice_) return;
-    for (int i = 0; i < dictionaryChoice_->size(); i++) {
-        const Fl_Menu_Item& item = dictionaryChoice_->menu()[i];
-        if (item.label() && moduleName == item.label()) {
-            dictionaryChoice_->value(i);
-            break;
-        }
-    }
+    module_choice::applyChoiceValue(dictionaryChoice_,
+                                    dictionaryChoiceModules_,
+                                    dictionaryChoiceLabels_,
+                                    moduleName);
 }
 
 void RightPane::setGeneralBookModule(const std::string& moduleName) {
     currentGeneralBook_ = moduleName;
 
-    if (!generalBookChoice_) return;
-    for (int i = 0; i < generalBookChoice_->size(); i++) {
-        const Fl_Menu_Item& item = generalBookChoice_->menu()[i];
-        if (item.label() && moduleName == item.label()) {
-            generalBookChoice_->value(i);
-            break;
-        }
-    }
+    module_choice::applyChoiceValue(generalBookChoice_,
+                                    generalBookChoiceModules_,
+                                    generalBookChoiceLabels_,
+                                    moduleName);
 
     populateGeneralBookToc();
 }
@@ -1240,19 +1233,14 @@ void RightPane::setHtmlStyleOverride(const std::string& css) {
 
 void RightPane::populateCommentaryModules() {
     if (!commentaryChoice_) return;
-    commentaryChoice_->clear();
 
     auto mods = app_->swordManager().getCommentaryModules();
-    for (const auto& mod : mods) {
-        commentaryChoice_->add(mod.name.c_str());
-    }
+    module_choice::populateChoice(commentaryChoice_, mods,
+                                  commentaryChoiceModules_,
+                                  commentaryChoiceLabels_);
 
     if (commentaryChoice_->size() > 0) {
-        commentaryChoice_->value(0);
-        const Fl_Menu_Item& item = commentaryChoice_->menu()[0];
-        if (item.label()) {
-            currentCommentary_ = item.label();
-        }
+        currentCommentary_ = commentaryChoiceModules_.front();
     }
 
     updateCommentaryEditorChrome();
@@ -1260,19 +1248,14 @@ void RightPane::populateCommentaryModules() {
 
 void RightPane::populateDictionaryModules() {
     if (!dictionaryChoice_) return;
-    dictionaryChoice_->clear();
 
     auto mods = app_->swordManager().getDictionaryModules();
-    for (const auto& mod : mods) {
-        dictionaryChoice_->add(mod.name.c_str());
-    }
+    module_choice::populateChoice(dictionaryChoice_, mods,
+                                  dictionaryChoiceModules_,
+                                  dictionaryChoiceLabels_);
 
     if (dictionaryChoice_->size() > 0) {
-        dictionaryChoice_->value(0);
-        const Fl_Menu_Item& item = dictionaryChoice_->menu()[0];
-        if (item.label()) {
-            currentDictionary_ = item.label();
-        }
+        currentDictionary_ = dictionaryChoiceModules_.front();
     } else {
         currentDictionary_.clear();
         currentDictKey_.clear();
@@ -1288,19 +1271,14 @@ void RightPane::populateDictionaryModules() {
 
 void RightPane::populateGeneralBookModules() {
     if (!generalBookChoice_) return;
-    generalBookChoice_->clear();
 
     auto mods = app_->swordManager().getGeneralBookModules();
-    for (const auto& mod : mods) {
-        generalBookChoice_->add(mod.name.c_str());
-    }
+    module_choice::populateChoice(generalBookChoice_, mods,
+                                  generalBookChoiceModules_,
+                                  generalBookChoiceLabels_);
 
     if (generalBookChoice_->size() > 0) {
-        generalBookChoice_->value(0);
-        const Fl_Menu_Item& item = generalBookChoice_->menu()[0];
-        if (item.label()) {
-            currentGeneralBook_ = item.label();
-        }
+        currentGeneralBook_ = generalBookChoiceModules_.front();
         populateGeneralBookToc();
         showGeneralBookEntry(currentGeneralBook_, currentGeneralBookKey_);
     } else {
@@ -1700,10 +1678,9 @@ void RightPane::onHtmlLink(const std::string& url, bool commentarySource) {
 void RightPane::onCommentaryModuleChange(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self || !self->commentaryChoice_) return;
-    const Fl_Menu_Item* item = self->commentaryChoice_->mvalue();
-    if (item && item->label()) {
-        self->setCommentaryModule(item->label(), true);
-    }
+    std::string module = module_choice::selectedModuleName(
+        self->commentaryChoice_, self->commentaryChoiceModules_);
+    if (!module.empty()) self->setCommentaryModule(module, true);
 }
 
 
@@ -1728,13 +1705,11 @@ void RightPane::onCommentaryCancel(Fl_Widget* /*w*/, void* data) {
 void RightPane::onDictionaryModuleChange(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self || !self->dictionaryChoice_) return;
-    const Fl_Menu_Item* item = self->dictionaryChoice_->mvalue();
-    if (item && item->label()) {
-        self->currentDictionary_ = item->label();
-        if (!self->currentDictKey_.empty()) {
-            self->showDictionaryEntry(self->currentDictionary_,
-                                      self->currentDictKey_);
-        }
+    self->currentDictionary_ = module_choice::selectedModuleName(
+        self->dictionaryChoice_, self->dictionaryChoiceModules_);
+    if (!self->currentDictionary_.empty() && !self->currentDictKey_.empty()) {
+        self->showDictionaryEntry(self->currentDictionary_,
+                                  self->currentDictKey_);
     }
 }
 
@@ -1749,6 +1724,8 @@ void RightPane::onDictionaryKeyInput(Fl_Widget* /*w*/, void* data) {
 
     if (self->currentDictionary_.empty()) {
         selectFirstDictionaryModule(self->dictionaryChoice_,
+                                    self->dictionaryChoiceModules_,
+                                    self->dictionaryChoiceLabels_,
                                     self->currentDictionary_);
     }
     if (self->currentDictionary_.empty()) return;
@@ -1807,13 +1784,12 @@ void RightPane::onTopTabChange(Fl_Widget* /*w*/, void* data) {
 void RightPane::onGeneralBookModuleChange(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self || !self->generalBookChoice_) return;
-    const Fl_Menu_Item* item = self->generalBookChoice_->mvalue();
-    if (item && item->label()) {
-        self->currentGeneralBook_ = item->label();
-        self->populateGeneralBookToc();
-        self->showGeneralBookEntry(self->currentGeneralBook_,
-                                   self->currentGeneralBookKey_);
-    }
+    self->currentGeneralBook_ = module_choice::selectedModuleName(
+        self->generalBookChoice_, self->generalBookChoiceModules_);
+    if (self->currentGeneralBook_.empty()) return;
+    self->populateGeneralBookToc();
+    self->showGeneralBookEntry(self->currentGeneralBook_,
+                               self->currentGeneralBookKey_);
 }
 
 void RightPane::onGeneralBookTocChange(Fl_Widget* /*w*/, void* data) {

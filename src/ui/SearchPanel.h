@@ -58,6 +58,8 @@ private:
 
     // Module to search in
     Fl_Choice* moduleChoice_;
+    std::vector<std::string> moduleChoiceModules_;
+    std::vector<std::string> moduleChoiceLabels_;
 
     // Search type selector
     Fl_Choice* searchType_;

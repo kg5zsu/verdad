@@ -184,6 +184,8 @@ private:
     Fl_Button* commentaryCancelButton_;
     HtmlWidget* commentaryHtml_;
     HtmlEditorWidget* commentaryEditor_;
+    std::vector<std::string> commentaryChoiceModules_;
+    std::vector<std::string> commentaryChoiceLabels_;
     std::string currentCommentary_;
     std::string currentCommentaryRef_;
     std::string loadedCommentaryModule_;
@@ -202,6 +204,8 @@ private:
     Fl_Input* dictionaryKeyInput_;
     Fl_Choice* dictionaryChoice_;
     HtmlWidget* dictionaryHtml_;
+    std::vector<std::string> dictionaryChoiceModules_;
+    std::vector<std::string> dictionaryChoiceLabels_;
     std::string currentDictionary_;
     std::string currentDictKey_;
 
@@ -210,6 +214,8 @@ private:
     Fl_Choice* generalBookChoice_;
     Fl_Choice* generalBookTocChoice_;
     HtmlWidget* generalBookHtml_;
+    std::vector<std::string> generalBookChoiceModules_;
+    std::vector<std::string> generalBookChoiceLabels_;
     std::string currentGeneralBook_;
     std::string currentGeneralBookKey_;
     std::vector<GeneralBookTocEntry> generalBookToc_;

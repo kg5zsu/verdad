@@ -144,6 +144,8 @@ private:
     Fl_Button* crossRefsToggleButton_;
     Fl_Box* navSpacer_;
     Fl_Group* parallelHeader_;
+    std::vector<std::string> bibleChoiceModules_;
+    std::vector<std::string> bibleChoiceLabels_;
 
     // Content
     HtmlWidget* htmlWidget_;
@@ -176,7 +178,7 @@ private:
     void syncParallelHeader();
     void clearParallelHeader();
     void layoutParallelHeader();
-    void populateParallelChoice(Fl_Choice* choice) const;
+    void populateParallelChoice(Fl_Choice* choice);
     void applyModuleChoiceValue(Fl_Choice* choice, const std::string& module) const;
     int parallelColumnIndexForWidget(Fl_Widget* w) const;
     void addParallelModule();

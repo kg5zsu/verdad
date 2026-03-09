@@ -3,6 +3,7 @@
 #include "ui/MainWindow.h"
 #include "ui/LeftPane.h"
 #include "ui/BiblePane.h"
+#include "ui/ModuleChoiceUtils.h"
 #include "search/SearchIndexer.h"
 #include "sword/SwordManager.h"
 
@@ -127,17 +128,6 @@ std::string normalizeStrongsQuery(const std::string& query) {
     }
 
     return "";
-}
-
-int findChoiceIndexByLabel(Fl_Choice* choice, const std::string& label) {
-    if (!choice || label.empty()) return -1;
-    for (int i = 0; i < choice->size(); ++i) {
-        const Fl_Menu_Item* item = choice->menu() ? &choice->menu()[i] : nullptr;
-        if (item && item->label() && label == item->label()) {
-            return i;
-        }
-    }
-    return -1;
 }
 
 std::string normalizeBookKey(const std::string& in) {
@@ -916,8 +906,8 @@ void SearchPanel::search(const std::string& query,
     // 3) active Bible tab module (fallback)
     std::string moduleName = trimCopy(moduleOverride);
     if (moduleName.empty()) {
-        const Fl_Menu_Item* item = moduleChoice_->mvalue();
-        if (item && item->label()) moduleName = item->label();
+        moduleName = module_choice::selectedModuleName(
+            moduleChoice_, moduleChoiceModules_);
     }
     if (moduleName.empty() &&
         app_->mainWindow() && app_->mainWindow()->biblePane()) {
@@ -928,8 +918,8 @@ void SearchPanel::search(const std::string& query,
         return;
     }
 
-    int moduleIndex = findChoiceIndexByLabel(moduleChoice_, moduleName);
-    if (moduleIndex >= 0) moduleChoice_->value(moduleIndex);
+    module_choice::applyChoiceValue(moduleChoice_, moduleChoiceModules_,
+                                    moduleChoiceLabels_, moduleName);
 
     // Get search type
     const bool exactPhrase = (searchType_->value() == 1);
@@ -1167,26 +1157,18 @@ const SearchResult* SearchPanel::selectedResult() const {
 
 void SearchPanel::populateModules() {
     if (!moduleChoice_) return;
-    moduleChoice_->clear();
 
     // Search targets Bible modules.
     auto bibles = app_->swordManager().getBibleModules();
-    for (const auto& mod : bibles) {
-        moduleChoice_->add(mod.name.c_str());
-    }
-
-    if (moduleChoice_->size() > 0) {
-        moduleChoice_->value(0);
-    }
+    module_choice::populateChoice(moduleChoice_, bibles,
+                                  moduleChoiceModules_, moduleChoiceLabels_);
 }
 
 void SearchPanel::setSelectedModule(const std::string& moduleName) {
     std::string name = trimCopy(moduleName);
     if (!moduleChoice_ || name.empty()) return;
-    int moduleIndex = findChoiceIndexByLabel(moduleChoice_, name);
-    if (moduleIndex >= 0) {
-        moduleChoice_->value(moduleIndex);
-    }
+    module_choice::applyChoiceValue(moduleChoice_, moduleChoiceModules_,
+                                    moduleChoiceLabels_, name);
 }
 
 void SearchPanel::resetHighlightState() {
@@ -1328,20 +1310,24 @@ void SearchPanel::updateIndexingIndicator() {
     std::string activeModule;
     int activePercent = 0;
     if (indexer->activeIndexingTask(activeModule, activePercent)) {
-        displayModule = activeModule;
+        displayModule = module_choice::displayLabelForModuleName(
+            moduleChoiceModules_, moduleChoiceLabels_, activeModule);
         progress = activePercent;
     } else if (!indexingModule_.empty()) {
         int p = indexer->moduleIndexProgress(indexingModule_);
         if (p >= 0 && p < 100) {
-            displayModule = indexingModule_;
+            displayModule = module_choice::displayLabelForModuleName(
+                moduleChoiceModules_, moduleChoiceLabels_, indexingModule_);
             progress = p;
         }
     } else if (moduleChoice_ && moduleChoice_->mvalue() &&
                moduleChoice_->mvalue()->label()) {
-        std::string selected = moduleChoice_->mvalue()->label();
+        std::string selected = module_choice::selectedModuleName(
+            moduleChoice_, moduleChoiceModules_);
         int p = indexer->moduleIndexProgress(selected);
         if (p >= 0 && p < 100) {
-            displayModule = selected;
+            displayModule = module_choice::displayLabelForModuleName(
+                moduleChoiceModules_, moduleChoiceLabels_, selected);
             progress = p;
         }
     }
