@@ -11,6 +11,7 @@
 namespace verdad {
 
 class VerdadApp;
+class TagFilterInput;
 class TagVerseBrowser;
 
 /// Panel showing tags and tagged verses in the left pane
@@ -30,6 +31,7 @@ public:
     void resize(int X, int Y, int W, int H) override;
 
 private:
+    friend class TagFilterInput;
     friend class TagVerseBrowser;
 
     VerdadApp* app_;
@@ -58,6 +60,7 @@ private:
     void updateVersePreview(const std::string& verseKey);
     void activateVerseLine(int line, int mouseButton, bool isDoubleClick);
     void updateFilterControls();
+    void clearFilter(bool focusInput);
 
     /// Populate tag list
     void populateTags();

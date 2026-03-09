@@ -259,6 +259,26 @@ private:
 
 } // namespace
 
+class TagFilterInput : public Fl_Input {
+public:
+    TagFilterInput(TagPanel* owner, int X, int Y, int W, int H)
+        : Fl_Input(X, Y, W, H)
+        , owner_(owner) {}
+
+    int handle(int event) override {
+        if ((event == FL_KEYBOARD || event == FL_SHORTCUT) &&
+            Fl::focus() == this &&
+            Fl::event_key() == FL_Escape && owner_) {
+            owner_->clearFilter(true);
+            return 1;
+        }
+        return Fl_Input::handle(event);
+    }
+
+private:
+    TagPanel* owner_ = nullptr;
+};
+
 class TagVerseBrowser : public Fl_Hold_Browser {
 public:
     TagVerseBrowser(TagPanel* owner, int X, int Y, int W, int H)
@@ -318,7 +338,7 @@ TagPanel::TagPanel(VerdadApp* app, int X, int Y, int W, int H)
     , removeVerseButton_(nullptr) {
     begin();
 
-    filterInput_ = new Fl_Input(X, Y, W, 28);
+    filterInput_ = new TagFilterInput(this, X, Y, W, 28);
     filterInput_->when(FL_WHEN_CHANGED);
     filterInput_->callback(onFilterChange, this);
     filterInput_->tooltip("Filter tags by name or by verse reference");
@@ -439,6 +459,18 @@ void TagPanel::updateFilterControls() {
         clearFilterButton_->activate();
     } else {
         clearFilterButton_->deactivate();
+    }
+}
+
+void TagPanel::clearFilter(bool focusInput) {
+    if (!filterInput_) return;
+
+    filterInput_->value("");
+    selectedVerseKey_.clear();
+    updateFilterControls();
+    populateTags();
+    if (focusInput) {
+        filterInput_->take_focus();
     }
 }
 
@@ -586,13 +618,8 @@ void TagPanel::onFilterChange(Fl_Widget* /*w*/, void* data) {
 
 void TagPanel::onClearFilter(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<TagPanel*>(data);
-    if (!self || !self->filterInput_) return;
-
-    self->filterInput_->value("");
-    self->selectedVerseKey_.clear();
-    self->updateFilterControls();
-    self->populateTags();
-    self->filterInput_->take_focus();
+    if (!self) return;
+    self->clearFilter(true);
 }
 
 void TagPanel::onTagSelect(Fl_Widget* /*w*/, void* data) {
