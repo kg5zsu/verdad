@@ -774,8 +774,11 @@ int SearchResultBrowser::item_height(void* item) const {
     return Fl_Hold_Browser::item_height(item);
 }
 
-int SearchResultBrowser::item_width(void* /*item*/) const {
-    return w();
+int SearchResultBrowser::item_width(void* item) const {
+    if (!owner_) return w();
+    int line = lineno(item);
+    if (line <= 0) return w();
+    return std::max(w(), owner_->resultLineWidth(line));
 }
 
 void SearchResultBrowser::item_draw(void* item,
@@ -798,17 +801,18 @@ void SearchResultBrowser::item_draw(void* item,
     fl_font(textfont(), textsize());
 
     const std::string& refLabel = owner_->resultDisplayKeys_[line - 1];
+    const int refColumnWidth = owner_->resultRefColumnWidth_;
     const auto refChunks = normalizeMarkupWhitespace(
         parseHighlightedMarkup(refLabel));
     drawMarkupChunks(refChunks,
                      X + kResultLinePadding,
-                     Y, kResultRefColumnWidth - kResultLinePadding, H,
+                     Y, refColumnWidth - kResultLinePadding, H,
                      fg, highlightBg, highlightFg);
 
     const std::string& snippetMarkup = owner_->results_[line - 1].text;
     if (snippetMarkup.empty()) return;
 
-    int snippetX = X + kResultRefColumnWidth + kResultColumnGap;
+    int snippetX = X + refColumnWidth + kResultColumnGap;
     int snippetW = std::max(0, W - (snippetX - X) - kResultLinePadding);
     if (snippetW <= 0) return;
 
@@ -859,6 +863,7 @@ SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
                                              W - 2 * padding, H - (cy - Y) - padding);
     static int widths[] = { 100, 0 };  // widths for each column
     resultBrowser_->column_widths(widths); // assign array to widget
+    resultBrowser_->has_scrollbar(Fl_Browser_::BOTH);
     // Preview updates should follow selection changes, but navigation/opening
     // is handled directly from mouse-release events in SearchResultBrowser.
     resultBrowser_->when(FL_WHEN_CHANGED);
@@ -892,6 +897,8 @@ void SearchPanel::search(const std::string& query,
     lastPreviewModule_.clear();
     lastPreviewKey_.clear();
     resultDisplayKeys_.clear();
+    resultLineWidths_.clear();
+    resultRefColumnWidth_ = kResultRefColumnWidth;
     resetHighlightState();
     results_.clear();
     resultBrowser_->clear();
@@ -1047,6 +1054,7 @@ void SearchPanel::search(const std::string& query,
         resultDisplayKeys_.push_back(shortKey.empty() ? r.key : shortKey);
         resultBrowser_->add(" ");
     }
+    rebuildResultMetrics();
 
     std::string labelSuffix;
     if (usedIndexer && indexingPending) {
@@ -1084,6 +1092,8 @@ void SearchPanel::showReferenceResults(const std::string& moduleName,
     lastPreviewModule_.clear();
     lastPreviewKey_.clear();
     resultDisplayKeys_.clear();
+    resultLineWidths_.clear();
+    resultRefColumnWidth_ = kResultRefColumnWidth;
     resetHighlightState();
     results_.clear();
     resultBrowser_->clear();
@@ -1120,6 +1130,7 @@ void SearchPanel::showReferenceResults(const std::string& moduleName,
         resultDisplayKeys_.push_back(shortKey.empty() ? r.key : shortKey);
         resultBrowser_->add(" ");
     }
+    rebuildResultMetrics();
 
     setResultCountLabel(statusSuffix.empty() ? "(linked references)" : statusSuffix);
 
@@ -1138,6 +1149,8 @@ void SearchPanel::clear() {
     lastPreviewModule_.clear();
     lastPreviewKey_.clear();
     resultDisplayKeys_.clear();
+    resultLineWidths_.clear();
+    resultRefColumnWidth_ = kResultRefColumnWidth;
     resetHighlightState();
     results_.clear();
     resultBrowser_->clear();
@@ -1177,6 +1190,46 @@ void SearchPanel::resetHighlightState() {
     highlightStrongs_.clear();
     highlightPhrase_.clear();
     highlightRegexValid_ = false;
+}
+
+void SearchPanel::rebuildResultMetrics() {
+    resultLineWidths_.clear();
+    resultRefColumnWidth_ = kResultRefColumnWidth;
+    if (!resultBrowser_) return;
+
+    fl_font(resultBrowser_->textfont(), resultBrowser_->textsize());
+
+    auto measureMarkupWidth = [](const std::string& markup) -> int {
+        const auto chunks = normalizeMarkupWhitespace(
+            parseHighlightedMarkup(markup));
+        int width = 0;
+        for (const auto& chunk : chunks) {
+            if (chunk.text.empty()) continue;
+            width += static_cast<int>(fl_width(chunk.text.c_str()));
+        }
+        return width;
+    };
+
+    for (const auto& refLabel : resultDisplayKeys_) {
+        int width = measureMarkupWidth(refLabel) + (kResultLinePadding * 2);
+        resultRefColumnWidth_ = std::max(resultRefColumnWidth_, width);
+    }
+
+    resultLineWidths_.reserve(results_.size());
+    for (size_t i = 0; i < results_.size(); ++i) {
+        int width = resultRefColumnWidth_ + (kResultLinePadding * 2);
+        if (i < results_.size() && !results_[i].text.empty()) {
+            width += kResultColumnGap + measureMarkupWidth(results_[i].text);
+        }
+        resultLineWidths_.push_back(width);
+    }
+}
+
+int SearchPanel::resultLineWidth(int line) const {
+    if (line <= 0 || line > static_cast<int>(resultLineWidths_.size())) {
+        return resultBrowser_ ? resultBrowser_->w() : 0;
+    }
+    return resultLineWidths_[line - 1];
 }
 
 std::string SearchPanel::applyPreviewHighlights(const std::string& html) const {

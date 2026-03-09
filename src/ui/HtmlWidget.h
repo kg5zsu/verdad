@@ -41,9 +41,12 @@ public:
         std::shared_ptr<void> doc;
         std::string html;
         std::string baseUrl;
+        int scrollX = 0;
         int scrollY = 0;
+        int contentWidth = 0;
         int contentHeight = 0;
         int renderWidth = 0;
+        bool hScrollbarVisible = false;
         bool scrollbarVisible = false;
         bool valid = false;
     };
@@ -59,6 +62,9 @@ public:
 
     /// Set runtime CSS overrides (applied after master CSS).
     void setStyleOverrideCss(const std::string& css);
+
+    /// Enable or disable horizontal scrolling for overflow content.
+    void setAllowHorizontalScroll(bool allow);
 
     /// Toggle a CSS class on up to two elements by id and rerender once.
     void updateElementClassById(const std::string& removeId,
@@ -190,9 +196,12 @@ private:
     std::string styleOverrideCSS_;
     std::string currentHtml_;
     std::string baseUrl_;
+    int scrollX_ = 0;
     int scrollY_ = 0;
+    int contentWidth_ = 0;
     int contentHeight_ = 0;
     int lastRenderWidth_ = 0;
+    bool allowHorizontalScroll_ = false;
 
     // Font cache
     struct FontInfo {
@@ -207,6 +216,7 @@ private:
 
     // Scrollbar
     Fl_Scrollbar* scrollbar_;
+    Fl_Scrollbar* hScrollbar_;
 
     // Callbacks
     LinkCallback linkCallback_;
@@ -259,6 +269,7 @@ private:
 
     /// Static scrollbar callback
     static void scrollbarCallback(Fl_Widget* w, void* data);
+    static void hScrollbarCallback(Fl_Widget* w, void* data);
 
     /// Deferred link dispatch callback to avoid mutating the document inside litehtml click handling.
     static void dispatchDeferredLink(void* data);
@@ -270,6 +281,9 @@ private:
     Fl_Font mapFont(const char* faceName, int weight, bool italic);
 
     void clearSelection();
+    int viewportWidth() const;
+    int viewportHeight() const;
+    void setScrollX(int x);
     bool hasSelection() const;
     SelectionPoint hitTestSelectionPoint(int screenX, int screenY) const;
     bool fragmentSelectionRange(int fragmentIndex, int& startChar, int& endChar) const;

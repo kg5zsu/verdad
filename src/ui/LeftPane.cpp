@@ -171,6 +171,7 @@ LeftPane::LeftPane(VerdadApp* app, int X, int Y, int W, int H)
     int previewY = contentY + tabsInitH;
     previewWidget_ = new HtmlWidget(X + padding, previewY,
                                     contentW, std::max(minPreviewH, contentH - tabsInitH));
+    previewWidget_->setAllowHorizontalScroll(true);
 
     // Use the same stylesheet as other HTML panes so MAG markup renders correctly.
     std::string cssFile = app_->getDataDir() + "/master.css";

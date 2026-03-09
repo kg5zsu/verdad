@@ -20,6 +20,8 @@
 namespace verdad {
 namespace {
 
+constexpr int kScrollbarExtent = 16;
+
 std::string trimCopy(const std::string& text) {
     size_t start = 0;
     while (start < text.size() &&
@@ -351,11 +353,17 @@ std::shared_ptr<litehtml::element> findElementByIdRecursive(
 HtmlWidget::HtmlWidget(int X, int Y, int W, int H, const char* label)
     : Fl_Widget(X, Y, W, H, label) {
     // Create vertical scrollbar
-    int sbW = 16;
-    scrollbar_ = new Fl_Scrollbar(X + W - sbW, Y, sbW, H);
+    scrollbar_ = new Fl_Scrollbar(X + W - kScrollbarExtent, Y,
+                                  kScrollbarExtent, H);
     scrollbar_->type(FL_VERTICAL);
     scrollbar_->callback(scrollbarCallback, this);
     scrollbar_->hide();
+
+    hScrollbar_ = new Fl_Scrollbar(X, Y + H - kScrollbarExtent,
+                                   W, kScrollbarExtent);
+    hScrollbar_->type(FL_HORIZONTAL);
+    hScrollbar_->callback(hScrollbarCallback, this);
+    hScrollbar_->hide();
 
     // Default CSS — built-in defaults + minimal overrides
     masterCSS_ = std::string(litehtml::master_css) + "\n"
@@ -380,6 +388,7 @@ HtmlWidget::~HtmlWidget() {
     // The scrollbar is created while a parent Fl_Group is current, so FLTK owns
     // and destroys it with the group children list.
     scrollbar_ = nullptr;
+    hScrollbar_ = nullptr;
 }
 
 void HtmlWidget::clearSelection() {
@@ -387,6 +396,27 @@ void HtmlWidget::clearSelection() {
     selectionFocus_ = SelectionPoint{};
     selecting_ = false;
     dragSelecting_ = false;
+}
+
+int HtmlWidget::viewportWidth() const {
+    int sbW = (scrollbar_ && scrollbar_->visible()) ? kScrollbarExtent : 0;
+    return std::max(10, w() - sbW);
+}
+
+int HtmlWidget::viewportHeight() const {
+    int sbH = (allowHorizontalScroll_ && hScrollbar_ && hScrollbar_->visible())
+                  ? kScrollbarExtent
+                  : 0;
+    return std::max(10, h() - sbH);
+}
+
+void HtmlWidget::setScrollX(int x) {
+    int maxScroll = std::max(0, contentWidth_ - viewportWidth());
+    scrollX_ = std::clamp(x, 0, maxScroll);
+    if (allowHorizontalScroll_ && hScrollbar_ && hScrollbar_->visible()) {
+        hScrollbar_->value(scrollX_, viewportWidth(), 0, contentWidth_);
+    }
+    redraw();
 }
 
 bool HtmlWidget::selectionPointLess(const SelectionPoint& lhs,
@@ -673,7 +703,10 @@ void HtmlWidget::setHtml(const std::string& html, const std::string& baseUrl) {
 
     currentHtml_ = html;
     baseUrl_ = baseUrl;
+    scrollX_ = 0;
     scrollY_ = 0;
+    contentWidth_ = 0;
+    contentHeight_ = 0;
     lastHoverWord_.clear();
     lastHoverHref_.clear();
     lastHoverStrong_.clear();
@@ -717,11 +750,29 @@ void HtmlWidget::setStyleOverrideCss(const std::string& css) {
     styleOverrideCSS_ = css;
 
     if (!currentHtml_.empty()) {
+        int oldScrollX = scrollX_;
         int oldScroll = scrollY_;
         std::string html = currentHtml_;
         std::string base = baseUrl_;
         setHtml(html, base);
+        setScrollX(oldScrollX);
         setScrollY(oldScroll);
+    } else {
+        redraw();
+    }
+}
+
+void HtmlWidget::setAllowHorizontalScroll(bool allow) {
+    if (allowHorizontalScroll_ == allow) return;
+    allowHorizontalScroll_ = allow;
+    if (!allowHorizontalScroll_) {
+        scrollX_ = 0;
+        if (hScrollbar_) hScrollbar_->hide();
+    }
+
+    if (doc_) {
+        renderDocument();
+        updateScrollbar();
     } else {
         redraw();
     }
@@ -748,11 +799,13 @@ void HtmlWidget::updateElementClassById(const std::string& removeId,
     }
     if (!changed) return;
 
+    int oldScrollX = scrollX_;
     int oldScroll = scrollY_;
     root->refresh_styles();
     root->compute_styles();
     renderDocument();
     updateScrollbar();
+    setScrollX(oldScrollX);
     setScrollY(oldScroll);
     redraw();
 }
@@ -782,7 +835,11 @@ void HtmlWidget::scrollToAnchor(const std::string& anchor) {
 }
 
 void HtmlWidget::scrollToTop() {
+    scrollX_ = 0;
     scrollY_ = 0;
+    if (allowHorizontalScroll_ && hScrollbar_ && hScrollbar_->visible()) {
+        hScrollbar_->value(0);
+    }
     if (scrollbar_->visible()) {
         scrollbar_->value(0);
     }
@@ -790,10 +847,10 @@ void HtmlWidget::scrollToTop() {
 }
 
 void HtmlWidget::setScrollY(int y) {
-    int maxScroll = std::max(0, contentHeight_ - h());
+    int maxScroll = std::max(0, contentHeight_ - viewportHeight());
     scrollY_ = std::clamp(y, 0, maxScroll);
     if (scrollbar_->visible()) {
-        scrollbar_->value(scrollY_, h(), 0, contentHeight_);
+        scrollbar_->value(scrollY_, viewportHeight(), 0, contentHeight_);
     }
     redraw();
 }
@@ -803,9 +860,12 @@ HtmlWidget::Snapshot HtmlWidget::captureSnapshot() const {
     snapshot.doc = std::static_pointer_cast<void>(doc_);
     snapshot.html = currentHtml_;
     snapshot.baseUrl = baseUrl_;
+    snapshot.scrollX = scrollX_;
     snapshot.scrollY = scrollY_;
+    snapshot.contentWidth = contentWidth_;
     snapshot.contentHeight = contentHeight_;
     snapshot.renderWidth = lastRenderWidth_;
+    snapshot.hScrollbarVisible = hScrollbar_ && hScrollbar_->visible();
     snapshot.scrollbarVisible = scrollbar_ && scrollbar_->visible();
     snapshot.valid = (doc_ != nullptr || !currentHtml_.empty());
     return snapshot;
@@ -816,16 +876,21 @@ HtmlWidget::Snapshot HtmlWidget::takeSnapshot() {
     snapshot.doc = std::static_pointer_cast<void>(doc_);
     snapshot.html = std::move(currentHtml_);
     snapshot.baseUrl = std::move(baseUrl_);
+    snapshot.scrollX = scrollX_;
     snapshot.scrollY = scrollY_;
+    snapshot.contentWidth = contentWidth_;
     snapshot.contentHeight = contentHeight_;
     snapshot.renderWidth = lastRenderWidth_;
+    snapshot.hScrollbarVisible = hScrollbar_ && hScrollbar_->visible();
     snapshot.scrollbarVisible = scrollbar_ && scrollbar_->visible();
     snapshot.valid = (doc_ != nullptr || !snapshot.html.empty());
 
     doc_.reset();
     currentHtml_.clear();
     baseUrl_.clear();
+    scrollX_ = 0;
     scrollY_ = 0;
+    contentWidth_ = 0;
     contentHeight_ = 0;
     lastRenderWidth_ = 0;
     lastHoverWord_.clear();
@@ -852,7 +917,9 @@ void HtmlWidget::restoreSnapshot(const Snapshot& snapshot) {
     doc_ = std::static_pointer_cast<litehtml::document>(snapshot.doc);
     currentHtml_ = snapshot.html;
     baseUrl_ = snapshot.baseUrl;
+    scrollX_ = snapshot.scrollX;
     scrollY_ = snapshot.scrollY;
+    contentWidth_ = snapshot.contentWidth;
     contentHeight_ = snapshot.contentHeight;
     lastRenderWidth_ = snapshot.renderWidth;
     lastHoverWord_.clear();
@@ -867,14 +934,14 @@ void HtmlWidget::restoreSnapshot(const Snapshot& snapshot) {
 
     bool reusedLayout = false;
     if (doc_) {
-        const int sbW = 16;
+        const int sbW = kScrollbarExtent;
         const bool snapSbVisible = snapshot.scrollbarVisible;
-        const int expectedRenderWidth =
-            std::max(10, w() - (snapSbVisible ? sbW : 0));
+        const int expectedRenderWidth = std::max(10, w() - (snapSbVisible ? sbW : 0));
         const bool desiredVisible = (contentHeight_ > h());
 
         // Fast path: geometry/scrollbar mode unchanged, so reuse cached layout.
-        if (snapshot.renderWidth > 0 &&
+        if (!allowHorizontalScroll_ &&
+            snapshot.renderWidth > 0 &&
             snapshot.renderWidth == expectedRenderWidth &&
             desiredVisible == snapSbVisible) {
             reusedLayout = true;
@@ -899,6 +966,7 @@ void HtmlWidget::restoreSnapshot(const Snapshot& snapshot) {
         }
         updateScrollbar();
     }
+    setScrollX(scrollX_);
     setScrollY(scrollY_);
 }
 
@@ -912,7 +980,9 @@ void HtmlWidget::restoreSnapshot(Snapshot&& snapshot) {
     doc_ = std::static_pointer_cast<litehtml::document>(snapshot.doc);
     currentHtml_ = std::move(snapshot.html);
     baseUrl_ = std::move(snapshot.baseUrl);
+    scrollX_ = snapshot.scrollX;
     scrollY_ = snapshot.scrollY;
+    contentWidth_ = snapshot.contentWidth;
     contentHeight_ = snapshot.contentHeight;
     lastRenderWidth_ = snapshot.renderWidth;
     const bool snapSbVisible = snapshot.scrollbarVisible;
@@ -926,21 +996,25 @@ void HtmlWidget::restoreSnapshot(Snapshot&& snapshot) {
     textFragments_.clear();
 
     snapshot.doc.reset();
+    snapshot.scrollX = 0;
     snapshot.scrollY = 0;
+    snapshot.contentWidth = 0;
     snapshot.contentHeight = 0;
     snapshot.renderWidth = 0;
+    snapshot.hScrollbarVisible = false;
     snapshot.scrollbarVisible = false;
     snapshot.valid = false;
 
     bool reusedLayout = false;
     if (doc_) {
-        const int sbW = 16;
+        const int sbW = kScrollbarExtent;
         const int expectedRenderWidth =
             std::max(10, w() - (snapSbVisible ? sbW : 0));
         const bool desiredVisible = (contentHeight_ > h());
 
         // Fast path: geometry/scrollbar mode unchanged, so reuse cached layout.
-        if (lastRenderWidth_ > 0 &&
+        if (!allowHorizontalScroll_ &&
+            lastRenderWidth_ > 0 &&
             lastRenderWidth_ == expectedRenderWidth &&
             desiredVisible == snapSbVisible) {
             reusedLayout = true;
@@ -965,6 +1039,7 @@ void HtmlWidget::restoreSnapshot(Snapshot&& snapshot) {
         }
         updateScrollbar();
     }
+    setScrollX(scrollX_);
     setScrollY(scrollY_);
 }
 
@@ -972,47 +1047,82 @@ void HtmlWidget::renderDocument() {
     perf::ScopeTimer timer("HtmlWidget::renderDocument");
     if (!doc_) return;
 
-    int sbW = scrollbar_->visible() ? 16 : 0;
-    int renderWidth = w() - sbW;
-    if (renderWidth < 10) renderWidth = 10;
+    int renderWidth = viewportWidth();
     lastRenderWidth_ = renderWidth;
 
     doc_->render(renderWidth);
-    contentHeight_ = doc_->height();
+    contentWidth_ = std::max(0, static_cast<int>(doc_->width()));
+    contentHeight_ = std::max(0, static_cast<int>(doc_->height()));
 }
 
 void HtmlWidget::updateScrollbar() {
     perf::ScopeTimer timer("HtmlWidget::updateScrollbar");
     if (!doc_) {
         scrollbar_->hide();
+        if (hScrollbar_) hScrollbar_->hide();
+        scrollX_ = 0;
+        scrollY_ = 0;
         return;
     }
 
-    const bool wasVisible = scrollbar_->visible();
-    const bool needVisible = (contentHeight_ > h());
+    bool needV = scrollbar_ && scrollbar_->visible();
+    bool needH = allowHorizontalScroll_ && hScrollbar_ && hScrollbar_->visible();
 
-    if (needVisible) {
-        scrollbar_->show();
-        scrollbar_->resize(x() + w() - 16, y(), 16, h());
+    for (int iter = 0; iter < 4; ++iter) {
+        if (needV) scrollbar_->show();
+        else scrollbar_->hide();
+
+        if (allowHorizontalScroll_ && needH) hScrollbar_->show();
+        else if (hScrollbar_) hScrollbar_->hide();
+
+        renderDocument();
+
+        bool newNeedH = allowHorizontalScroll_ &&
+                        contentWidth_ > viewportWidth();
+        bool newNeedV = contentHeight_ > viewportHeight();
+        if (newNeedH == needH && newNeedV == needV) {
+            needH = newNeedH;
+            needV = newNeedV;
+            break;
+        }
+        needH = newNeedH;
+        needV = newNeedV;
+    }
+
+    if (needV) scrollbar_->show();
+    else scrollbar_->hide();
+
+    if (allowHorizontalScroll_ && needH) hScrollbar_->show();
+    else if (hScrollbar_) hScrollbar_->hide();
+
+    int viewW = viewportWidth();
+    int viewH = viewportHeight();
+
+    if (scrollbar_->visible()) {
+        scrollbar_->resize(x() + w() - kScrollbarExtent, y(),
+                           kScrollbarExtent, viewH);
         scrollbar_->linesize(20);
-
-        // Render once more only on visibility transition (hide -> show),
-        // where width changed from full pane to pane-minus-scrollbar.
-        if (!wasVisible) {
-            renderDocument();
-        }
-
-        scrollbar_->value(scrollY_, h(), 0, contentHeight_);
+        scrollbar_->value(scrollY_, viewH, 0, std::max(viewH, contentHeight_));
     } else {
-        // Render once when transitioning show -> hide, so wrapping can use
-        // full width again.
-        if (wasVisible) {
-            scrollbar_->hide();
-            renderDocument();
-        } else {
-            scrollbar_->hide();
-        }
         scrollY_ = 0;
+    }
+
+    if (allowHorizontalScroll_ && hScrollbar_ && hScrollbar_->visible()) {
+        hScrollbar_->resize(x(), y() + h() - kScrollbarExtent,
+                            viewW, kScrollbarExtent);
+        hScrollbar_->linesize(20);
+        hScrollbar_->value(scrollX_, viewW, 0, std::max(viewW, contentWidth_));
+    } else {
+        scrollX_ = 0;
+    }
+
+    scrollX_ = std::clamp(scrollX_, 0, std::max(0, contentWidth_ - viewW));
+    scrollY_ = std::clamp(scrollY_, 0, std::max(0, contentHeight_ - viewH));
+    if (scrollbar_->visible()) {
+        scrollbar_->value(scrollY_, viewH, 0, std::max(viewH, contentHeight_));
+    }
+    if (allowHorizontalScroll_ && hScrollbar_ && hScrollbar_->visible()) {
+        hScrollbar_->value(scrollX_, viewW, 0, std::max(viewW, contentWidth_));
     }
 }
 
@@ -1020,6 +1130,13 @@ void HtmlWidget::scrollbarCallback(Fl_Widget* w, void* data) {
     auto* self = static_cast<HtmlWidget*>(data);
     auto* sb = static_cast<Fl_Scrollbar*>(w);
     self->scrollY_ = sb->value();
+    self->redraw();
+}
+
+void HtmlWidget::hScrollbarCallback(Fl_Widget* w, void* data) {
+    auto* self = static_cast<HtmlWidget*>(data);
+    auto* sb = static_cast<Fl_Scrollbar*>(w);
+    self->scrollX_ = sb->value();
     self->redraw();
 }
 
@@ -1032,12 +1149,13 @@ void HtmlWidget::draw() {
     if (doc_) {
         textFragments_.clear();
         // Set up clip for content area (exclude scrollbar)
-        int sbW = scrollbar_->visible() ? 16 : 0;
-        fl_push_clip(x(), y(), w() - sbW, h());
+        int viewW = viewportWidth();
+        int viewH = viewportHeight();
+        fl_push_clip(x(), y(), viewW, viewH);
 
         // Draw the litehtml document with scroll offset
-        litehtml::position clip(x(), y(), w() - sbW, h());
-        doc_->draw(0, x(), y() - scrollY_, &clip);
+        litehtml::position clip(x(), y(), viewW, viewH);
+        doc_->draw(0, x() - scrollX_, y() - scrollY_, &clip);
 
         fl_pop_clip();
     } else {
@@ -1054,6 +1172,9 @@ void HtmlWidget::draw() {
     if (scrollbar_->visible()) {
         scrollbar_->redraw();
     }
+    if (allowHorizontalScroll_ && hScrollbar_ && hScrollbar_->visible()) {
+        hScrollbar_->redraw();
+    }
 }
 
 int HtmlWidget::handle(int event) {
@@ -1063,7 +1184,7 @@ int HtmlWidget::handle(int event) {
         if (Fl::event_button() == FL_RIGHT_MOUSE && contextCallback_) {
             // Right-click context menu
             if (doc_) {
-                int docX = Fl::event_x() - x();
+                int docX = Fl::event_x() - x() + scrollX_;
                 int docY = Fl::event_y() - y() + scrollY_;
                 litehtml::position::vector redraw;
                 std::vector<litehtml::position> clientRects;
@@ -1152,9 +1273,9 @@ int HtmlWidget::handle(int event) {
 
         if (doc_) {
             litehtml::position::vector redraw;
-            if (doc_->on_lbutton_down(Fl::event_x() - x(),
+            if (doc_->on_lbutton_down(Fl::event_x() - x() + scrollX_,
                                        Fl::event_y() - y() + scrollY_,
-                                       Fl::event_x() - x(),
+                                       Fl::event_x() - x() + scrollX_,
                                        Fl::event_y() - y() + scrollY_,
                                        redraw)) {
                 this->redraw();
@@ -1196,9 +1317,9 @@ int HtmlWidget::handle(int event) {
 
         if (doc_) {
             litehtml::position::vector redraw;
-            if (doc_->on_lbutton_up(Fl::event_x() - x(),
+            if (doc_->on_lbutton_up(Fl::event_x() - x() + scrollX_,
                                      Fl::event_y() - y() + scrollY_,
-                                     Fl::event_x() - x(),
+                                     Fl::event_x() - x() + scrollX_,
                                      Fl::event_y() - y() + scrollY_,
                                      redraw)) {
                 this->redraw();
@@ -1210,9 +1331,9 @@ int HtmlWidget::handle(int event) {
     case FL_MOVE: {
         if (doc_) {
             litehtml::position::vector redraw;
-            if (doc_->on_mouse_over(Fl::event_x() - x(),
+            if (doc_->on_mouse_over(Fl::event_x() - x() + scrollX_,
                                      Fl::event_y() - y() + scrollY_,
-                                     Fl::event_x() - x(),
+                                     Fl::event_x() - x() + scrollX_,
                                      Fl::event_y() - y() + scrollY_,
                                      redraw)) {
                 this->redraw();
@@ -1221,8 +1342,10 @@ int HtmlWidget::handle(int event) {
             // Check for hover over links/words
             if (hoverCallback_) {
                 auto el = doc_->root_render()->get_element_by_point(
-                    Fl::event_x() - x(), Fl::event_y() - y() + scrollY_,
-                    Fl::event_x() - x(), Fl::event_y() - y() + scrollY_,
+                    Fl::event_x() - x() + scrollX_,
+                    Fl::event_y() - y() + scrollY_,
+                    Fl::event_x() - x() + scrollX_,
+                    Fl::event_y() - y() + scrollY_,
                     [](const std::shared_ptr<litehtml::render_item>&) { return true; });
 
                 std::string word, href, strong, morph, module, title;
@@ -1251,7 +1374,7 @@ int HtmlWidget::handle(int event) {
                         if (isWordSpan) {
                             word = elText;
                         } else {
-                            int cursorDocX = Fl::event_x() - x();
+                            int cursorDocX = Fl::event_x() - x() + scrollX_;
                             word = extractWordAtCursor(elText, cursorDocX, el);
                         }
                     }
@@ -1310,17 +1433,27 @@ int HtmlWidget::handle(int event) {
     }
 
     case FL_MOUSEWHEEL: {
+        int dx = Fl::event_dx() * 30;
         int dy = Fl::event_dy() * 30;
-        scrollY_ += dy;
-        if (scrollY_ < 0) scrollY_ = 0;
-        if (scrollY_ > contentHeight_ - h())
-            scrollY_ = std::max(0, contentHeight_ - h());
+        bool handled = false;
 
-        if (scrollbar_->visible()) {
-            scrollbar_->value(scrollY_, h(), 0, contentHeight_);
+        if (allowHorizontalScroll_ && hScrollbar_ && hScrollbar_->visible()) {
+            int horizontalDelta = dx;
+            if (horizontalDelta == 0 && (Fl::event_state() & FL_SHIFT)) {
+                horizontalDelta = dy;
+            }
+            if (horizontalDelta != 0) {
+                setScrollX(scrollX_ + horizontalDelta);
+                handled = true;
+            }
         }
-        this->redraw();
-        return 1;
+
+        if (dy != 0 && !(handled && (Fl::event_state() & FL_SHIFT))) {
+            setScrollY(scrollY_ + dy);
+            handled = true;
+        }
+
+        return handled ? 1 : 0;
     }
 
     case FL_KEYBOARD:
@@ -1379,8 +1512,12 @@ void HtmlWidget::resize(int X, int Y, int W, int H) {
     textFragments_.clear();
 
     if (scrollbar_) {
-        const int sbW = 16;
-        scrollbar_->resize(X + W - sbW, Y, sbW, H);
+        scrollbar_->resize(X + W - kScrollbarExtent, Y,
+                           kScrollbarExtent, H);
+    }
+    if (hScrollbar_) {
+        hScrollbar_->resize(X, Y + H - kScrollbarExtent,
+                            W, kScrollbarExtent);
     }
 
     if (doc_) {
@@ -1740,11 +1877,10 @@ void HtmlWidget::del_clip() {
 }
 
 void HtmlWidget::get_viewport(litehtml::position& client) const {
-    int sbW = scrollbar_->visible() ? 16 : 0;
     client.x = x();
     client.y = y();
-    client.width = w() - sbW;
-    client.height = h();
+    client.width = viewportWidth();
+    client.height = viewportHeight();
 }
 
 std::shared_ptr<litehtml::element> HtmlWidget::create_element(
@@ -1755,10 +1891,9 @@ std::shared_ptr<litehtml::element> HtmlWidget::create_element(
 }
 
 void HtmlWidget::get_media_features(litehtml::media_features& media) const {
-    int sbW = scrollbar_->visible() ? 16 : 0;
     media.type = litehtml::media_type_screen;
-    media.width = w() - sbW;
-    media.height = h();
+    media.width = viewportWidth();
+    media.height = viewportHeight();
     media.device_width = Fl::w();
     media.device_height = Fl::h();
     media.color = 8;

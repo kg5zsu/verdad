@@ -73,6 +73,8 @@ private:
     // Stored results
     std::vector<SearchResult> results_;
     std::vector<std::string> resultDisplayKeys_;
+    std::vector<int> resultLineWidths_;
+    int resultRefColumnWidth_ = 100;
 
     // Indexing indicator state
     bool indexingIndicatorActive_ = false;
@@ -105,6 +107,8 @@ private:
     void activateResultLine(int line, int mouseButton, bool isDoubleClick);
     void resetHighlightState();
     std::string applyPreviewHighlights(const std::string& html) const;
+    void rebuildResultMetrics();
+    int resultLineWidth(int line) const;
 
     // Callbacks
     static void onResultSelect(Fl_Widget* w, void* data);
