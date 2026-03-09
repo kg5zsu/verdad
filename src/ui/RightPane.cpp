@@ -638,7 +638,7 @@ void RightPane::showCommentary(const std::string& moduleName,
 
     if (commentaryHtml_) {
         if (verse > 0) {
-            commentaryHtml_->scrollToAnchor("v" + std::to_string(verse));
+            commentaryHtml_->scrollToAnchor("vpos" + std::to_string(verse));
         } else {
             commentaryHtml_->scrollToTop();
         }
@@ -661,6 +661,22 @@ void RightPane::updateCommentarySelection(int verse) {
     if (highlightedCommentaryVerse_ == verse) return;
     highlightedCommentaryVerse_ = verse;
     applyCommentaryStyleOverride();
+}
+
+std::string RightPane::activeBibleReference() const {
+    if (!app_ || !app_->mainWindow() || !app_->mainWindow()->biblePane()) {
+        return "";
+    }
+
+    BiblePane* biblePane = app_->mainWindow()->biblePane();
+    std::string book = biblePane->currentBook();
+    int chapter = biblePane->currentChapter();
+    int verse = biblePane->currentVerse();
+    if (book.empty() || chapter <= 0 || verse <= 0) return "";
+
+    std::ostringstream ref;
+    ref << book << " " << chapter << ":" << verse;
+    return ref.str();
 }
 
 void RightPane::applyCommentaryStyleOverride() {
@@ -753,21 +769,31 @@ void RightPane::showGeneralBookEntry(const std::string& moduleName,
     }
 }
 
-void RightPane::setCommentaryModule(const std::string& moduleName) {
+void RightPane::setCommentaryModule(const std::string& moduleName,
+                                    bool activateCurrentVerse) {
     currentCommentary_ = moduleName;
     loadedCommentaryModule_.clear();
     loadedCommentaryChapterKey_.clear();
 
-    if (!commentaryChoice_) return;
-    for (int i = 0; i < commentaryChoice_->size(); i++) {
-        const Fl_Menu_Item& item = commentaryChoice_->menu()[i];
-        if (item.label() && moduleName == item.label()) {
-            commentaryChoice_->value(i);
-            break;
+    if (commentaryChoice_) {
+        for (int i = 0; i < commentaryChoice_->size(); i++) {
+            const Fl_Menu_Item& item = commentaryChoice_->menu()[i];
+            if (item.label() && moduleName == item.label()) {
+                commentaryChoice_->value(i);
+                break;
+            }
         }
     }
 
     updateCommentaryEditorChrome();
+
+    if (!activateCurrentVerse) return;
+
+    std::string reference = activeBibleReference();
+    if (reference.empty()) reference = currentCommentaryRef_;
+    if (!reference.empty()) {
+        showCommentary(moduleName, reference);
+    }
 }
 
 void RightPane::setDictionaryModule(const std::string& moduleName) {
@@ -1638,26 +1664,24 @@ void RightPane::onHtmlLink(const std::string& url, bool commentarySource) {
         }
     }
 
+    std::vector<std::string> refs;
     if (commentarySource && url.rfind("verse:", 0) == 0) {
         try {
             int verse = std::stoi(url.substr(6));
             SwordManager::VerseRef ref = SwordManager::parseVerseRef(currentCommentaryRef_);
-            if (!ref.book.empty() && ref.chapter > 0 && verse > 0 &&
-                app_->mainWindow()->leftPane()) {
+            if (!ref.book.empty() && ref.chapter > 0 && verse > 0) {
                 std::ostringstream target;
                 target << ref.book << " " << ref.chapter << ":" << verse;
-                app_->mainWindow()->leftPane()->setPreviewText(
-                    app_->swordManager().getVerseText(previewModule, target.str()),
-                    previewModule, target.str());
-                return;
+                refs.push_back(target.str());
             }
         } catch (...) {
         }
+    } else {
+        refs = app_->swordManager().verseReferencesFromLink(
+            url, sourceKey, previewModule);
     }
 
-    std::vector<std::string> refs = app_->swordManager().verseReferencesFromLink(
-        url, sourceKey, previewModule);
-    if (refs.size() > 1 && app_->mainWindow()->leftPane()) {
+    if (!refs.empty() && app_->mainWindow()->leftPane()) {
         app_->mainWindow()->leftPane()->showReferenceResults(
             previewModule, refs, "(linked verses)");
         return;
@@ -1678,14 +1702,10 @@ void RightPane::onCommentaryModuleChange(Fl_Widget* /*w*/, void* data) {
     if (!self || !self->commentaryChoice_) return;
     const Fl_Menu_Item* item = self->commentaryChoice_->mvalue();
     if (item && item->label()) {
-        self->currentCommentary_ = item->label();
-        self->updateCommentaryEditorChrome();
-        if (!self->currentCommentaryRef_.empty()) {
-            self->showCommentary(self->currentCommentary_,
-                                 self->currentCommentaryRef_);
-        }
+        self->setCommentaryModule(item->label(), true);
     }
 }
+
 
 void RightPane::onCommentaryEdit(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);

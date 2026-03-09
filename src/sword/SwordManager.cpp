@@ -2162,6 +2162,35 @@ std::string SwordManager::getVerseText(const std::string& moduleName,
     return html.str();
 }
 
+std::string SwordManager::getVersePlainText(const std::string& moduleName,
+                                            const std::string& key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    sword::SWModule* mod = getModule(moduleName);
+    if (!mod || !mgr_) return "";
+
+    mod->setKey(key.c_str());
+    if (mod->popError()) return "";
+
+    mgr_->setGlobalOption("Strong's Numbers", "Off");
+    mgr_->setGlobalOption("Morphological Tags", "Off");
+    mgr_->setGlobalOption("Lemmas", "Off");
+    mgr_->setGlobalOption("Footnotes", "Off");
+    mgr_->setGlobalOption("Cross-references", "Off");
+    mgr_->setGlobalOption("Headings", "Off");
+
+    const char* plainRaw = mod->stripText();
+    std::string plain = plainRaw ? plainRaw : "";
+
+    mgr_->setGlobalOption("Strong's Numbers", "On");
+    mgr_->setGlobalOption("Morphological Tags", "On");
+    mgr_->setGlobalOption("Lemmas", "On");
+    mgr_->setGlobalOption("Footnotes", "On");
+    mgr_->setGlobalOption("Cross-references", "On");
+    mgr_->setGlobalOption("Headings", "On");
+
+    return plain;
+}
+
 std::string SwordManager::getChapterText(const std::string& moduleName,
                                           const std::string& book,
                                           int chapter,
@@ -2497,6 +2526,8 @@ std::string SwordManager::getCommentaryText(const std::string& moduleName,
              << "<span class=\"commentary-versenum\">" << verse << "</span></a>"
              << "</div>";
         html << "<div class=\"commentary-text\">";
+        html << "<div class=\"commentary-scroll-anchor\" id=\"vpos" << verse
+             << "\"></div>";
         if (separated) {
             html << "<div class=\"commentary-separator\"></div>";
         }

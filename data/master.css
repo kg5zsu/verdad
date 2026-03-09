@@ -257,6 +257,14 @@ div.commentary-text {
     padding-bottom: 8px;
 }
 
+div.commentary-scroll-anchor {
+    display: block;
+    height: 0;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
 div.commentary-verse.commentary-separated > div.commentary-gutter {
     padding-top: 12px;
 }
@@ -338,6 +346,23 @@ div.dictionary .entry-key {
 }
 
 /* Link/preview blocks */
+div.preview-verse-ref {
+    margin: 0 0 6px 0;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    font-weight: bold;
+}
+
+div.preview-verse-ref > a.preview-verse-link {
+    color: #1a5276;
+    text-decoration: none;
+}
+
+div.preview-verse-ref > a.preview-verse-link:hover {
+    text-decoration: underline;
+}
+
 div.link-preview .entry-key,
 div.general-book .entry-key {
     font-size: 1.2em;

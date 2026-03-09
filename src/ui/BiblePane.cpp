@@ -1310,6 +1310,15 @@ void BiblePane::onLinkClicked(const std::string& url) {
             }
             return;
         }
+        if (refs.size() == 1) {
+            if (app_->mainWindow()->leftPane()) {
+                app_->mainWindow()->leftPane()->setVersePreviewText(
+                    app_->swordManager().getVerseText(verseModule, refs.front()),
+                    verseModule,
+                    refs.front());
+            }
+            return;
+        }
 
         std::string previewHtml = app_->swordManager().buildLinkPreviewHtml(
             verseModule, contextKey, url, verseModule);

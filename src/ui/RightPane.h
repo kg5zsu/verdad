@@ -74,8 +74,10 @@ public:
     /// Show a general book entry in a specific module
     void showGeneralBookEntry(const std::string& moduleName, const std::string& key);
 
-    /// Set the current commentary module
-    void setCommentaryModule(const std::string& moduleName);
+    /// Set the current commentary module.
+    /// When activateCurrentVerse is true, load the module at the active Bible verse.
+    void setCommentaryModule(const std::string& moduleName,
+                             bool activateCurrentVerse = false);
 
     /// Set the current dictionary module
     void setDictionaryModule(const std::string& moduleName);
@@ -257,6 +259,7 @@ private:
     void loadCommentaryEditorForCurrentEntry();
     void applyCommentaryStyleOverride();
     void updateCommentarySelection(int verse);
+    std::string activeBibleReference() const;
     void onHtmlLink(const std::string& url, bool commentarySource);
 
     // Callbacks

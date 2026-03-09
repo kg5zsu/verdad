@@ -335,6 +335,40 @@ std::string htmlToSnippetText(std::string html) {
     return html;
 }
 
+std::string truncateSnippetWords(const std::string& text, size_t maxWords = 18) {
+    std::string collapsed = collapseWhitespace(text);
+    if (collapsed.empty()) return "";
+
+    size_t pos = 0;
+    size_t words = 0;
+    size_t cut = collapsed.size();
+    bool truncated = false;
+
+    while (pos < collapsed.size()) {
+        while (pos < collapsed.size() && collapsed[pos] == ' ') ++pos;
+        if (pos >= collapsed.size()) break;
+
+        size_t wordEnd = collapsed.find(' ', pos);
+        ++words;
+        if (words > maxWords) {
+            cut = pos;
+            truncated = true;
+            break;
+        }
+        if (wordEnd == std::string::npos) {
+            break;
+        }
+        pos = wordEnd + 1;
+    }
+
+    if (!truncated) return collapsed;
+
+    std::string out = collapsed.substr(0, cut);
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    if (!out.empty()) out += " ...";
+    return out;
+}
+
 constexpr int kResultRefColumnWidth = 100;
 constexpr int kResultLinePadding = 4;
 constexpr int kResultColumnGap = 8;
@@ -1085,8 +1119,8 @@ void SearchPanel::showReferenceResults(const std::string& moduleName,
         SearchResult result;
         result.module = module;
         result.key = ref;
-        result.text = htmlToSnippetText(
-            app_->swordManager().getVerseText(module, ref));
+        result.text = truncateSnippetWords(
+            app_->swordManager().getVersePlainText(module, ref));
         if (result.text.empty()) result.text = ref;
         results_.push_back(std::move(result));
     }
@@ -1359,7 +1393,7 @@ void SearchPanel::applyPendingPreviewUpdate() {
     std::string html = app_->swordManager().getVerseText(
         pendingPreviewModule_, pendingPreviewKey_);
     html = applyPreviewHighlights(html);
-    app_->mainWindow()->leftPane()->setPreviewText(
+    app_->mainWindow()->leftPane()->setVersePreviewText(
         html, pendingPreviewModule_, pendingPreviewKey_);
     lastPreviewModule_ = pendingPreviewModule_;
     lastPreviewKey_ = pendingPreviewKey_;

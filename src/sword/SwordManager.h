@@ -94,6 +94,10 @@ public:
     /// @return XHTML string
     std::string getVerseText(const std::string& moduleName, const std::string& key);
 
+    /// Get plain text for a verse/passage without Strong's, morph, note, or cross-ref markers.
+    std::string getVersePlainText(const std::string& moduleName,
+                                  const std::string& key);
+
     /// Get rendered XHTML for an entire chapter
     /// @param moduleName    Module to use
     /// @param book          Book name (e.g. "Genesis")

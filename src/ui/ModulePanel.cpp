@@ -107,7 +107,7 @@ void ModulePanel::onTreeDoubleClick(Fl_Widget* /*w*/, void* data) {
         if (type == "Biblical Texts") {
             self->app_->mainWindow()->biblePane()->setModule(modName);
         } else if (type == "Commentaries") {
-            self->app_->mainWindow()->rightPane()->setCommentaryModule(modName);
+            self->app_->mainWindow()->rightPane()->setCommentaryModule(modName, true);
         } else if (type == "Dictionaries") {
             self->app_->mainWindow()->rightPane()->setDictionaryModule(modName);
         }

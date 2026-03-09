@@ -46,6 +46,11 @@ public:
                         const std::string& sourceModule = "",
                         const std::string& sourceKey = "");
 
+    /// Update the preview area with a verse preview and a clickable reference header.
+    void setVersePreviewText(const std::string& html,
+                             const std::string& verseModule,
+                             const std::string& verseKey);
+
     /// Show a set of linked verse references in the Search tab.
     void showReferenceResults(const std::string& moduleName,
                               const std::vector<std::string>& references,

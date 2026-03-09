@@ -12,7 +12,9 @@
 #include <FL/Fl.H>
 #include <FL/fl_ask.H>
 #include <algorithm>
+#include <cctype>
 #include <fstream>
+#include <sstream>
 
 namespace verdad {
 
@@ -35,6 +37,47 @@ void layoutTabPanels(Fl_Tabs* tabs,
     modulePanel->resize(panelX, panelY, panelW, panelH);
     searchPanel->resize(panelX, panelY, panelW, panelH);
     tagPanel->resize(panelX, panelY, panelW, panelH);
+}
+
+std::string trimCopy(const std::string& text) {
+    size_t start = 0;
+    while (start < text.size() &&
+           std::isspace(static_cast<unsigned char>(text[start]))) {
+        ++start;
+    }
+
+    size_t end = text.size();
+    while (end > start &&
+           std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+        --end;
+    }
+
+    return text.substr(start, end - start);
+}
+
+std::string htmlEscape(const std::string& text) {
+    std::string out;
+    out.reserve(text.size() + 16);
+    for (char c : text) {
+        switch (c) {
+        case '&':
+            out += "&amp;";
+            break;
+        case '<':
+            out += "&lt;";
+            break;
+        case '>':
+            out += "&gt;";
+            break;
+        case '"':
+            out += "&quot;";
+            break;
+        default:
+            out.push_back(c);
+            break;
+        }
+    }
+    return out;
 }
 
 } // namespace
@@ -264,6 +307,34 @@ void LeftPane::setPreviewText(const std::string& html,
     }
 }
 
+void LeftPane::setVersePreviewText(const std::string& html,
+                                   const std::string& verseModule,
+                                   const std::string& verseKey) {
+    previewSourceModule_ = verseModule;
+    previewSourceKey_ = verseKey;
+    if (!previewWidget_) return;
+
+    std::string label = trimCopy(verseKey);
+    if (app_) {
+        std::string shortRef =
+            trimCopy(app_->swordManager().getShortReference(verseModule, verseKey));
+        if (!shortRef.empty()) label = shortRef;
+    }
+    if (label.empty()) label = verseKey;
+
+    std::ostringstream wrapped;
+    wrapped << "<div class=\"preview-verse-block\">\n";
+    if (!label.empty()) {
+        wrapped << "<div class=\"preview-verse-ref\">"
+                << "<a class=\"preview-verse-link\" href=\"open-preview-verse\">"
+                << htmlEscape(label) << "</a></div>\n";
+    }
+    wrapped << html << "\n";
+    wrapped << "</div>\n";
+
+    previewWidget_->setHtml(wrapped.str());
+}
+
 void LeftPane::showReferenceResults(const std::string& moduleName,
                                     const std::vector<std::string>& references,
                                     const std::string& statusSuffix) {
@@ -337,6 +408,16 @@ void LeftPane::onPreviewLink(const std::string& url) {
 
     if (!app_->mainWindow()) return;
 
+    if (url == "open-preview-verse") {
+        if (previewSourceKey_.empty()) return;
+        if (!trimCopy(previewSourceModule_).empty()) {
+            app_->mainWindow()->navigateTo(previewSourceModule_, previewSourceKey_);
+        } else {
+            app_->mainWindow()->navigateTo(previewSourceKey_);
+        }
+        return;
+    }
+
     std::string activeBibleModule;
     if (app_->mainWindow()->biblePane()) {
         activeBibleModule = app_->mainWindow()->biblePane()->currentModule();
@@ -352,6 +433,13 @@ void LeftPane::onPreviewLink(const std::string& url) {
         url, previewSourceKey_, activeBibleModule);
     if (refs.size() > 1) {
         showReferenceResults(activeBibleModule, refs, "(linked verses)");
+        return;
+    }
+    if (refs.size() == 1) {
+        setVersePreviewText(
+            app_->swordManager().getVerseText(activeBibleModule, refs.front()),
+            activeBibleModule,
+            refs.front());
         return;
     }
 
