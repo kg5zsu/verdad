@@ -241,14 +241,26 @@ div.commentary {
     line-height: 1.3;
 }
 
+div.commentary-heading {
+    font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif;
+    font-size: 13px;
+    line-height: 1.3;
+}
+
+div.commentary-heading > h3 {
+    margin: 0 0 0.75em 0;
+}
+
 div.commentary-verse {
     display: table-row;
 }
 
 div.commentary-gutter {
     display: table-cell;
-    width: 2.15em;
-    padding-right: 0.55em;
+    width: 32px;
+    min-width: 32px;
+    max-width: 32px;
+    padding-right: 10px;
     padding-bottom: 8px;
     text-align: center;
     vertical-align: top;

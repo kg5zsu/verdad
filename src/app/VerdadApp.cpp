@@ -722,6 +722,7 @@ std::string VerdadApp::textStyleOverrideCss() const {
         << "div.parallel-col-last,\n"
         << "div.parallel-cell,\n"
         << "div.parallel-cell-last,\n"
+        << "div.commentary-heading,\n"
         << "div.commentary,\n"
         << "div.dictionary,\n"
         << "div.general-book,\n"

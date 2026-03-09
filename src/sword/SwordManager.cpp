@@ -2954,8 +2954,9 @@ std::string SwordManager::getCommentaryText(const std::string& moduleName,
             return "<p><i>No commentary available for " + key + "</i></p>";
         }
         std::ostringstream html;
+        html << "<div class=\"commentary-heading\"><h3>"
+             << htmlEscapeAttr(key) << "</h3></div>\n";
         html << "<div class=\"commentary\">\n";
-        html << "<h3>" << key << "</h3>\n";
         html << text;
         html << "</div>\n";
         return html.str();
@@ -2969,8 +2970,10 @@ std::string SwordManager::getCommentaryText(const std::string& moduleName,
 
     int chapter = vk->getChapter();
     std::ostringstream html;
+    html << "<div class=\"commentary-heading\"><h3>"
+         << htmlEscapeAttr(ref.book) << " " << ref.chapter
+         << "</h3></div>\n";
     html << "<div class=\"commentary\">\n";
-    html << "<h3>" << htmlEscapeAttr(ref.book) << " " << ref.chapter << "</h3>\n";
 
     while (!mod->popError() && vk->getChapter() == chapter) {
         int verse = vk->getVerse();
