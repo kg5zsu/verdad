@@ -619,6 +619,36 @@ void HtmlWidget::setStyleOverrideCss(const std::string& css) {
     }
 }
 
+void HtmlWidget::updateElementClassById(const std::string& removeId,
+                                        const std::string& addId,
+                                        const std::string& className) {
+    if (!doc_ || className.empty()) return;
+
+    auto root = doc_->root();
+    if (!root) return;
+
+    bool changed = false;
+    if (!removeId.empty()) {
+        if (auto el = findElementByIdRecursive(root, removeId)) {
+            changed = el->set_class(className.c_str(), false) || changed;
+        }
+    }
+    if (!addId.empty()) {
+        if (auto el = findElementByIdRecursive(root, addId)) {
+            changed = el->set_class(className.c_str(), true) || changed;
+        }
+    }
+    if (!changed) return;
+
+    int oldScroll = scrollY_;
+    root->refresh_styles();
+    root->compute_styles();
+    renderDocument();
+    updateScrollbar();
+    setScrollY(oldScroll);
+    redraw();
+}
+
 void HtmlWidget::scrollToAnchor(const std::string& anchor) {
     if (!doc_ || anchor.empty()) return;
 

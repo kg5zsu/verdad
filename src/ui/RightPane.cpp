@@ -22,6 +22,33 @@
 namespace verdad {
 namespace {
 
+std::string composeCss(const std::string& base, const std::string& extra) {
+    if (base.empty()) return extra;
+    if (extra.empty()) return base;
+    return base + "\n" + extra;
+}
+
+std::string commentarySelectionCss(int verse) {
+    if (verse <= 0) return "";
+
+    std::ostringstream css;
+    css << "div.commentary-verse#v" << verse
+        << " > div.commentary-gutter > a.versenum-link > span.commentary-versenum {"
+        << " display:inline-block;"
+        << " padding:1px 1px;"
+        << " border-radius:3px;"
+        << " border:1px solid #c0d0e0;"
+        << " background-color:#e0e8f0;"
+        << " color:#1a5276;"
+        << " line-height:1.1;"
+        << " }\n";
+    css << "div.commentary-verse#v" << verse
+        << " > div.commentary-gutter > a.versenum-link:hover > span.commentary-versenum {"
+        << " background-color:#c0d0e0;"
+        << " }\n";
+    return css.str();
+}
+
 class ResizeAwareTabs : public StyledTabs {
 public:
     using ResizeCallback = std::function<void(int, int, int, int)>;
@@ -602,9 +629,12 @@ void RightPane::showCommentary(const std::string& moduleName,
             step.reset();
         }
         commentaryHtml_->setHtml(html);
+        highlightedCommentaryVerse_ = 0;
         perf::logf("RightPane::showCommentary commentaryHtml_->setHtml: %.3f ms",
                    step.elapsedMs());
     }
+
+    updateCommentarySelection(verse);
 
     if (commentaryHtml_) {
         if (verse > 0) {
@@ -625,6 +655,18 @@ void RightPane::showCommentary(const std::string& moduleName,
         activeTopTab_ = TopTab::Commentary;
         secondaryTabIsGeneralBooks_ = false;
     }
+}
+
+void RightPane::updateCommentarySelection(int verse) {
+    if (highlightedCommentaryVerse_ == verse) return;
+    highlightedCommentaryVerse_ = verse;
+    applyCommentaryStyleOverride();
+}
+
+void RightPane::applyCommentaryStyleOverride() {
+    if (!commentaryHtml_) return;
+    commentaryHtml_->setStyleOverrideCss(composeCss(
+        htmlStyleOverrideCss_, commentarySelectionCss(highlightedCommentaryVerse_)));
 }
 
 void RightPane::showDictionaryEntry(const std::string& key) {
@@ -1164,7 +1206,8 @@ void RightPane::invalidateCommentaryCache(const std::string& moduleName,
 }
 
 void RightPane::setHtmlStyleOverride(const std::string& css) {
-    if (commentaryHtml_) commentaryHtml_->setStyleOverrideCss(css);
+    htmlStyleOverrideCss_ = css;
+    applyCommentaryStyleOverride();
     if (dictionaryHtml_) dictionaryHtml_->setStyleOverrideCss(css);
     if (generalBookHtml_) generalBookHtml_->setStyleOverrideCss(css);
 }
@@ -1554,6 +1597,7 @@ void RightPane::onHtmlLink(const std::string& url, bool commentarySource) {
     HtmlWidget* sourceWidget = commentarySource ? commentaryHtml_ : generalBookHtml_;
     std::string sourceModule = commentarySource ? currentCommentary_ : currentGeneralBook_;
     std::string sourceKey = commentarySource ? currentCommentaryRef_ : currentGeneralBookKey_;
+    BiblePane* biblePane = app_->mainWindow()->biblePane();
 
     if (!url.empty() && url[0] == '#') {
         if (sourceWidget) sourceWidget->scrollToAnchor(url.substr(1));
@@ -1570,8 +1614,28 @@ void RightPane::onHtmlLink(const std::string& url, bool commentarySource) {
     }
 
     std::string previewModule;
-    if (app_->mainWindow()->biblePane()) {
-        previewModule = app_->mainWindow()->biblePane()->currentModule();
+    if (biblePane) {
+        previewModule = biblePane->currentModule();
+    }
+
+    if (commentarySource && url.rfind("bible-verse:", 0) == 0) {
+        try {
+            int verse = std::stoi(url.substr(12));
+            SwordManager::VerseRef ref = SwordManager::parseVerseRef(currentCommentaryRef_);
+            if (!ref.book.empty() && ref.chapter > 0 && verse > 0) {
+                if (biblePane &&
+                    biblePane->currentBook() == ref.book &&
+                    biblePane->currentChapter() == ref.chapter) {
+                    biblePane->selectVerse(verse);
+                } else {
+                    std::ostringstream target;
+                    target << ref.book << " " << ref.chapter << ":" << verse;
+                    app_->mainWindow()->navigateTo(target.str());
+                }
+                return;
+            }
+        } catch (...) {
+        }
     }
 
     if (commentarySource && url.rfind("verse:", 0) == 0) {

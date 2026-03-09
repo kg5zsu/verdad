@@ -223,45 +223,99 @@ div.mag-lite .mag-gap {
 
 /* Commentary text */
 div.commentary {
+    display: table;
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 100%;
     font-family: "DejaVu Sans", "Liberation Sans", Arial, sans-serif;
     font-size: 13px;
     line-height: 1.3;
 }
 
 div.commentary-verse {
-    display: table;
-    table-layout: fixed;
-    width: 100%;
-    margin: 0;
+    display: table-row;
 }
 
 div.commentary-gutter {
     display: table-cell;
-    width: 2.3em;
-    padding-right: 0.45em;
-    text-align: right;
+    width: 2.15em;
+    padding-right: 0.55em;
+    padding-bottom: 8px;
+    text-align: center;
     vertical-align: top;
+}
+
+div.commentary-gutter > a.versenum-link {
+    display: block;
+    text-align: center;
 }
 
 div.commentary-text {
     display: table-cell;
     vertical-align: top;
+    padding-bottom: 8px;
 }
 
-/* Horizontal rule separating commentary verse blocks */
-hr.commentary-sep {
-    border-style: none;
+div.commentary-verse.commentary-separated > div.commentary-gutter {
+    padding-top: 12px;
+}
+
+div.commentary-entry {
+    padding-bottom: 0.1em;
+}
+
+div.commentary-verse.commentary-separated > div.commentary-text > div.commentary-entry {
+    padding-top: 0;
+}
+
+div.commentary-separator {
     border-top: 1px solid #ccc;
-    margin: 0.8em 0;
+    height: 12px;
+    margin: 0;
 }
 
-/* Make commentary verse numbers more prominent than Bible text superscripts */
-div.commentary-gutter > a.versenum-link > sup.versenum {
-    font-size: 0.9em;
+div.commentary-gap {
+    display: block;
+    height: 8px;
+    line-height: 1px;
+    font-size: 1px;
+    overflow: hidden;
+    visibility: hidden;
+}
+
+div.commentary-text p {
+    margin: 0 0 0.45em 0;
+}
+
+div.commentary-text p:first-child {
+    margin-top: 0;
+}
+
+div.commentary-text p:last-child {
+    margin-bottom: 0;
+}
+
+div.commentary-gutter > a.versenum-link > span.commentary-versenum {
+    display: inline-block;
+    padding: 1px 1px;
+    min-width: 1.1em;
+    font-size: 0.95em;
     font-weight: bold;
     color: #1a5276;
-    vertical-align: baseline;
-    padding-right: 0;
+    line-height: 1.15;
+}
+
+div.commentary-verse.commentary-selected > div.commentary-gutter > a.versenum-link > span.commentary-versenum {
+    border-radius: 3px;
+    border: 1px solid #c0d0e0;
+    background-color: #e0e8f0;
+    color: #1a5276;
+    line-height: 1.1;
+}
+
+div.commentary-verse.commentary-selected > div.commentary-gutter > a.versenum-link:hover > span.commentary-versenum {
+    background-color: #c0d0e0;
 }
 
 span.commentary-empty {

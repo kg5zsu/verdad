@@ -62,7 +62,7 @@ std::string buildVerseTagMarkersHtml(VerdadApp* app, const std::string& verseRef
         html << " style=\"border-color:" << escapedColor
              << ";color:" << escapedColor << ";\"";
     }
-    html << ">[Tagged]</a>";
+    html << ">Tag</a>";
     html << "</span>";
     return html.str();
 }
@@ -268,6 +268,7 @@ void BiblePane::navigateTo(const std::string& book, int chapter, int verse) {
     }
 
     updateDisplay();
+    syncReferenceInput();
     if (htmlWidget_ && currentVerse_ > 0) {
         htmlWidget_->scrollToAnchor("v" + std::to_string(currentVerse_));
     }
@@ -482,6 +483,7 @@ void BiblePane::selectVerse(int verse) {
     if (changed) {
         updateDisplay();
     }
+    syncReferenceInput();
     if (htmlWidget_) {
         htmlWidget_->scrollToAnchor("v" + std::to_string(currentVerse_));
     }
@@ -555,11 +557,7 @@ void BiblePane::setStudyState(const std::string& module,
     if (maxVerse <= 0) maxVerse = 1;
     currentVerse_ = std::max(1, std::min(currentVerse_, maxVerse));
 
-    if (refInput_) {
-        std::string ref = currentBook_ + " " + std::to_string(currentChapter_) +
-                          ":" + std::to_string(currentVerse_);
-        refInput_->value(ref.c_str());
-    }
+    syncReferenceInput();
 
     // Ensure parallel header visibility/layout matches restored state even when
     // caller restores a pre-rendered HTML snapshot instead of calling updateDisplay().
@@ -836,6 +834,8 @@ void BiblePane::updateDisplay() {
         html = "<div class=\"chapter\"><p><i>No text available for current reference.</i></p></div>";
     }
 
+    syncReferenceInput();
+
     int contentY = y() + kNavH + kContentPadding;
     int headerH = parallelMode_ ? kParallelHeaderH : 0;
     parallelHeader_->resize(x(), contentY, w(), headerH);
@@ -867,6 +867,18 @@ void BiblePane::normalizeParallelModules() {
         if (normalized.size() >= static_cast<size_t>(kMaxParallelColumns)) break;
     }
     parallelModules_.swap(normalized);
+}
+
+void BiblePane::syncReferenceInput() {
+    if (!refInput_) return;
+    if (currentBook_.empty() || currentChapter_ <= 0) {
+        refInput_->value("");
+        return;
+    }
+
+    std::string ref = currentBook_ + " " + std::to_string(currentChapter_) +
+                      ":" + std::to_string(std::max(1, currentVerse_));
+    refInput_->value(ref.c_str());
 }
 
 void BiblePane::clearParallelHeader() {
@@ -1048,7 +1060,16 @@ void BiblePane::removeParallelModuleAt(int index) {
     parallelModules_.erase(parallelModules_.begin() + index);
     normalizeParallelModules();
 
-    if (parallelModules_.empty()) {
+    if (parallelModules_.size() <= 1) {
+        if (!parallelModules_.empty() && moduleName_ != parallelModules_.front()) {
+            moduleName_ = parallelModules_.front();
+            applyModuleChoiceValue(moduleChoice_, moduleName_);
+            populateBooks();
+            int maxVerse = app_->swordManager().getVerseCount(moduleName_, currentBook_, currentChapter_);
+            if (maxVerse <= 0) maxVerse = 1;
+            currentVerse_ = std::max(1, std::min(currentVerse_, maxVerse));
+            populateChapters();
+        }
         parallelMode_ = false;
         if (parallelButton_) parallelButton_->value(0);
     } else if (moduleName_ != parallelModules_.front()) {

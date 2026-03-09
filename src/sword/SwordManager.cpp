@@ -1945,6 +1945,35 @@ std::string plainTextToHtml(const std::string& text) {
     return html.str();
 }
 
+std::string normalizeCommentaryMarkup(const std::string& text) {
+    if (trimCopy(text).empty()) return text;
+
+    std::string normalized = text;
+    static const std::regex selfClosingParagraphRe(R"(<p\s*/\s*>)",
+                                                   std::regex::icase);
+    static const std::regex emptyParagraphRe(R"(<p\b[^>]*>\s*</p>)",
+                                             std::regex::icase);
+    static const std::regex multiBreakRe(R"((?:<br\s*/?>\s*){2,})",
+                                         std::regex::icase);
+    static const std::regex repeatedGapRe(
+        R"((?:<div class="commentary-gap">&nbsp;</div>\s*){2,})",
+        std::regex::icase);
+
+    normalized = std::regex_replace(
+        normalized, selfClosingParagraphRe,
+        "<div class=\"commentary-gap\">&nbsp;</div>");
+    normalized = std::regex_replace(
+        normalized, emptyParagraphRe,
+        "<div class=\"commentary-gap\">&nbsp;</div>");
+    normalized = std::regex_replace(
+        normalized, multiBreakRe,
+        "<div class=\"commentary-gap\">&nbsp;</div>");
+    normalized = std::regex_replace(
+        normalized, repeatedGapRe,
+        "<div class=\"commentary-gap\">&nbsp;</div>");
+    return normalized;
+}
+
 std::string commentaryEntryHtml(sword::SWModule* mod) {
     if (!mod) return "";
 
@@ -1953,12 +1982,12 @@ std::string commentaryEntryHtml(sword::SWModule* mod) {
         const char* rawEntry = mod->getRawEntry();
         raw = rawEntry ? rawEntry : "";
         if (looksLikeHtmlMarkup(raw)) {
-            return raw;
+            return normalizeCommentaryMarkup(raw);
         }
     }
 
     std::string rendered = std::string(mod->renderText().c_str());
-    if (!trimCopy(rendered).empty()) return rendered;
+    if (!trimCopy(rendered).empty()) return normalizeCommentaryMarkup(rendered);
     if (!trimCopy(raw).empty()) return plainTextToHtml(raw);
     return "";
 }
@@ -2457,21 +2486,27 @@ std::string SwordManager::getCommentaryText(const std::string& moduleName,
     while (!mod->popError() && vk->getChapter() == chapter) {
         int verse = vk->getVerse();
         std::string verseText = commentaryEntryHtml(mod);
-        if (verse > 1) {
-            html << "<hr class=\"commentary-sep\"/>\n";
+        bool separated = verse > 1;
+        html << "<div class=\"commentary-verse";
+        if (separated) {
+            html << " commentary-separated";
         }
-        html << "<div class=\"commentary-verse\" id=\"v" << verse << "\">";
+        html << "\" id=\"v" << verse << "\">";
         html << "<div class=\"commentary-gutter\">"
-             << "<a class=\"versenum-link\" href=\"verse:" << verse << "\">"
-             << "<sup class=\"versenum\">" << verse << "</sup></a>"
+             << "<a class=\"versenum-link\" href=\"bible-verse:" << verse << "\">"
+             << "<span class=\"commentary-versenum\">" << verse << "</span></a>"
              << "</div>";
         html << "<div class=\"commentary-text\">";
+        if (separated) {
+            html << "<div class=\"commentary-separator\"></div>";
+        }
+        html << "<div class=\"commentary-entry\">";
         if (!trimCopy(verseText).empty()) {
             html << verseText;
         } else {
             html << "<span class=\"commentary-empty\"></span>";
         }
-        html << "</div>";
+        html << "</div></div>";
         html << "</div>\n";
         (*mod)++;
     }

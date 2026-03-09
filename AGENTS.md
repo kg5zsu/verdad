@@ -27,6 +27,9 @@ Run the app with:
 ## Coding Style & Naming Conventions
 Use C++17 and follow the existing style: 4-space indentation, opening braces on the same line, and standard library includes grouped after project headers. Types and widgets use `PascalCase`, methods use `camelCase`, and member fields use a trailing underscore, for example `commentaryHtml_`. Keep small file-local helpers in anonymous namespaces. Match existing CSS naming such as `div.commentary-verse` and keep presentation changes in `data/master.css` when possible.
 
+## HTML Rendering Notes
+Commentary, dictionary, and general-book panes can receive legacy SWORD-rendered markup that does not map cleanly to normal HTML layout, especially self-closing `<p />`, repeated `<br />`, and empty spacer elements. Prefer normalizing that markup in `src/sword/SwordManager.cpp` and styling it in `data/master.css` before changing `libs/litehtml/`. In this codebase, subtle spacing tweaks such as small `em` margins or empty spacer blocks may have little or no visible effect in litehtml; if spacing is not responding, move quickly to structural separators and explicit pixel-based spacing. Only patch litehtml when there is a small, standards-valid repro showing an actual engine bug.
+
 ## Testing Guidelines
 No `ctest` or unit-test suite is currently configured, and there is no coverage gate. For every change, at minimum:
 

@@ -60,6 +60,11 @@ public:
     /// Set runtime CSS overrides (applied after master CSS).
     void setStyleOverrideCss(const std::string& css);
 
+    /// Toggle a CSS class on up to two elements by id and rerender once.
+    void updateElementClassById(const std::string& removeId,
+                                const std::string& addId,
+                                const std::string& className);
+
     /// Scroll to a named anchor
     void scrollToAnchor(const std::string& anchor);
 

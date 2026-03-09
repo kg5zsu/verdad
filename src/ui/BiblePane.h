@@ -189,6 +189,9 @@ private:
     /// Populate chapter choices for current book
     void populateChapters();
 
+    /// Keep the reference entry field aligned with the current book/chapter/verse.
+    void syncReferenceInput();
+
     /// Notify main window that module/book/chapter changed (for context tab label sync)
     void notifyContextChanged();
 

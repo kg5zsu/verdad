@@ -189,6 +189,8 @@ private:
     std::unordered_map<std::string, std::string> commentaryChapterCache_;
     std::deque<std::string> commentaryChapterCacheOrder_;
     static constexpr size_t kCommentaryChapterCacheLimit = 64;
+    int highlightedCommentaryVerse_ = 0;
+    std::string htmlStyleOverrideCss_;
     bool commentaryEditing_ = false;
     std::string commentaryEditModule_;
     std::string commentaryEditReference_;
@@ -253,6 +255,8 @@ private:
     bool saveDocumentAs();
     bool saveDocumentToPath(const std::string& path);
     void loadCommentaryEditorForCurrentEntry();
+    void applyCommentaryStyleOverride();
+    void updateCommentarySelection(int verse);
     void onHtmlLink(const std::string& url, bool commentarySource);
 
     // Callbacks
