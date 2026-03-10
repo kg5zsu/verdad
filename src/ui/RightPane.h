@@ -8,6 +8,7 @@
 #include <FL/Fl_Choice.H>
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Button.H>
+#include <FL/Enumerations.H>
 #include <memory>
 #include <string>
 #include <vector>
@@ -112,11 +113,9 @@ public:
     const std::string& currentDocumentPath() const { return currentDocumentPath_; }
 
     bool newDocument();
-    bool openDocument();
     bool openDocument(const std::string& path, bool activateTab);
     bool saveDocument();
     bool exportDocumentToOdt();
-    bool closeDocument();
 
     /// Legacy naming kept for session compatibility.
     /// Select visible tab: true = General Books, false = Commentary.
@@ -164,6 +163,7 @@ public:
     /// Apply runtime HTML style overrides to all right-pane HTML widgets.
     void setHtmlStyleOverride(const std::string& css);
     void setEditorIndentWidth(int width);
+    void setEditorTextFont(Fl_Font regularFont, Fl_Font boldFont, int size);
 
 protected:
     void resize(int X, int Y, int W, int H) override;
@@ -222,16 +222,16 @@ private:
     std::string currentGeneralBookKey_;
     std::vector<GeneralBookTocEntry> generalBookToc_;
 
-    // Documents tab (global, not tied to study tabs)
+    // Studypad tab (global, not tied to study tabs)
     Fl_Group* documentsGroup_;
+    Fl_Choice* documentChoice_;
     Fl_Button* documentNewButton_;
-    Fl_Button* documentOpenButton_;
     Fl_Button* documentSaveButton_;
     Fl_Button* documentExportButton_;
-    Fl_Button* documentCloseButton_;
-    Fl_Box* documentPathLabel_;
     HtmlEditorWidget* documentsEditor_;
+    std::vector<std::string> documentChoicePaths_;
     std::string currentDocumentPath_;
+    bool documentChoiceSyncing_ = false;
     TopTab activeTopTab_ = TopTab::Commentary;
     bool secondaryTabIsGeneralBooks_ = false;
 
@@ -259,6 +259,7 @@ private:
     TopTab visibleTopTab() const;
     void updateCommentaryEditorChrome();
     void updateDocumentChrome();
+    void refreshDocumentChoices();
     bool beginCommentaryEdit();
     bool saveCommentaryEdit(bool exitEditMode);
     void cancelCommentaryEdit();
@@ -266,6 +267,7 @@ private:
     bool saveDocumentAs();
     bool saveDocumentToPath(const std::string& path);
     bool exportDocumentToOdtPath(const std::string& path);
+    bool isManagedStudypadPath(const std::string& path) const;
     void loadCommentaryEditorForCurrentEntry();
     void applyCommentaryStyleOverride();
     void updateCommentarySelection(int verse);
@@ -282,11 +284,10 @@ private:
     static void onTopTabChange(Fl_Widget* w, void* data);
     static void onGeneralBookModuleChange(Fl_Widget* w, void* data);
     static void onGeneralBookTocChange(Fl_Widget* w, void* data);
+    static void onDocumentChoiceChange(Fl_Widget* w, void* data);
     static void onDocumentNew(Fl_Widget* w, void* data);
-    static void onDocumentOpen(Fl_Widget* w, void* data);
     static void onDocumentSave(Fl_Widget* w, void* data);
     static void onDocumentExportOdt(Fl_Widget* w, void* data);
-    static void onDocumentClose(Fl_Widget* w, void* data);
 };
 
 } // namespace verdad

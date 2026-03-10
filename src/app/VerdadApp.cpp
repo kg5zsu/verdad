@@ -721,6 +721,14 @@ Fl_Font VerdadApp::appFont() const {
     return fltkFontFromFamily(appearanceSettings_.appFontName);
 }
 
+Fl_Font VerdadApp::textEditorFont() const {
+    return fltkFontFromFamily(appearanceSettings_.textFontFamily);
+}
+
+Fl_Font VerdadApp::boldTextEditorFont() const {
+    return boldFltkFont(textEditorFont());
+}
+
 std::string VerdadApp::textStyleOverrideCss() const {
     std::string family = escapeCssString(appearanceSettings_.textFontFamily);
     int size = clampFontSize(appearanceSettings_.textFontSize);

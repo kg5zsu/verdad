@@ -181,6 +181,30 @@ std::string defaultDictionaryModuleForLookup(VerdadApp* app,
     return app->preferredWordDictionary(language);
 }
 
+std::string trimCopy(const std::string& text) {
+    size_t start = 0;
+    while (start < text.size() &&
+           std::isspace(static_cast<unsigned char>(text[start]))) {
+        ++start;
+    }
+
+    size_t end = text.size();
+    while (end > start &&
+           std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+        --end;
+    }
+
+    return text.substr(start, end - start);
+}
+
+std::string toLowerAscii(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return text;
+}
+
 void selectFirstDictionaryModule(Fl_Choice* dictionaryChoice,
                                  const std::vector<std::string>& moduleNames,
                                  const std::vector<std::string>& displayLabels,
@@ -214,6 +238,72 @@ std::string pathWithExtension(const std::string& path, const std::string& extens
     fs::path result(path);
     result.replace_extension(extension);
     return result.string();
+}
+
+std::string normalizePath(const std::string& path) {
+    if (path.empty()) return "";
+
+    std::error_code ec;
+    fs::path normalized = fs::path(path);
+    fs::path absolute = fs::absolute(normalized, ec);
+    if (!ec) normalized = absolute;
+    normalized = normalized.lexically_normal();
+    return normalized.string();
+}
+
+bool pathsEqual(const std::string& a, const std::string& b) {
+    if (a.empty() || b.empty()) return a.empty() && b.empty();
+
+    std::string left = normalizePath(a);
+    std::string right = normalizePath(b);
+#ifdef _WIN32
+    left = toLowerAscii(left);
+    right = toLowerAscii(right);
+#endif
+    return left == right;
+}
+
+std::string studypadDirectory(VerdadApp* app) {
+    if (!app) return "";
+    return normalizePath((fs::path(app->getConfigDir()) / "studypad").string());
+}
+
+bool ensureDirectoryExists(const std::string& path) {
+    if (path.empty()) return false;
+
+    std::error_code ec;
+    fs::create_directories(path, ec);
+    if (ec) return false;
+    return fs::is_directory(fs::path(path), ec) && !ec;
+}
+
+bool isStudypadFilename(const fs::path& path) {
+    std::error_code ec;
+    if (!fs::is_regular_file(path, ec) || ec) return false;
+    return endsWithIgnoreCase(path.filename().string(), ".studypad");
+}
+
+std::string studypadDisplayName(const std::string& path) {
+    if (path.empty()) return "";
+    fs::path filePath(path);
+    if (endsWithIgnoreCase(filePath.filename().string(), ".studypad")) {
+        return filePath.stem().string();
+    }
+    std::string stem = filePath.stem().string();
+    return stem.empty() ? filePath.filename().string() : stem;
+}
+
+std::string sanitizeStudypadName(const std::string& rawName) {
+    std::string name = trimCopy(rawName);
+    if (endsWithIgnoreCase(name, ".studypad")) {
+        name.resize(name.size() - std::string(".studypad").size());
+        name = trimCopy(name);
+    }
+
+    if (name.empty() || name == "." || name == "..") return "";
+    if (name.find_first_of("/\\") != std::string::npos) return "";
+    if (name.find_first_of("<>:\"|?*") != std::string::npos) return "";
+    return name;
 }
 
 std::string shellQuote(const std::string& text) {
@@ -346,12 +436,10 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     , currentGeneralBook_()
     , currentGeneralBookKey_()
     , documentsGroup_(nullptr)
+    , documentChoice_(nullptr)
     , documentNewButton_(nullptr)
-    , documentOpenButton_(nullptr)
     , documentSaveButton_(nullptr)
     , documentExportButton_(nullptr)
-    , documentCloseButton_(nullptr)
-    , documentPathLabel_(nullptr)
     , documentsEditor_(nullptr)
     , currentDocumentPath_() {
     box(FL_FLAT_BOX);
@@ -407,6 +495,12 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
                                              panelH - choiceH - 6);
     commentaryEditor_->setMode(HtmlEditorWidget::Mode::Commentary);
     commentaryEditor_->setIndentWidth(app_ ? app_->appearanceSettings().editorIndentWidth : 4);
+    if (app_) {
+        commentaryEditor_->setTextFont(
+            app_->textEditorFont(),
+            app_->boldTextEditorFont(),
+            app_->appearanceSettings().textFontSize);
+    }
     commentaryEditor_->setChangeCallback([this]() { updateCommentaryEditorChrome(); });
     commentaryEditor_->hide();
     commentaryGroup_->end();
@@ -431,26 +525,32 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     generalBooksGroup_->end();
     generalBooksGroup_->resizable(generalBookHtml_);
 
-    documentsGroup_ = new Fl_Group(tileX, panelY, tileW, panelH, "Documents");
+    documentsGroup_ = new Fl_Group(tileX, panelY, tileW, panelH, "Studypad");
     documentsGroup_->begin();
-    documentNewButton_ = new Fl_Button(tileX + 2, panelY + 2, 48, choiceH, "New");
+    documentChoice_ = new Fl_Choice(tileX + 2, panelY + 2, tileW - 98, choiceH);
+    documentChoice_->callback(onDocumentChoiceChange, this);
+    documentChoice_->tooltip("Select a studypad");
+    documentNewButton_ = new Fl_Button(tileX + tileW - 94, panelY + 2, 30, choiceH, "@filenew");
     documentNewButton_->callback(onDocumentNew, this);
-    documentOpenButton_ = new Fl_Button(tileX + 52, panelY + 2, 52, choiceH, "Open");
-    documentOpenButton_->callback(onDocumentOpen, this);
-    documentSaveButton_ = new Fl_Button(tileX + 106, panelY + 2, 52, choiceH, "Save");
+    documentNewButton_->tooltip("Create a new studypad");
+    documentSaveButton_ = new Fl_Button(tileX + tileW - 62, panelY + 2, 30, choiceH, "@filesave");
     documentSaveButton_->callback(onDocumentSave, this);
-    documentExportButton_ = new Fl_Button(tileX + 160, panelY + 2, 60, choiceH, "Export");
+    documentSaveButton_->tooltip("Save the current studypad");
+    documentExportButton_ = new Fl_Button(tileX + tileW - 30, panelY + 2, 30, choiceH, "@filesaveas");
     documentExportButton_->callback(onDocumentExportOdt, this);
-    documentCloseButton_ = new Fl_Button(tileX + 222, panelY + 2, 52, choiceH, "Close");
-    documentCloseButton_->callback(onDocumentClose, this);
-    documentPathLabel_ = new Fl_Box(tileX + 278, panelY + 2, tileW - 280, choiceH);
-    documentPathLabel_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    documentExportButton_->tooltip("Export the current studypad to ODT");
     documentsEditor_ = new HtmlEditorWidget(tileX + 2,
                                             panelY + choiceH + 4,
                                             tileW - 4,
                                             panelH - choiceH - 6);
     documentsEditor_->setMode(HtmlEditorWidget::Mode::Document);
     documentsEditor_->setIndentWidth(app_ ? app_->appearanceSettings().editorIndentWidth : 4);
+    if (app_) {
+        documentsEditor_->setTextFont(
+            app_->textEditorFont(),
+            app_->boldTextEditorFont(),
+            app_->appearanceSettings().textFontSize);
+    }
     documentsEditor_->setChangeCallback([this]() { updateDocumentChrome(); });
     documentsGroup_->end();
     documentsGroup_->resizable(documentsEditor_);
@@ -529,6 +629,8 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     populateGeneralBookModules();
     documentsEditor_->clearDocument();
     documentsEditor_->setModified(false);
+    ensureDirectoryExists(studypadDirectory(app_));
+    refreshDocumentChoices();
     updateCommentaryEditorChrome();
     updateDocumentChrome();
 }
@@ -540,8 +642,8 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
         !commentarySaveButton_ || !commentaryCancelButton_ || !commentaryHtml_ ||
         !commentaryEditor_ || !generalBooksGroup_ || !generalBookChoice_ ||
         !generalBookTocChoice_ || !generalBookHtml_ ||
-        !documentsGroup_ || !documentNewButton_ || !documentOpenButton_ ||
-        !documentSaveButton_ || !documentExportButton_ || !documentCloseButton_ || !documentPathLabel_ ||
+        !documentsGroup_ || !documentChoice_ || !documentNewButton_ ||
+        !documentSaveButton_ || !documentExportButton_ ||
         !documentsEditor_) {
         return;
     }
@@ -592,16 +694,13 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
                              contentW,
                              std::max(10, panelH - (rowH * 2) - 8));
 
-    int docsButtonsW = documentNewButton_->w() + documentOpenButton_->w() +
-                       documentSaveButton_->w() + documentExportButton_->w() +
-                       documentCloseButton_->w() + (buttonGap * 4);
-    int pathX = contentX + docsButtonsW + buttonGap;
-    documentNewButton_->resize(contentX, panelY + 2, documentNewButton_->w(), rowH);
-    documentOpenButton_->resize(documentNewButton_->x() + documentNewButton_->w() + buttonGap,
-                                panelY + 2,
-                                documentOpenButton_->w(),
-                                rowH);
-    documentSaveButton_->resize(documentOpenButton_->x() + documentOpenButton_->w() + buttonGap,
+    int docsButtonsW = documentNewButton_->w() + documentSaveButton_->w() +
+                       documentExportButton_->w() + (buttonGap * 2);
+    int documentChoiceW = std::max(20, contentW - docsButtonsW - buttonGap);
+    int docsButtonsX = contentX + documentChoiceW + buttonGap;
+    documentChoice_->resize(contentX, panelY + 2, documentChoiceW, rowH);
+    documentNewButton_->resize(docsButtonsX, panelY + 2, documentNewButton_->w(), rowH);
+    documentSaveButton_->resize(documentNewButton_->x() + documentNewButton_->w() + buttonGap,
                                 panelY + 2,
                                 documentSaveButton_->w(),
                                 rowH);
@@ -609,14 +708,6 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
                                   panelY + 2,
                                   documentExportButton_->w(),
                                   rowH);
-    documentCloseButton_->resize(documentExportButton_->x() + documentExportButton_->w() + buttonGap,
-                                 panelY + 2,
-                                 documentCloseButton_->w(),
-                                 rowH);
-    documentPathLabel_->resize(pathX,
-                               panelY + 2,
-                               std::max(20, contentX + contentW - pathX),
-                               rowH);
     static_cast<Fl_Widget*>(documentsEditor_)
         ->resize(contentX,
                  panelY + rowH + 4,
@@ -639,7 +730,7 @@ void RightPane::resize(int X, int Y, int W, int H) {
 
     if (!contentTile_ || !contentResizeBox_ || !tabs_ || !commentaryGroup_ ||
         !commentaryChoice_ || !commentaryHtml_ || !commentaryEditor_ ||
-        !documentsGroup_ || !documentsEditor_ || !dictionaryPaneGroup_ ||
+        !documentsGroup_ || !documentChoice_ || !documentsEditor_ || !dictionaryPaneGroup_ ||
         !dictionaryKeyInput_ || !dictionaryChoice_ || !dictionaryHtml_ ||
         !generalBooksGroup_ ||
         !generalBookChoice_ || !generalBookTocChoice_ ||
@@ -965,6 +1056,8 @@ void RightPane::setDocumentsTabActive(bool active) {
     if (active) {
         tabs_->value(documentsGroup_);
         activeTopTab_ = TopTab::Documents;
+        refreshDocumentChoices();
+        updateDocumentChrome();
     } else {
         tabs_->value(secondaryTabIsGeneralBooks_ ? generalBooksGroup_ : commentaryGroup_);
         activeTopTab_ = secondaryTabIsGeneralBooks_
@@ -1235,12 +1328,10 @@ void RightPane::redrawChrome() {
     if (dictionaryChoice_) dictionaryChoice_->redraw();
     if (generalBookChoice_) generalBookChoice_->redraw();
     if (generalBookTocChoice_) generalBookTocChoice_->redraw();
+    if (documentChoice_) documentChoice_->redraw();
     if (documentNewButton_) documentNewButton_->redraw();
-    if (documentOpenButton_) documentOpenButton_->redraw();
     if (documentSaveButton_) documentSaveButton_->redraw();
     if (documentExportButton_) documentExportButton_->redraw();
-    if (documentCloseButton_) documentCloseButton_->redraw();
-    if (documentPathLabel_) documentPathLabel_->redraw();
     redraw();
 }
 
@@ -1358,6 +1449,11 @@ void RightPane::setHtmlStyleOverride(const std::string& css) {
 void RightPane::setEditorIndentWidth(int width) {
     if (commentaryEditor_) commentaryEditor_->setIndentWidth(width);
     if (documentsEditor_) documentsEditor_->setIndentWidth(width);
+}
+
+void RightPane::setEditorTextFont(Fl_Font regularFont, Fl_Font boldFont, int size) {
+    if (commentaryEditor_) commentaryEditor_->setTextFont(regularFont, boldFont, size);
+    if (documentsEditor_) documentsEditor_->setTextFont(regularFont, boldFont, size);
 }
 
 void RightPane::populateCommentaryModules() {
@@ -1487,17 +1583,17 @@ void RightPane::updateCommentaryEditorChrome() {
 }
 
 void RightPane::updateDocumentChrome() {
-    if (documentPathLabel_) {
-        std::string label;
+    if (documentChoice_) {
+        std::string tooltip;
         if (currentDocumentPath_.empty()) {
-            label = "Untitled";
+            tooltip = "Studypads in " + studypadDirectory(app_);
         } else {
-            label = pathLeaf(currentDocumentPath_);
+            tooltip = currentDocumentPath_;
         }
         if (documentsEditor_ && documentsEditor_->isModified()) {
-            label += " *";
+            tooltip += "\nModified";
         }
-        documentPathLabel_->copy_label(label.c_str());
+        documentChoice_->copy_tooltip(tooltip.c_str());
     }
 
     bool hasContent = documentsEditor_ &&
@@ -1506,15 +1602,106 @@ void RightPane::updateDocumentChrome() {
                        !currentDocumentPath_.empty());
     if (documentSaveButton_) documentSaveButton_->activate();
     if (documentNewButton_) documentNewButton_->activate();
-    if (documentOpenButton_) documentOpenButton_->activate();
     if (documentExportButton_) {
         if (hasContent) documentExportButton_->activate();
         else documentExportButton_->deactivate();
     }
-    if (documentCloseButton_) {
-        if (hasContent) documentCloseButton_->activate();
-        else documentCloseButton_->deactivate();
+}
+
+void RightPane::refreshDocumentChoices() {
+    if (!documentChoice_) return;
+
+    const std::string directory = studypadDirectory(app_);
+    if (!directory.empty()) {
+        ensureDirectoryExists(directory);
     }
+
+    struct DocumentChoiceEntry {
+        std::string label;
+        std::string path;
+    };
+
+    std::vector<DocumentChoiceEntry> fileEntries;
+    if (!directory.empty()) {
+        std::error_code ec;
+        fs::directory_iterator it(fs::path(directory), ec);
+        fs::directory_iterator end;
+        while (!ec && it != end) {
+            if (isStudypadFilename(it->path())) {
+                fileEntries.push_back({
+                    studypadDisplayName(it->path().string()),
+                    normalizePath(it->path().string()),
+                });
+            }
+            it.increment(ec);
+        }
+    }
+
+    std::sort(fileEntries.begin(), fileEntries.end(),
+              [](const DocumentChoiceEntry& a, const DocumentChoiceEntry& b) {
+                  std::string left = toLowerAscii(a.label);
+                  std::string right = toLowerAscii(b.label);
+                  if (left != right) return left < right;
+                  return a.label < b.label;
+              });
+
+    std::vector<DocumentChoiceEntry> entries;
+    if (currentDocumentPath_.empty()) {
+        entries.push_back({"Untitled", ""});
+    }
+    entries.insert(entries.end(), fileEntries.begin(), fileEntries.end());
+
+    bool foundCurrent = currentDocumentPath_.empty();
+    for (const auto& entry : fileEntries) {
+        if (pathsEqual(entry.path, currentDocumentPath_)) {
+            foundCurrent = true;
+            break;
+        }
+    }
+    if (!foundCurrent && !currentDocumentPath_.empty()) {
+        entries.push_back({
+            studypadDisplayName(currentDocumentPath_),
+            normalizePath(currentDocumentPath_),
+        });
+    }
+    if (entries.empty()) {
+        entries.push_back({"Untitled", ""});
+    }
+
+    int selectedIndex = 0;
+    if (!currentDocumentPath_.empty()) {
+        for (size_t i = 0; i < entries.size(); ++i) {
+            if (pathsEqual(entries[i].path, currentDocumentPath_)) {
+                selectedIndex = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+
+    documentChoiceSyncing_ = true;
+    documentChoice_->clear();
+    documentChoicePaths_.clear();
+    for (const auto& entry : entries) {
+        documentChoice_->add(entry.label.c_str());
+        documentChoicePaths_.push_back(entry.path);
+    }
+    if (!documentChoicePaths_.empty()) {
+        documentChoice_->value(std::clamp(selectedIndex,
+                                          0,
+                                          static_cast<int>(documentChoicePaths_.size()) - 1));
+    }
+    documentChoiceSyncing_ = false;
+}
+
+bool RightPane::isManagedStudypadPath(const std::string& path) const {
+    if (path.empty()) return false;
+
+    fs::path filePath(normalizePath(path));
+    if (!endsWithIgnoreCase(filePath.filename().string(), ".studypad")) {
+        return false;
+    }
+
+    return pathsEqual(filePath.parent_path().string(), studypadDirectory(app_));
 }
 
 void RightPane::loadCommentaryEditorForCurrentEntry() {
@@ -1598,7 +1785,7 @@ void RightPane::cancelCommentaryEdit() {
 bool RightPane::maybeSaveDocumentChanges() {
     if (!documentsEditor_ || !documentsEditor_->isModified()) return true;
 
-    int choice = fl_choice("Save changes to the current document?",
+    int choice = fl_choice("Save changes to the current studypad?",
                            "Cancel",
                            "Discard",
                            "Save");
@@ -1610,48 +1797,61 @@ bool RightPane::maybeSaveDocumentChanges() {
 bool RightPane::saveDocumentToPath(const std::string& path) {
     if (!documentsEditor_ || path.empty()) return false;
 
-    std::ofstream out(path);
+    std::string normalizedPath = normalizePath(path);
+    fs::path targetPath(normalizedPath);
+    if (!targetPath.parent_path().empty() &&
+        !ensureDirectoryExists(targetPath.parent_path().string())) {
+        fl_alert("Failed to prepare the studypad directory:\n%s",
+                 targetPath.parent_path().string().c_str());
+        return false;
+    }
+
+    std::ofstream out(normalizedPath);
     if (!out.is_open()) {
-        fl_alert("Failed to open document for writing:\n%s", path.c_str());
+        fl_alert("Failed to open studypad for writing:\n%s", normalizedPath.c_str());
         return false;
     }
 
     out << documentsEditor_->html();
     out.close();
     if (!out) {
-        fl_alert("Failed to save document:\n%s", path.c_str());
+        fl_alert("Failed to save studypad:\n%s", normalizedPath.c_str());
         return false;
     }
 
-    currentDocumentPath_ = path;
+    currentDocumentPath_ = normalizedPath;
     documentsEditor_->setModified(false);
+    refreshDocumentChoices();
     updateDocumentChrome();
     return true;
 }
 
 bool RightPane::saveDocumentAs() {
-    Fl_Native_File_Chooser chooser;
-    chooser.title("Save Document");
-    chooser.type(Fl_Native_File_Chooser::BROWSE_SAVE_FILE);
-    chooser.filter("HTML Files\t*.html\nAll Files\t*");
-    if (!currentDocumentPath_.empty()) {
-        chooser.preset_file(currentDocumentPath_.c_str());
-    } else {
-        chooser.preset_file("notes.html");
-    }
-
-    int result = chooser.show();
-    if (result != 0) {
-        if (result < 0) {
-            fl_alert("Unable to open the file chooser.");
-        }
+    const std::string directory = studypadDirectory(app_);
+    if (!ensureDirectoryExists(directory)) {
+        fl_alert("Failed to create the studypad directory:\n%s", directory.c_str());
         return false;
     }
 
-    std::string path = chooser.filename() ? chooser.filename() : "";
-    if (path.empty()) return false;
-    if (!endsWithIgnoreCase(path, ".html") && !endsWithIgnoreCase(path, ".htm")) {
-        path = pathWithExtension(path, ".html");
+    std::string suggestedName =
+        currentDocumentPath_.empty() ? "Untitled" : studypadDisplayName(currentDocumentPath_);
+    const char* entered = fl_input("Studypad name:", suggestedName.c_str());
+    if (!entered) return false;
+
+    std::string name = sanitizeStudypadName(entered);
+    if (name.empty()) {
+        fl_alert("Enter a valid studypad name.");
+        return false;
+    }
+
+    std::string path = normalizePath((fs::path(directory) / (name + ".studypad")).string());
+    if (fs::exists(fs::path(path)) && !pathsEqual(path, currentDocumentPath_)) {
+        int overwrite = fl_choice("A studypad named \"%s\" already exists.",
+                                  "Cancel",
+                                  "Overwrite",
+                                  nullptr,
+                                  name.c_str());
+        if (overwrite != 1) return false;
     }
     return saveDocumentToPath(path);
 }
@@ -1696,7 +1896,7 @@ bool RightPane::exportDocumentToOdtPath(const std::string& path) {
                                  profileDir.string()) ||
         !fs::exists(outputPath)) {
         cleanup();
-        fl_alert("LibreOffice could not export this document to ODT.\n"
+        fl_alert("LibreOffice could not export this studypad to ODT.\n"
                  "Make sure libreoffice or soffice is installed and available in PATH.");
         return false;
     }
@@ -1718,15 +1918,17 @@ bool RightPane::exportDocumentToOdt() {
     if (!documentsEditor_) return false;
 
     Fl_Native_File_Chooser chooser;
-    chooser.title("Export Document to ODT");
+    chooser.title("Export Studypad to ODT");
     chooser.type(Fl_Native_File_Chooser::BROWSE_SAVE_FILE);
-    chooser.filter("ODT Files\t*.odt\nAll Files\t*");
+    chooser.options(Fl_Native_File_Chooser::SAVEAS_CONFIRM |
+                    Fl_Native_File_Chooser::USE_FILTER_EXT);
+    chooser.filter("ODT Files\t*.{odt,ODT}\nAll Files\t*");
 
     if (!currentDocumentPath_.empty()) {
         std::string suggested = pathWithExtension(currentDocumentPath_, ".odt");
         chooser.preset_file(suggested.c_str());
     } else {
-        chooser.preset_file("notes.odt");
+        chooser.preset_file("studypad.odt");
     }
 
     int result = chooser.show();
@@ -1750,40 +1952,21 @@ bool RightPane::newDocument() {
     currentDocumentPath_.clear();
     documentsEditor_->clearDocument();
     documentsEditor_->setModified(false);
+    refreshDocumentChoices();
     updateDocumentChrome();
     setDocumentsTabActive(true);
     documentsEditor_->focusEditor();
     return true;
 }
 
-bool RightPane::openDocument() {
-    Fl_Native_File_Chooser chooser;
-    chooser.title("Open Document");
-    chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
-    chooser.filter("HTML Files\t*.html;*.htm\nAll Files\t*");
-    if (!currentDocumentPath_.empty()) {
-        chooser.preset_file(currentDocumentPath_.c_str());
-    }
-
-    int result = chooser.show();
-    if (result != 0) {
-        if (result < 0) {
-            fl_alert("Unable to open the file chooser.");
-        }
-        return false;
-    }
-
-    std::string path = chooser.filename() ? chooser.filename() : "";
-    return openDocument(path, true);
-}
-
 bool RightPane::openDocument(const std::string& path, bool activateTab) {
     if (path.empty() || !documentsEditor_) return false;
     if (!maybeSaveDocumentChanges()) return false;
 
-    std::ifstream in(path);
+    std::string normalizedPath = normalizePath(path);
+    std::ifstream in(normalizedPath);
     if (!in.is_open()) {
-        fl_alert("Failed to open document:\n%s", path.c_str());
+        fl_alert("Failed to open studypad:\n%s", normalizedPath.c_str());
         return false;
     }
 
@@ -1791,7 +1974,8 @@ bool RightPane::openDocument(const std::string& path, bool activateTab) {
                      std::istreambuf_iterator<char>());
     documentsEditor_->setHtml(html);
     documentsEditor_->setModified(false);
-    currentDocumentPath_ = path;
+    currentDocumentPath_ = normalizedPath;
+    refreshDocumentChoices();
     updateDocumentChrome();
 
     if (activateTab) {
@@ -1803,18 +1987,10 @@ bool RightPane::openDocument(const std::string& path, bool activateTab) {
 
 bool RightPane::saveDocument() {
     if (!documentsEditor_) return false;
-    if (currentDocumentPath_.empty()) return saveDocumentAs();
+    if (currentDocumentPath_.empty() || !isManagedStudypadPath(currentDocumentPath_)) {
+        return saveDocumentAs();
+    }
     return saveDocumentToPath(currentDocumentPath_);
-}
-
-bool RightPane::closeDocument() {
-    if (!maybeSaveDocumentChanges() || !documentsEditor_) return false;
-
-    currentDocumentPath_.clear();
-    documentsEditor_->clearDocument();
-    documentsEditor_->setModified(false);
-    updateDocumentChrome();
-    return true;
 }
 
 void RightPane::onHtmlLink(const std::string& url, bool commentarySource) {
@@ -1975,6 +2151,7 @@ void RightPane::onTopTabChange(Fl_Widget* /*w*/, void* data) {
     if (active == self->documentsGroup_) {
         self->tabs_->value(self->documentsGroup_);
         self->activeTopTab_ = TopTab::Documents;
+        self->refreshDocumentChoices();
         self->updateDocumentChrome();
         return;
     }
@@ -2031,16 +2208,34 @@ void RightPane::onGeneralBookTocChange(Fl_Widget* /*w*/, void* data) {
                                self->currentGeneralBookKey_);
 }
 
+void RightPane::onDocumentChoiceChange(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self || !self->documentChoice_ || self->documentChoiceSyncing_) return;
+
+    int index = self->documentChoice_->value();
+    if (index < 0 ||
+        index >= static_cast<int>(self->documentChoicePaths_.size())) {
+        self->refreshDocumentChoices();
+        return;
+    }
+
+    const std::string& path = self->documentChoicePaths_[static_cast<size_t>(index)];
+    if (path.empty() || pathsEqual(path, self->currentDocumentPath_)) {
+        self->refreshDocumentChoices();
+        self->updateDocumentChrome();
+        return;
+    }
+
+    if (!self->openDocument(path, true)) {
+        self->refreshDocumentChoices();
+        self->updateDocumentChrome();
+    }
+}
+
 void RightPane::onDocumentNew(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self) return;
     self->newDocument();
-}
-
-void RightPane::onDocumentOpen(Fl_Widget* /*w*/, void* data) {
-    auto* self = static_cast<RightPane*>(data);
-    if (!self) return;
-    self->openDocument();
 }
 
 void RightPane::onDocumentSave(Fl_Widget* /*w*/, void* data) {
@@ -2053,12 +2248,6 @@ void RightPane::onDocumentExportOdt(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self) return;
     self->exportDocumentToOdt();
-}
-
-void RightPane::onDocumentClose(Fl_Widget* /*w*/, void* data) {
-    auto* self = static_cast<RightPane*>(data);
-    if (!self) return;
-    self->closeDocument();
 }
 
 } // namespace verdad

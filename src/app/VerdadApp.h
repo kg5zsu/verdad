@@ -100,6 +100,8 @@ public:
 
     /// Resolve configured UI font to FLTK font enum.
     Fl_Font appFont() const;
+    Fl_Font textEditorFont() const;
+    Fl_Font boldTextEditorFont() const;
 
     /// Current inline marker display settings.
     const OptionDisplaySettings& optionDisplaySettings() const {

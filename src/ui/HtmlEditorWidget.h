@@ -2,7 +2,10 @@
 #define VERDAD_HTML_EDITOR_WIDGET_H
 
 #include <FL/Fl_Group.H>
+#include <FL/Fl_Text_Display.H>
+#include <FL/Enumerations.H>
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <string>
@@ -52,6 +55,7 @@ public:
     void setHtml(const std::string& html);
     std::string html() const;
     void setIndentWidth(int width);
+    void setTextFont(Fl_Font regularFont, Fl_Font boldFont, int size);
     int indentWidth() const { return indentWidth_; }
 
     void clearDocument();
@@ -112,6 +116,10 @@ private:
     bool suppressCallbacks_ = false;
     bool modified_ = false;
     int indentWidth_ = 4;
+    Fl_Font textFont_ = FL_HELVETICA;
+    Fl_Font boldTextFont_ = FL_HELVETICA_BOLD;
+    int textSize_ = 14;
+    std::array<Fl_Text_Display::Style_Table_Entry, 25> styleTable_{};
     std::function<void()> changeCallback_;
 
     void buildToolbar();

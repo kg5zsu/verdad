@@ -221,6 +221,17 @@ std::string normalizeLanguageCode(const std::string& languageCode) {
     return code;
 }
 
+bool endsWithIgnoreCase(const std::string& text, const std::string& suffix) {
+    if (suffix.size() > text.size()) return false;
+    size_t offset = text.size() - suffix.size();
+    for (size_t i = 0; i < suffix.size(); ++i) {
+        unsigned char a = static_cast<unsigned char>(text[offset + i]);
+        unsigned char b = static_cast<unsigned char>(suffix[i]);
+        if (std::tolower(a) != std::tolower(b)) return false;
+    }
+    return true;
+}
+
 std::string languageDisplayName(const std::string& languageCode) {
     std::string code = normalizeLanguageCode(languageCode);
     if (code == "en") return "English";
@@ -491,6 +502,10 @@ MainWindow::~MainWindow() {
     if (hoverDelayScheduled_) {
         Fl::remove_timeout(onHoverDelayTimeout, this);
         hoverDelayScheduled_ = false;
+    }
+    if (documentRestoreScheduled_) {
+        Fl::remove_timeout(onDeferredDocumentRestore, this);
+        documentRestoreScheduled_ = false;
     }
     if (prewarmScheduled_) {
         Fl::remove_timeout(onDeferredPrewarm, this);
@@ -1493,6 +1508,10 @@ void MainWindow::applyAppearanceSettings(Fl_Font appFont,
     }
     if (rightPane_ && app_) {
         rightPane_->setEditorIndentWidth(app_->appearanceSettings().editorIndentWidth);
+        rightPane_->setEditorTextFont(
+            app_->textEditorFont(),
+            app_->boldTextEditorFont(),
+            app_->appearanceSettings().textFontSize);
     }
     if (biblePane_) biblePane_->syncOptionButtons();
 
@@ -1585,12 +1604,8 @@ void MainWindow::restoreSessionState(const SessionState& state) {
     if (state.studyTabs.empty() || !studyTabsWidget_) {
         addStudyTab("", "Genesis", 1, 1);
         if (rightPane_) {
-            if (!state.documentPath.empty()) {
-                rightPane_->openDocument(state.documentPath, false);
-            }
-            if (state.documentsTabActive) {
-                rightPane_->setDocumentsTabActive(true);
-            }
+            scheduleDeferredDocumentRestore(state.documentPath,
+                                            state.documentsTabActive);
         }
         redraw();
         return;
@@ -1648,12 +1663,8 @@ void MainWindow::restoreSessionState(const SessionState& state) {
     }
 
     if (rightPane_) {
-        if (!state.documentPath.empty()) {
-            rightPane_->openDocument(state.documentPath, false);
-        }
-        if (state.documentsTabActive) {
-            rightPane_->setDocumentsTabActive(true);
-        }
+        scheduleDeferredDocumentRestore(state.documentPath,
+                                        state.documentsTabActive);
     }
 
     redraw();
@@ -1813,6 +1824,39 @@ void MainWindow::syncStudyTabSelection() {
     }
 }
 
+void MainWindow::scheduleDeferredDocumentRestore(const std::string& path,
+                                                 bool documentsTabActive) {
+    pendingDocumentRestorePath_ =
+        endsWithIgnoreCase(path, ".studypad") ? path : std::string();
+    pendingDocumentsTabActive_ = documentsTabActive;
+    Fl::remove_timeout(onDeferredDocumentRestore, this);
+    if (pendingDocumentRestorePath_.empty() && !pendingDocumentsTabActive_) {
+        documentRestoreScheduled_ = false;
+        return;
+    }
+    Fl::add_timeout(0.15, onDeferredDocumentRestore, this);
+    documentRestoreScheduled_ = true;
+}
+
+void MainWindow::restoreDeferredDocumentSession() {
+    documentRestoreScheduled_ = false;
+    if (!rightPane_) return;
+
+    const bool keepDocumentsActive = pendingDocumentsTabActive_;
+    if (!pendingDocumentRestorePath_.empty()) {
+        rightPane_->setDocumentsTabActive(true);
+        rightPane_->openDocument(pendingDocumentRestorePath_, true);
+    }
+    if (!keepDocumentsActive && !pendingDocumentRestorePath_.empty()) {
+        rightPane_->setDocumentsTabActive(false);
+    } else if (keepDocumentsActive) {
+        rightPane_->setDocumentsTabActive(true);
+    }
+
+    pendingDocumentRestorePath_.clear();
+    pendingDocumentsTabActive_ = false;
+}
+
 void MainWindow::onStudyTabChange(Fl_Widget* /*w*/, void* data) {
     perf::ScopeTimer timer("MainWindow::onStudyTabChange");
     auto* self = static_cast<MainWindow*>(data);
@@ -1820,12 +1864,16 @@ void MainWindow::onStudyTabChange(Fl_Widget* /*w*/, void* data) {
     self->syncStudyTabSelection();
 }
 
+void MainWindow::onDeferredDocumentRestore(void* data) {
+    auto* self = static_cast<MainWindow*>(data);
+    if (!self) return;
+    self->restoreDeferredDocumentSession();
+}
+
 void MainWindow::buildMenu() {
-    menuBar_->add("&File/&New Document", FL_CTRL + 'n', onFileNewDocument, this);
-    menuBar_->add("&File/&Open Document...", FL_CTRL + 'o', onFileOpenDocument, this);
-    menuBar_->add("&File/&Save Document", FL_CTRL + 's', onFileSaveDocument, this);
-    menuBar_->add("&File/&Export Document to ODT...", 0, onFileExportDocumentOdt, this);
-    menuBar_->add("&File/&Close Document", FL_CTRL + 'w', onFileCloseDocument, this);
+    menuBar_->add("&File/&New Studypad", FL_CTRL + 'n', onFileNewDocument, this);
+    menuBar_->add("&File/&Save Studypad", FL_CTRL + 's', onFileSaveDocument, this);
+    menuBar_->add("&File/&Export Studypad to ODT...", 0, onFileExportDocumentOdt, this);
     menuBar_->add("&File/&Module Manager...", 0, onFileModuleManager, this);
     menuBar_->add("&File/&Quit", FL_CTRL + 'q', onFileQuit, this);
     menuBar_->add("&Navigate/&Go to Verse...", FL_CTRL + 'g', onNavigateGo, this);
@@ -1855,12 +1903,6 @@ void MainWindow::onFileNewDocument(Fl_Widget* /*w*/, void* data) {
     self->rightPane_->newDocument();
 }
 
-void MainWindow::onFileOpenDocument(Fl_Widget* /*w*/, void* data) {
-    auto* self = static_cast<MainWindow*>(data);
-    if (!self || !self->rightPane_) return;
-    self->rightPane_->openDocument();
-}
-
 void MainWindow::onFileSaveDocument(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<MainWindow*>(data);
     if (!self || !self->rightPane_) return;
@@ -1871,12 +1913,6 @@ void MainWindow::onFileExportDocumentOdt(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<MainWindow*>(data);
     if (!self || !self->rightPane_) return;
     self->rightPane_->exportDocumentToOdt();
-}
-
-void MainWindow::onFileCloseDocument(Fl_Widget* /*w*/, void* data) {
-    auto* self = static_cast<MainWindow*>(data);
-    if (!self || !self->rightPane_) return;
-    self->rightPane_->closeDocument();
 }
 
 void MainWindow::onNavigateGo(Fl_Widget* /*w*/, void* data) {

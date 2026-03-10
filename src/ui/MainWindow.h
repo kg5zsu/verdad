@@ -281,21 +281,23 @@ private:
 
     /// Callback when study tabs selection changes.
     static void onStudyTabChange(Fl_Widget* w, void* data);
+    static void onDeferredDocumentRestore(void* data);
 
     /// Layout tab header controls (+, tabs, close).
     void layoutStudyTabHeader();
 
     /// Build the menu bar
     void buildMenu();
+    void scheduleDeferredDocumentRestore(const std::string& path,
+                                         bool documentsTabActive);
+    void restoreDeferredDocumentSession();
 
     // Menu callbacks
     static void onFileQuit(Fl_Widget* w, void* data);
     static void onFileModuleManager(Fl_Widget* w, void* data);
     static void onFileNewDocument(Fl_Widget* w, void* data);
-    static void onFileOpenDocument(Fl_Widget* w, void* data);
     static void onFileSaveDocument(Fl_Widget* w, void* data);
     static void onFileExportDocumentOdt(Fl_Widget* w, void* data);
-    static void onFileCloseDocument(Fl_Widget* w, void* data);
     static void onNavigateGo(Fl_Widget* w, void* data);
     static void onViewParallel(Fl_Widget* w, void* data);
     static void onViewSettings(Fl_Widget* w, void* data);
@@ -314,6 +316,9 @@ private:
     HtmlWidget* searchHelpHtml_ = nullptr;
     std::vector<std::pair<std::string, std::string>> searchHelpTopics_;
     std::string searchHelpDocumentHtml_;
+    std::string pendingDocumentRestorePath_;
+    bool pendingDocumentsTabActive_ = false;
+    bool documentRestoreScheduled_ = false;
 };
 
 } // namespace verdad

@@ -21,8 +21,8 @@ namespace verdad {
 namespace {
 
 constexpr int kToolbarH = 30;
-constexpr int kButtonW = 42;
-constexpr int kWideButtonW = 54;
+constexpr int kButtonW = 34;
+constexpr int kWideButtonW = 42;
 constexpr int kButtonGap = 2;
 constexpr int kStyleCount = 25;
 constexpr int kHrStyleIndex = 24;
@@ -773,8 +773,8 @@ HtmlEditorWidget::HtmlEditorWidget(int X, int Y, int W, int H, const char* label
     editor_->buffer(textBuffer_);
     editor_->highlight_data(styleBuffer_, nullptr, 0, 'A', nullptr, nullptr);
     editor_->wrap_mode(Fl_Text_Display::WRAP_AT_BOUNDS, 0);
-    editor_->textfont(FL_HELVETICA);
-    editor_->textsize(14);
+    editor_->textfont(textFont_);
+    editor_->textsize(textSize_);
     editor_->cursor_style(Fl_Text_Display::NORMAL_CURSOR);
     editor_->tab_nav(0);
     end();
@@ -810,18 +810,27 @@ void HtmlEditorWidget::buildToolbar() {
         return button;
     };
 
-    undoButton_ = makeButton(kWideButtonW, "Undo");
-    redoButton_ = makeButton(kWideButtonW, "Redo");
+    undoButton_ = makeButton(kButtonW, "@undo");
+    redoButton_ = makeButton(kButtonW, "@redo");
     boldButton_ = makeButton(kButtonW, "B");
     italicButton_ = makeButton(kButtonW, "I");
-    smallerButton_ = makeButton(kButtonW, "A-");
-    largerButton_ = makeButton(kButtonW, "A+");
-    unorderedListButton_ = makeButton(kWideButtonW, "UL");
-    orderedListButton_ = makeButton(kWideButtonW, "OL");
+    smallerButton_ = makeButton(kWideButtonW, "A-");
+    largerButton_ = makeButton(kWideButtonW, "A+");
+    unorderedListButton_ = makeButton(kWideButtonW, "\xE2\x80\xA2 \xE2\x80\xA2");
+    orderedListButton_ = makeButton(kWideButtonW, "1. 2.");
     ruleButton_ = makeButton(kWideButtonW, "HR");
 
     if (boldButton_) boldButton_->type(FL_TOGGLE_BUTTON);
     if (italicButton_) italicButton_->type(FL_TOGGLE_BUTTON);
+    if (undoButton_) undoButton_->tooltip("Undo");
+    if (redoButton_) redoButton_->tooltip("Redo");
+    if (boldButton_) boldButton_->tooltip("Toggle bold");
+    if (italicButton_) italicButton_->tooltip("Toggle italic");
+    if (smallerButton_) smallerButton_->tooltip("Decrease text size");
+    if (largerButton_) largerButton_->tooltip("Increase text size");
+    if (unorderedListButton_) unorderedListButton_->tooltip("Toggle bulleted list");
+    if (orderedListButton_) orderedListButton_->tooltip("Toggle numbered list");
+    if (ruleButton_) ruleButton_->tooltip("Insert horizontal rule");
 
     toolbar_->end();
 }
@@ -837,12 +846,12 @@ void HtmlEditorWidget::layoutChildren() {
         bx += width + kButtonGap;
     };
 
-    placeButton(undoButton_, kWideButtonW);
-    placeButton(redoButton_, kWideButtonW);
+    placeButton(undoButton_, kButtonW);
+    placeButton(redoButton_, kButtonW);
     placeButton(boldButton_, kButtonW);
     placeButton(italicButton_, kButtonW);
-    placeButton(smallerButton_, kButtonW);
-    placeButton(largerButton_, kButtonW);
+    placeButton(smallerButton_, kWideButtonW);
+    placeButton(largerButton_, kWideButtonW);
     placeButton(unorderedListButton_, kWideButtonW);
     placeButton(orderedListButton_, kWideButtonW);
     placeButton(ruleButton_, kWideButtonW);
@@ -924,6 +933,17 @@ void HtmlEditorWidget::setIndentWidth(int width) {
         }
     }
     if (editor_) editor_->redraw();
+}
+
+void HtmlEditorWidget::setTextFont(Fl_Font regularFont, Fl_Font boldFont, int size) {
+    textFont_ = regularFont;
+    boldTextFont_ = boldFont;
+    textSize_ = std::clamp(size, 8, 36);
+    if (editor_) {
+        editor_->textfont(textFont_);
+        editor_->textsize(textSize_);
+    }
+    rebuildStyleBuffer();
 }
 
 void HtmlEditorWidget::clearDocument() {
@@ -1034,35 +1054,40 @@ void HtmlEditorWidget::applyInlineTransform(
 void HtmlEditorWidget::rebuildStyleBuffer() {
     if (!textBuffer_ || !styleBuffer_ || !editor_) return;
 
-    static std::array<Fl_Text_Display::Style_Table_Entry, kStyleCount> styleTable = {{
-        {FL_FOREGROUND_COLOR, FL_HELVETICA, 12, 0, FL_WHITE},
-        {FL_FOREGROUND_COLOR, FL_HELVETICA_BOLD, 12, 0, FL_WHITE},
-        {FL_FOREGROUND_COLOR, FL_HELVETICA_ITALIC, 12, 0, FL_WHITE},
-        {FL_FOREGROUND_COLOR, FL_HELVETICA_BOLD_ITALIC, 12, 0, FL_WHITE},
-        {FL_BLUE, FL_HELVETICA, 12, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
-        {FL_BLUE, FL_HELVETICA_BOLD, 12, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
-        {FL_BLUE, FL_HELVETICA_ITALIC, 12, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
-        {FL_BLUE, FL_HELVETICA_BOLD_ITALIC, 12, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
-        {FL_FOREGROUND_COLOR, FL_HELVETICA, 14, 0, FL_WHITE},
-        {FL_FOREGROUND_COLOR, FL_HELVETICA_BOLD, 14, 0, FL_WHITE},
-        {FL_FOREGROUND_COLOR, FL_HELVETICA_ITALIC, 14, 0, FL_WHITE},
-        {FL_FOREGROUND_COLOR, FL_HELVETICA_BOLD_ITALIC, 14, 0, FL_WHITE},
-        {FL_BLUE, FL_HELVETICA, 14, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
-        {FL_BLUE, FL_HELVETICA_BOLD, 14, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
-        {FL_BLUE, FL_HELVETICA_ITALIC, 14, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
-        {FL_BLUE, FL_HELVETICA_BOLD_ITALIC, 14, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
-        {FL_FOREGROUND_COLOR, FL_HELVETICA, 17, 0, FL_WHITE},
-        {FL_FOREGROUND_COLOR, FL_HELVETICA_BOLD, 17, 0, FL_WHITE},
-        {FL_FOREGROUND_COLOR, FL_HELVETICA_ITALIC, 17, 0, FL_WHITE},
-        {FL_FOREGROUND_COLOR, FL_HELVETICA_BOLD_ITALIC, 17, 0, FL_WHITE},
-        {FL_BLUE, FL_HELVETICA, 17, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
-        {FL_BLUE, FL_HELVETICA_BOLD, 17, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
-        {FL_BLUE, FL_HELVETICA_ITALIC, 17, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
-        {FL_BLUE, FL_HELVETICA_BOLD_ITALIC, 17, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
-        {fl_rgb_color(120, 120, 120), FL_HELVETICA, 13, 0, FL_WHITE},
+    int smallSize = std::max(8, textSize_ - 2);
+    int normalSize = textSize_;
+    int largeSize = std::min(48, textSize_ + 3);
+    int ruleSize = std::max(8, textSize_ - 1);
+
+    styleTable_ = {{
+        {FL_FOREGROUND_COLOR, textFont_, smallSize, 0, FL_WHITE},
+        {FL_FOREGROUND_COLOR, boldTextFont_, smallSize, 0, FL_WHITE},
+        {FL_FOREGROUND_COLOR, textFont_, smallSize, 0, FL_WHITE},
+        {FL_FOREGROUND_COLOR, boldTextFont_, smallSize, 0, FL_WHITE},
+        {FL_BLUE, textFont_, smallSize, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
+        {FL_BLUE, boldTextFont_, smallSize, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
+        {FL_BLUE, textFont_, smallSize, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
+        {FL_BLUE, boldTextFont_, smallSize, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
+        {FL_FOREGROUND_COLOR, textFont_, normalSize, 0, FL_WHITE},
+        {FL_FOREGROUND_COLOR, boldTextFont_, normalSize, 0, FL_WHITE},
+        {FL_FOREGROUND_COLOR, textFont_, normalSize, 0, FL_WHITE},
+        {FL_FOREGROUND_COLOR, boldTextFont_, normalSize, 0, FL_WHITE},
+        {FL_BLUE, textFont_, normalSize, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
+        {FL_BLUE, boldTextFont_, normalSize, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
+        {FL_BLUE, textFont_, normalSize, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
+        {FL_BLUE, boldTextFont_, normalSize, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
+        {FL_FOREGROUND_COLOR, textFont_, largeSize, 0, FL_WHITE},
+        {FL_FOREGROUND_COLOR, boldTextFont_, largeSize, 0, FL_WHITE},
+        {FL_FOREGROUND_COLOR, textFont_, largeSize, 0, FL_WHITE},
+        {FL_FOREGROUND_COLOR, boldTextFont_, largeSize, 0, FL_WHITE},
+        {FL_BLUE, textFont_, largeSize, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
+        {FL_BLUE, boldTextFont_, largeSize, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
+        {FL_BLUE, textFont_, largeSize, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
+        {FL_BLUE, boldTextFont_, largeSize, Fl_Text_Display::ATTR_UNDERLINE, FL_WHITE},
+        {fl_rgb_color(120, 120, 120), textFont_, ruleSize, 0, FL_WHITE},
     }};
 
-    editor_->highlight_data(styleBuffer_, styleTable.data(), kStyleCount, 'A', nullptr, nullptr);
+    editor_->highlight_data(styleBuffer_, styleTable_.data(), kStyleCount, 'A', nullptr, nullptr);
 
     std::string text = bufferText();
     if (formats_.size() < text.size()) {
