@@ -1323,11 +1323,34 @@ void BiblePane::onContextMenu(const std::string& word, const std::string& href,
                                const std::string& strong, const std::string& morph,
                                const std::string& module,
                                int x, int y) {
-    std::string verseKey = currentBook_ + " " + std::to_string(currentChapter_) +
-                           ":" + std::to_string(currentVerse_);
+    VerseContext::SelectionContext selection;
+    if (htmlWidget_) {
+        HtmlWidget::SelectionInfo info = htmlWidget_->selectionInfo();
+        selection.hasSelection = info.hasSelection;
+        selection.text = info.text;
+        selection.wholeWordText = info.wholeWordText;
+        selection.startsInsideWord = info.startsInsideWord;
+        selection.endsInsideWord = info.endsInsideWord;
+        selection.startVerse = info.startVerse;
+        selection.endVerse = info.endVerse;
+    }
+
+    int clickedVerse = htmlWidget_ ? htmlWidget_->verseAtScreenPoint(x, y) : 0;
+    if (clickedVerse <= 0 && href.rfind("verse:", 0) == 0) {
+        try {
+            clickedVerse = std::stoi(href.substr(6));
+        } catch (...) {
+            clickedVerse = 0;
+        }
+    }
+    if (clickedVerse <= 0) {
+        clickedVerse = currentVerse_;
+    }
 
     VerseContext ctx(app_);
-    ctx.show(word, href, strong, morph, module, verseKey, x, y);
+    ctx.show(word, href, strong, morph, module,
+             currentBook_, currentChapter_, clickedVerse, paragraphMode_,
+             selection, x, y);
 }
 
 } // namespace verdad

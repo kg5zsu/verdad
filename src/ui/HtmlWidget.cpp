@@ -468,6 +468,25 @@ std::shared_ptr<litehtml::element> findElementByIdRecursive(
     return nullptr;
 }
 
+int parseVerseNumberValue(const char* text) {
+    if (!text || !*text) return 0;
+
+    std::string value = trimCopy(text);
+    if (value.empty()) return 0;
+
+    if (value.size() > 1 && value[0] == 'v') {
+        value.erase(value.begin());
+    } else if (value.rfind("verse:", 0) == 0) {
+        value.erase(0, 6);
+    }
+
+    if (value.empty()) return 0;
+    for (char c : value) {
+        if (!std::isdigit(static_cast<unsigned char>(c))) return 0;
+    }
+    return std::stoi(value);
+}
+
 } // namespace
 
 HtmlWidget::HtmlWidget(int X, int Y, int W, int H, const char* label)
@@ -547,10 +566,133 @@ bool HtmlWidget::selectionPointLess(const SelectionPoint& lhs,
     return lhs.charIndex < rhs.charIndex;
 }
 
+bool HtmlWidget::selectionPointEqual(const SelectionPoint& lhs,
+                                     const SelectionPoint& rhs) const {
+    return lhs.valid == rhs.valid &&
+           lhs.fragmentIndex == rhs.fragmentIndex &&
+           lhs.charIndex == rhs.charIndex;
+}
+
 bool HtmlWidget::hasSelection() const {
     if (!selectionAnchor_.valid || !selectionFocus_.valid) return false;
     return selectionAnchor_.fragmentIndex != selectionFocus_.fragmentIndex ||
            selectionAnchor_.charIndex != selectionFocus_.charIndex;
+}
+
+bool HtmlWidget::isWordCharAt(int fragmentIndex, int charIndex) const {
+    if (fragmentIndex < 0 ||
+        fragmentIndex >= static_cast<int>(textFragments_.size())) {
+        return false;
+    }
+
+    const TextFragment& fragment = textFragments_[fragmentIndex];
+    int charCount = static_cast<int>(fragment.byteOffsets.size()) - 1;
+    if (charIndex < 0 || charIndex >= charCount) return false;
+
+    int byteStart = fragment.byteOffsets[charIndex];
+    int byteEnd = fragment.byteOffsets[charIndex + 1];
+    if (byteEnd <= byteStart ||
+        byteStart < 0 ||
+        byteEnd > static_cast<int>(fragment.text.size())) {
+        return false;
+    }
+
+    unsigned char first = static_cast<unsigned char>(fragment.text[byteStart]);
+    return first >= 0x80 ||
+           std::isalnum(first) ||
+           first == '\'' ||
+           first == '-';
+}
+
+HtmlWidget::SelectionPoint HtmlWidget::nextSelectionPoint(
+        const SelectionPoint& point) const {
+    if (!point.valid) return SelectionPoint{};
+
+    SelectionPoint next = point;
+    while (next.fragmentIndex >= 0 &&
+           next.fragmentIndex < static_cast<int>(textFragments_.size())) {
+        const TextFragment& fragment = textFragments_[next.fragmentIndex];
+        int charCount = static_cast<int>(fragment.byteOffsets.size()) - 1;
+        if (next.charIndex < charCount) {
+            ++next.charIndex;
+            next.valid = true;
+            return next;
+        }
+
+        ++next.fragmentIndex;
+        if (next.fragmentIndex >= static_cast<int>(textFragments_.size())) {
+            break;
+        }
+        next.charIndex = 0;
+        next.valid = true;
+        return next;
+    }
+
+    return SelectionPoint{};
+}
+
+HtmlWidget::SelectionPoint HtmlWidget::previousSelectionPoint(
+        const SelectionPoint& point) const {
+    if (!point.valid) return SelectionPoint{};
+
+    SelectionPoint prev = point;
+    if (prev.charIndex > 0) {
+        --prev.charIndex;
+        prev.valid = true;
+        return prev;
+    }
+
+    --prev.fragmentIndex;
+    while (prev.fragmentIndex >= 0) {
+        const TextFragment& fragment = textFragments_[prev.fragmentIndex];
+        int charCount = static_cast<int>(fragment.byteOffsets.size()) - 1;
+        prev.charIndex = std::max(0, charCount);
+        prev.valid = true;
+        return prev;
+    }
+
+    return SelectionPoint{};
+}
+
+bool HtmlWidget::screenPointForSelectionBoundary(const SelectionPoint& point,
+                                                 bool preferPreviousChar,
+                                                 int& screenX,
+                                                 int& screenY) const {
+    if (!point.valid ||
+        point.fragmentIndex < 0 ||
+        point.fragmentIndex >= static_cast<int>(textFragments_.size())) {
+        return false;
+    }
+
+    const TextFragment& fragment = textFragments_[point.fragmentIndex];
+    int charCount = static_cast<int>(fragment.byteOffsets.size()) - 1;
+    if (charCount <= 0) return false;
+
+    if (preferPreviousChar && point.charIndex <= 0) {
+        SelectionPoint prev = previousSelectionPoint(point);
+        if (prev.valid) {
+            return screenPointForSelectionBoundary(prev, true, screenX, screenY);
+        }
+    }
+
+    int drawChar = point.charIndex;
+    if (preferPreviousChar) {
+        if (drawChar > 0) {
+            --drawChar;
+        } else {
+            drawChar = 0;
+        }
+    } else if (drawChar >= charCount) {
+        drawChar = charCount - 1;
+    }
+
+    drawChar = std::clamp(drawChar, 0, charCount - 1);
+    int startX = fragment.xOffsets[drawChar];
+    int endX = fragment.xOffsets[drawChar + 1];
+    screenX = static_cast<int>(fragment.pos.x) +
+              startX + std::max(0, (endX - startX) / 2);
+    screenY = static_cast<int>(fragment.pos.y + fragment.pos.height / 2);
+    return true;
 }
 
 HtmlWidget::SelectionPoint HtmlWidget::hitTestSelectionPoint(int screenX,
@@ -672,33 +814,15 @@ std::string HtmlWidget::fragmentWordAt(int fragmentIndex, int charIndex) const {
     int charCount = static_cast<int>(fragment.byteOffsets.size()) - 1;
     if (charIndex < 0 || charIndex >= charCount) return "";
 
-    auto isWordCharAt = [&](int index) -> bool {
-        if (index < 0 || index >= charCount) return false;
-        int byteStart = fragment.byteOffsets[index];
-        int byteEnd = fragment.byteOffsets[index + 1];
-        if (byteEnd <= byteStart ||
-            byteStart < 0 ||
-            byteEnd > static_cast<int>(fragment.text.size())) {
-            return false;
-        }
-
-        unsigned char first =
-            static_cast<unsigned char>(fragment.text[byteStart]);
-        return first >= 0x80 ||
-               std::isalnum(first) ||
-               first == '\'' ||
-               first == '-';
-    };
-
-    if (!isWordCharAt(charIndex)) return "";
+    if (!isWordCharAt(fragmentIndex, charIndex)) return "";
 
     int startChar = charIndex;
-    while (startChar > 0 && isWordCharAt(startChar - 1)) {
+    while (startChar > 0 && isWordCharAt(fragmentIndex, startChar - 1)) {
         --startChar;
     }
 
     int endChar = charIndex + 1;
-    while (endChar < charCount && isWordCharAt(endChar)) {
+    while (endChar < charCount && isWordCharAt(fragmentIndex, endChar)) {
         ++endChar;
     }
 
@@ -717,6 +841,31 @@ std::string HtmlWidget::wordAtScreenPoint(int screenX, int screenY) const {
         return "";
     }
     return fragmentWordAt(fragmentIndex, charIndex);
+}
+
+int HtmlWidget::verseAtScreenPoint(int screenX, int screenY) const {
+    if (!doc_ || !doc_->root_render()) return 0;
+
+    int docX = screenX - x() + scrollX_;
+    int docY = screenY - y() + scrollY_;
+    auto el = doc_->root_render()->get_element_by_point(
+        docX, docY, docX, docY,
+        [](const std::shared_ptr<litehtml::render_item>&) { return true; });
+    if (!el) return 0;
+
+    HitElement hit = findDeepestElementAtPoint(el, docX, docY);
+    if (hit.element) el = hit.element;
+
+    for (auto cur = el; cur; cur = cur->parent()) {
+        if (int verse = parseVerseNumberValue(cur->get_attr("id"))) {
+            return verse;
+        }
+        if (int verse = parseVerseNumberValue(cur->get_attr("href"))) {
+            return verse;
+        }
+    }
+
+    return 0;
 }
 
 bool HtmlWidget::fragmentSelectionRange(int fragmentIndex,
@@ -755,6 +904,16 @@ std::string HtmlWidget::selectedText() const {
 
     SelectionPoint start = selectionAnchor_;
     SelectionPoint end = selectionFocus_;
+    if (selectionPointLess(end, start)) std::swap(start, end);
+
+    return selectedTextBetween(start, end);
+}
+
+std::string HtmlWidget::selectedTextBetween(SelectionPoint start,
+                                            SelectionPoint end) const {
+    if (!start.valid || !end.valid || selectionPointEqual(start, end)) {
+        return "";
+    }
     if (selectionPointLess(end, start)) std::swap(start, end);
 
     std::string out;
@@ -804,6 +963,78 @@ std::string HtmlWidget::selectedText() const {
     }
 
     return out;
+}
+
+HtmlWidget::SelectionInfo HtmlWidget::selectionInfo() const {
+    SelectionInfo info;
+    if (!hasSelection()) return info;
+
+    SelectionPoint start = selectionAnchor_;
+    SelectionPoint end = selectionFocus_;
+    if (selectionPointLess(end, start)) std::swap(start, end);
+
+    info.hasSelection = true;
+    info.text = selectedTextBetween(start, end);
+
+    SelectionPoint prevStart = previousSelectionPoint(start);
+    info.startsInsideWord =
+        start.valid &&
+        prevStart.valid &&
+        isWordCharAt(start.fragmentIndex, start.charIndex) &&
+        isWordCharAt(prevStart.fragmentIndex, prevStart.charIndex);
+
+    SelectionPoint prevEnd = previousSelectionPoint(end);
+    info.endsInsideWord =
+        end.valid &&
+        prevEnd.valid &&
+        isWordCharAt(prevEnd.fragmentIndex, prevEnd.charIndex) &&
+        isWordCharAt(end.fragmentIndex, end.charIndex);
+
+    SelectionPoint wordStart = start;
+    if (info.startsInsideWord) {
+        while (!selectionPointEqual(wordStart, end) &&
+               isWordCharAt(wordStart.fragmentIndex, wordStart.charIndex)) {
+            SelectionPoint next = nextSelectionPoint(wordStart);
+            if (!next.valid) break;
+            wordStart = next;
+        }
+        while (!selectionPointEqual(wordStart, end) &&
+               !isWordCharAt(wordStart.fragmentIndex, wordStart.charIndex)) {
+            SelectionPoint next = nextSelectionPoint(wordStart);
+            if (!next.valid) break;
+            wordStart = next;
+        }
+    }
+
+    SelectionPoint wordEnd = end;
+    if (info.endsInsideWord) {
+        while (true) {
+            SelectionPoint prev = previousSelectionPoint(wordEnd);
+            if (!prev.valid ||
+                !isWordCharAt(prev.fragmentIndex, prev.charIndex)) {
+                break;
+            }
+            wordEnd = prev;
+        }
+    }
+
+    if (!selectionPointEqual(wordStart, wordEnd) &&
+        !selectionPointLess(wordEnd, wordStart)) {
+        info.wholeWordText = selectedTextBetween(wordStart, wordEnd);
+    }
+
+    int hitX = 0;
+    int hitY = 0;
+    if (screenPointForSelectionBoundary(start, false, hitX, hitY)) {
+        info.startVerse = verseAtScreenPoint(hitX, hitY);
+    }
+    if (screenPointForSelectionBoundary(end, true, hitX, hitY)) {
+        info.endVerse = verseAtScreenPoint(hitX, hitY);
+    }
+    if (info.startVerse == 0) info.startVerse = info.endVerse;
+    if (info.endVerse == 0) info.endVerse = info.startVerse;
+
+    return info;
 }
 
 bool HtmlWidget::copySelectionToClipboard() {

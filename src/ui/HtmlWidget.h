@@ -51,6 +51,16 @@ public:
         bool valid = false;
     };
 
+    struct SelectionInfo {
+        bool hasSelection = false;
+        std::string text;
+        std::string wholeWordText;
+        bool startsInsideWord = false;
+        bool endsInsideWord = false;
+        int startVerse = 0;
+        int endVerse = 0;
+    };
+
     HtmlWidget(int X, int Y, int W, int H, const char* label = nullptr);
     ~HtmlWidget() override;
 
@@ -100,6 +110,12 @@ public:
 
     /// Copy the current text selection to the clipboard.
     bool copySelectionToClipboard();
+
+    /// Return the current text selection with word-boundary and verse metadata.
+    SelectionInfo selectionInfo() const;
+
+    /// Return the verse number under the given widget-space point, if any.
+    int verseAtScreenPoint(int screenX, int screenY) const;
 
     /// Handle widget geometry updates and rerender on resize.
     void resize(int X, int Y, int W, int H) override;
@@ -285,9 +301,18 @@ private:
     int viewportHeight() const;
     void setScrollX(int x);
     bool hasSelection() const;
+    bool isWordCharAt(int fragmentIndex, int charIndex) const;
     SelectionPoint hitTestSelectionPoint(int screenX, int screenY) const;
     bool fragmentSelectionRange(int fragmentIndex, int& startChar, int& endChar) const;
     bool selectionPointLess(const SelectionPoint& lhs, const SelectionPoint& rhs) const;
+    bool selectionPointEqual(const SelectionPoint& lhs, const SelectionPoint& rhs) const;
+    SelectionPoint nextSelectionPoint(const SelectionPoint& point) const;
+    SelectionPoint previousSelectionPoint(const SelectionPoint& point) const;
+    bool screenPointForSelectionBoundary(const SelectionPoint& point,
+                                         bool preferPreviousChar,
+                                         int& screenX,
+                                         int& screenY) const;
+    std::string selectedTextBetween(SelectionPoint start, SelectionPoint end) const;
     bool hitTextFragmentAtPoint(int screenX, int screenY,
                                 int& fragmentIndex, int& charIndex) const;
     std::string fragmentWordAt(int fragmentIndex, int charIndex) const;

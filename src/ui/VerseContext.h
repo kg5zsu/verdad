@@ -16,6 +16,16 @@ class VerdadApp;
 /// - Copy verse text
 class VerseContext {
 public:
+    struct SelectionContext {
+        bool hasSelection = false;
+        std::string text;
+        std::string wholeWordText;
+        bool startsInsideWord = false;
+        bool endsInsideWord = false;
+        int startVerse = 0;
+        int endVerse = 0;
+    };
+
     VerseContext(VerdadApp* app);
     ~VerseContext();
 
@@ -31,18 +41,32 @@ public:
     void show(const std::string& word, const std::string& href,
               const std::string& strong, const std::string& morph,
               const std::string& module,
-              const std::string& verseKey,
+              const std::string& book,
+              int chapter,
+              int verse,
+              bool paragraphMode,
+              const SelectionContext& selection,
               int screenX, int screenY);
 
 private:
+    enum class CopyActionKind {
+        Verse,
+        Verses,
+        Selection
+    };
+
     VerdadApp* app_;
     std::string currentWord_;
     std::string currentHref_;
     std::string currentStrong_;
     std::string currentMorph_;
     std::string currentContextModule_;
-    std::string currentVerseKey_;
     std::string currentDictionaryLookupKey_;
+    std::string currentBook_;
+    SelectionContext currentSelection_;
+    int currentChapter_ = 0;
+    int currentVerse_ = 0;
+    bool currentParagraphMode_ = false;
 
     struct StrongsMenuAction {
         VerseContext* owner = nullptr;
@@ -51,16 +75,42 @@ private:
     };
     std::vector<StrongsMenuAction> strongActions_;
 
+    struct CopyMenuAction {
+        VerseContext* owner = nullptr;
+        CopyActionKind kind = CopyActionKind::Verse;
+        bool referenceFirst = true;
+        int startVerse = 0;
+        int endVerse = 0;
+    };
+    std::vector<CopyMenuAction> copyActions_;
+
     /// Extract all Strong's numbers from href/data-strong payload.
     std::vector<std::string> extractStrongsNumbers(
         const std::string& href,
         const std::string& strong = "") const;
 
+    std::string currentVerseKey() const;
+    std::string verseKeyForNumber(int verse) const;
+    std::string referenceLabel(int startVerse, int endVerse) const;
+    std::string singleVerseText(int verse, bool includeVerseNumber) const;
+    std::string multiVerseText(int startVerse, int endVerse) const;
+    std::string selectionCopyText() const;
+    std::string formattedCopyText(const std::string& body,
+                                  int startVerse,
+                                  int endVerse,
+                                  bool referenceFirst) const;
+    void copyToClipboard(const std::string& text) const;
+    void addCopyMenuItem(Fl_Menu_Button& menu,
+                         const char* label,
+                         CopyActionKind kind,
+                         bool referenceFirst,
+                         int startVerse,
+                         int endVerse);
+
     // Menu action callbacks
     static void onStrongsAction(Fl_Widget* w, void* data);
     static void onAddTag(Fl_Widget* w, void* data);
-    static void onCopyVerse(Fl_Widget* w, void* data);
-    static void onCopyWord(Fl_Widget* w, void* data);
+    static void onCopyAction(Fl_Widget* w, void* data);
     static void onSearchWord(Fl_Widget* w, void* data);
     static void onLookupDictionary(Fl_Widget* w, void* data);
 };
