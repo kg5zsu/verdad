@@ -114,6 +114,15 @@ public:
     /// Build runtime CSS overrides for HTML-rendered text panes.
     std::string textStyleOverrideCss() const;
 
+    /// Load preferences from a specific file. When preserveLayout is true,
+    /// imported window geometry, splitter sizes, and pane scroll positions
+    /// are ignored in favor of the current session layout.
+    bool loadPreferencesFromFile(const std::string& prefFile,
+                                 bool preserveLayout = false);
+
+    /// Save current preferences and session state to disk.
+    void savePreferences();
+
     /// Get sorted list of available system font family names.
     const std::vector<std::string>& systemFontFamilies() const { return systemFontFamilies_; }
 
@@ -148,8 +157,9 @@ private:
     /// Load user preferences
     void loadPreferences();
 
-    /// Save user preferences
-    void savePreferences();
+    /// Apply parsed preference data to the running app.
+    bool applyPreferencesMap(const std::unordered_map<std::string, std::string>& prefs,
+                             bool preserveLayout);
 };
 
 } // namespace verdad

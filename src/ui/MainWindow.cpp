@@ -9,8 +9,10 @@
 #include "sword/SwordManager.h"
 #include "search/SearchIndexer.h"
 #include "app/PerfTrace.h"
+#include "tags/TagManager.h"
 
 #include <FL/Fl.H>
+#include <FL/Fl_Native_File_Chooser.H>
 #include <FL/fl_ask.H>
 #include <FL/Fl_Menu_Item.H>
 #include <FL/fl_draw.H>
@@ -26,15 +28,20 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <regex>
 #include <set>
 #include <sstream>
+#include <system_error>
 #include <unordered_set>
 #include <vector>
 
 namespace verdad {
 namespace {
+
+namespace fs = std::filesystem;
 
 std::string trimCopy(const std::string& s) {
     size_t start = 0;
@@ -230,6 +237,104 @@ bool endsWithIgnoreCase(const std::string& text, const std::string& suffix) {
         if (std::tolower(a) != std::tolower(b)) return false;
     }
     return true;
+}
+
+std::string pathLeaf(const std::string& path) {
+    if (path.empty()) return "";
+    size_t slash = path.find_last_of("/\\");
+    if (slash == std::string::npos) return path;
+    return path.substr(slash + 1);
+}
+
+bool ensureDirectoryExists(const std::string& path) {
+    if (path.empty()) return false;
+
+    std::error_code ec;
+    fs::create_directories(path, ec);
+    if (ec) return false;
+    return fs::is_directory(fs::path(path), ec) && !ec;
+}
+
+std::string shellQuote(const std::string& text) {
+#ifdef _WIN32
+    std::string out = "\"";
+    for (char c : text) {
+        if (c == '"') out += "\\\"";
+        else out.push_back(c);
+    }
+    out += "\"";
+    return out;
+#else
+    std::string out = "'";
+    for (char c : text) {
+        if (c == '\'') out += "'\\''";
+        else out.push_back(c);
+    }
+    out += "'";
+    return out;
+#endif
+}
+
+std::string makeUniqueTempDir(const std::string& prefix) {
+    std::error_code ec;
+    fs::path base = fs::temp_directory_path(ec);
+    if (ec) base = fs::path("/tmp");
+
+    for (int i = 0; i < 100; ++i) {
+        auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        fs::path candidate = base / (prefix + std::to_string(now + i));
+        if (fs::create_directory(candidate, ec)) {
+            return candidate.string();
+        }
+        ec.clear();
+    }
+    return "";
+}
+
+bool copyBinaryFile(const std::string& fromPath, const std::string& toPath) {
+    std::error_code ec;
+    fs::copy_file(fromPath, toPath, fs::copy_options::overwrite_existing, ec);
+    return !ec;
+}
+
+bool copyDirectoryRecursive(const std::string& fromPath,
+                            const std::string& toPath) {
+    std::error_code ec;
+    fs::remove_all(fs::path(toPath), ec);
+    ec.clear();
+    fs::copy(fs::path(fromPath),
+             fs::path(toPath),
+             fs::copy_options::recursive | fs::copy_options::overwrite_existing,
+             ec);
+    return !ec;
+}
+
+bool runZipArchive(const std::string& workingDir,
+                   const std::string& archivePath,
+                   bool includeTagsDb) {
+    std::string cmd = "cd " + shellQuote(workingDir) +
+                      " && zip -rq " + shellQuote(archivePath) +
+                      " preferences.conf";
+    if (includeTagsDb) cmd += " tags.db";
+    cmd += " studypad";
+#ifdef _WIN32
+    cmd += " >NUL 2>NUL";
+#else
+    cmd += " >/dev/null 2>&1";
+#endif
+    return std::system(cmd.c_str()) == 0;
+}
+
+bool runUnzipArchive(const std::string& archivePath,
+                     const std::string& outputDir) {
+    std::string cmd = "unzip -oq " + shellQuote(archivePath) +
+                      " -d " + shellQuote(outputDir);
+#ifdef _WIN32
+    cmd += " >NUL 2>NUL";
+#else
+    cmd += " >/dev/null 2>&1";
+#endif
+    return std::system(cmd.c_str()) == 0;
 }
 
 std::string languageDisplayName(const std::string& languageCode) {
@@ -1551,6 +1656,12 @@ MainWindow::SessionState MainWindow::captureSessionState() {
         state.documentsTabActive = rightPane_->isDocumentsTabActive();
         state.documentPath = rightPane_->currentDocumentPath();
     }
+    if (documentRestoreScheduled_) {
+        state.documentsTabActive = pendingDocumentsTabActive_;
+        if (!pendingDocumentRestorePath_.empty()) {
+            state.documentPath = pendingDocumentRestorePath_;
+        }
+    }
 
     int sharedBiblePaneWidth = biblePane_ ? biblePane_->w() : 0;
     for (const auto& ctx : studyTabs_) {
@@ -1791,6 +1902,16 @@ int MainWindow::handle(int event) {
     }
 
     if (event == FL_SHORTCUT) {
+        const bool ctrl = (Fl::event_state() & FL_CTRL) != 0;
+        const int key = Fl::event_key();
+        if (ctrl && (key == 'p' || key == 'P')) {
+            onViewParallel(nullptr, this);
+            return 1;
+        }
+        if (ctrl && (key == 't' || key == 'T')) {
+            onViewNewStudyTab(nullptr, this);
+            return 1;
+        }
         if (Fl::event_key() == FL_Escape) {
             hideWordInfo();
             return 1;
@@ -1870,16 +1991,192 @@ void MainWindow::onDeferredDocumentRestore(void* data) {
     self->restoreDeferredDocumentSession();
 }
 
+bool MainWindow::exportSettingsArchive(const std::string& archivePath,
+                                       std::string& errorMessage) {
+    errorMessage.clear();
+    if (!app_) {
+        errorMessage = "Application state is not available.";
+        return false;
+    }
+
+    fs::path destination(archivePath);
+    if (destination.empty()) {
+        errorMessage = "Choose a destination for the settings archive.";
+        return false;
+    }
+
+    if (!destination.parent_path().empty() &&
+        !ensureDirectoryExists(destination.parent_path().string())) {
+        errorMessage = "Failed to prepare the destination directory.";
+        return false;
+    }
+
+    app_->tagManager().save();
+    app_->savePreferences();
+
+    fs::path configDir(app_->getConfigDir());
+    fs::path prefsPath = configDir / "preferences.conf";
+    fs::path tagsPath = configDir / "tags.db";
+    fs::path studypadPath = configDir / "studypad";
+
+    std::error_code ec;
+    if (!fs::exists(prefsPath, ec) || ec) {
+        errorMessage = "preferences.conf was not found in the config directory.";
+        return false;
+    }
+
+    std::string tempDir = makeUniqueTempDir("verdad-settings-export-");
+    if (tempDir.empty()) {
+        errorMessage = "Failed to create a temporary export directory.";
+        return false;
+    }
+
+    auto cleanup = [&]() {
+        std::error_code cleanupError;
+        fs::remove_all(fs::path(tempDir), cleanupError);
+    };
+
+    fs::path stagingDir(tempDir);
+    if (!copyBinaryFile(prefsPath.string(), (stagingDir / "preferences.conf").string())) {
+        cleanup();
+        errorMessage = "Failed to stage preferences.conf for export.";
+        return false;
+    }
+
+    bool includeTagsDb = fs::exists(tagsPath, ec) && !ec;
+    if (includeTagsDb &&
+        !copyBinaryFile(tagsPath.string(), (stagingDir / "tags.db").string())) {
+        cleanup();
+        errorMessage = "Failed to stage tags.db for export.";
+        return false;
+    }
+
+    fs::path stagingStudypad = stagingDir / "studypad";
+    if (fs::exists(studypadPath, ec) && !ec) {
+        if (!copyDirectoryRecursive(studypadPath.string(), stagingStudypad.string())) {
+            cleanup();
+            errorMessage = "Failed to stage the studypad directory for export.";
+            return false;
+        }
+    } else if (!ensureDirectoryExists(stagingStudypad.string())) {
+        cleanup();
+        errorMessage = "Failed to create an empty studypad staging directory.";
+        return false;
+    }
+
+    std::error_code removeError;
+    fs::remove(destination, removeError);
+
+    if (!runZipArchive(stagingDir.string(), destination.string(), includeTagsDb)) {
+        cleanup();
+        errorMessage = "zip failed to create the settings archive.";
+        return false;
+    }
+
+    cleanup();
+    return true;
+}
+
+bool MainWindow::importSettingsArchive(const std::string& archivePath,
+                                       std::string& errorMessage) {
+    errorMessage.clear();
+    if (!app_) {
+        errorMessage = "Application state is not available.";
+        return false;
+    }
+
+    fs::path archive(archivePath);
+    std::error_code ec;
+    if (!fs::exists(archive, ec) || ec) {
+        errorMessage = "The selected settings archive does not exist.";
+        return false;
+    }
+
+    std::string tempDir = makeUniqueTempDir("verdad-settings-import-");
+    if (tempDir.empty()) {
+        errorMessage = "Failed to create a temporary import directory.";
+        return false;
+    }
+
+    auto cleanup = [&]() {
+        std::error_code cleanupError;
+        fs::remove_all(fs::path(tempDir), cleanupError);
+    };
+
+    if (!runUnzipArchive(archive.string(), tempDir)) {
+        cleanup();
+        errorMessage = "unzip failed to extract the selected archive.";
+        return false;
+    }
+
+    fs::path extractedDir(tempDir);
+    fs::path extractedPrefs = extractedDir / "preferences.conf";
+    fs::path extractedTags = extractedDir / "tags.db";
+    fs::path extractedStudypad = extractedDir / "studypad";
+    if (!fs::exists(extractedPrefs, ec) || ec) {
+        cleanup();
+        errorMessage = "The archive does not contain preferences.conf.";
+        return false;
+    }
+
+    fs::path configDir(app_->getConfigDir());
+    if (!ensureDirectoryExists(configDir.string())) {
+        cleanup();
+        errorMessage = "Failed to prepare the application config directory.";
+        return false;
+    }
+
+    if (!copyBinaryFile(extractedPrefs.string(),
+                        (configDir / "preferences.conf").string())) {
+        cleanup();
+        errorMessage = "Failed to copy preferences.conf into the config directory.";
+        return false;
+    }
+
+    if (fs::exists(extractedTags, ec) && !ec) {
+        if (!copyBinaryFile(extractedTags.string(),
+                            (configDir / "tags.db").string())) {
+            cleanup();
+            errorMessage = "Failed to copy tags.db into the config directory.";
+            return false;
+        }
+    }
+
+    if (fs::exists(extractedStudypad, ec) && !ec) {
+        if (!copyDirectoryRecursive(extractedStudypad.string(),
+                                    (configDir / "studypad").string())) {
+            cleanup();
+            errorMessage = "Failed to copy the studypad directory into the config directory.";
+            return false;
+        }
+    }
+
+    cleanup();
+
+    fs::path tagsPath = configDir / "tags.db";
+    if (fs::exists(tagsPath, ec) && !ec) {
+        app_->tagManager().load(tagsPath.string());
+    }
+
+    if (!app_->loadPreferencesFromFile((configDir / "preferences.conf").string(), true)) {
+        errorMessage = "Failed to apply the imported preferences.";
+        return false;
+    }
+
+    refresh();
+    app_->savePreferences();
+    return true;
+}
+
 void MainWindow::buildMenu() {
     menuBar_->add("&File/&New Studypad", FL_CTRL + 'n', onFileNewDocument, this);
     menuBar_->add("&File/&Save Studypad", FL_CTRL + 's', onFileSaveDocument, this);
     menuBar_->add("&File/&Export Studypad to ODT...", 0, onFileExportDocumentOdt, this);
-    menuBar_->add("&File/&Module Manager...", 0, onFileModuleManager, this);
     menuBar_->add("&File/&Quit", FL_CTRL + 'q', onFileQuit, this);
-    menuBar_->add("&Navigate/&Go to Verse...", FL_CTRL + 'g', onNavigateGo, this);
-    menuBar_->add("&View/&Parallel Bibles", FL_CTRL + 'p', onViewParallel, this);
-    menuBar_->add("&View/&Settings...", 0, onViewSettings, this);
-    menuBar_->add("&View/&New Study Tab", FL_CTRL + 't', onViewNewStudyTab, this);
+    menuBar_->add("&Tools/&Module Manager...", 0, onFileModuleManager, this);
+    menuBar_->add("&Tools/&Settings...", 0, onViewSettings, this);
+    menuBar_->add("&Tools/&Import Settings...", 0, onToolsImportSettings, this);
+    menuBar_->add("&Tools/&Export Settings...", 0, onToolsExportSettings, this);
     menuBar_->add("&Help/&Help Topics", FL_F + 1, onHelpSearch, this);
     menuBar_->add("&Help/&About Verdad", 0, onHelpAbout, this);
 }
@@ -1915,12 +2212,78 @@ void MainWindow::onFileExportDocumentOdt(Fl_Widget* /*w*/, void* data) {
     self->rightPane_->exportDocumentToOdt();
 }
 
-void MainWindow::onNavigateGo(Fl_Widget* /*w*/, void* data) {
+void MainWindow::onToolsImportSettings(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<MainWindow*>(data);
-    const char* ref = fl_input("Go to verse:", "Genesis 1:1");
-    if (ref && ref[0]) {
-        self->navigateTo(ref);
+    if (!self) return;
+
+    Fl_Native_File_Chooser chooser;
+    chooser.title("Import Settings");
+    chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
+    chooser.filter("ZIP Files\t*.{zip,ZIP}\nAll Files\t*");
+
+    int result = chooser.show();
+    if (result != 0) {
+        if (result < 0) fl_alert("Unable to open the file chooser.");
+        return;
     }
+
+    std::string path = chooser.filename() ? chooser.filename() : "";
+    if (path.empty()) return;
+
+    int confirm = fl_choice("Import settings from \"%s\"?\n\n"
+                            "This will replace the current preferences, tags, and studypads, "
+                            "then reopen the imported study tabs.\n"
+                            "Unsaved studypad edits will be lost.",
+                            "Cancel",
+                            "Import",
+                            nullptr,
+                            pathLeaf(path).c_str());
+    if (confirm != 1) return;
+
+    std::string errorMessage;
+    if (!self->importSettingsArchive(path, errorMessage)) {
+        fl_alert("Failed to import settings:\n%s", errorMessage.c_str());
+        return;
+    }
+
+    self->showTransientStatus("Imported settings", 2.8);
+}
+
+void MainWindow::onToolsExportSettings(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<MainWindow*>(data);
+    if (!self) return;
+
+    Fl_Native_File_Chooser chooser;
+    chooser.title("Export Settings Directory");
+    chooser.type(Fl_Native_File_Chooser::BROWSE_DIRECTORY);
+
+    int result = chooser.show();
+    if (result != 0) {
+        if (result < 0) fl_alert("Unable to open the file chooser.");
+        return;
+    }
+
+    std::string directory = chooser.filename() ? chooser.filename() : "";
+    if (directory.empty()) return;
+
+    fs::path archivePath = fs::path(directory) / "verdad_settings.zip";
+    std::error_code ec;
+    if (fs::exists(archivePath, ec) && !ec) {
+        int overwrite = fl_choice("Overwrite existing file \"%s\"?",
+                                  "Cancel",
+                                  "Overwrite",
+                                  nullptr,
+                                  archivePath.filename().string().c_str());
+        if (overwrite != 1) return;
+    }
+
+    std::string errorMessage;
+    if (!self->exportSettingsArchive(archivePath.string(), errorMessage)) {
+        fl_alert("Failed to export settings:\n%s", errorMessage.c_str());
+        return;
+    }
+
+    self->showTransientStatus("Exported " + archivePath.filename().string(), 2.8);
 }
 
 void MainWindow::onViewParallel(Fl_Widget* /*w*/, void* data) {

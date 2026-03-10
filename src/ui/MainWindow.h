@@ -288,6 +288,10 @@ private:
 
     /// Build the menu bar
     void buildMenu();
+    bool exportSettingsArchive(const std::string& archivePath,
+                               std::string& errorMessage);
+    bool importSettingsArchive(const std::string& archivePath,
+                               std::string& errorMessage);
     void scheduleDeferredDocumentRestore(const std::string& path,
                                          bool documentsTabActive);
     void restoreDeferredDocumentSession();
@@ -298,7 +302,8 @@ private:
     static void onFileNewDocument(Fl_Widget* w, void* data);
     static void onFileSaveDocument(Fl_Widget* w, void* data);
     static void onFileExportDocumentOdt(Fl_Widget* w, void* data);
-    static void onNavigateGo(Fl_Widget* w, void* data);
+    static void onToolsImportSettings(Fl_Widget* w, void* data);
+    static void onToolsExportSettings(Fl_Widget* w, void* data);
     static void onViewParallel(Fl_Widget* w, void* data);
     static void onViewSettings(Fl_Widget* w, void* data);
     static void onViewNewStudyTab(Fl_Widget* w, void* data);

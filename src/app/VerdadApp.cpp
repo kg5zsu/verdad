@@ -31,6 +31,8 @@
 namespace verdad {
 namespace {
 
+using PreferenceMap = std::unordered_map<std::string, std::string>;
+
 std::string trimCopy(const std::string& s) {
     size_t start = 0;
     while (start < s.size() &&
@@ -210,6 +212,95 @@ std::string escapeCssString(const std::string& text) {
     return out;
 }
 
+bool readPreferencesFile(const std::string& prefFile, PreferenceMap& prefsOut) {
+    std::ifstream file(prefFile);
+    if (!file.is_open()) return false;
+
+    prefsOut.clear();
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty() || line[0] == '#') continue;
+
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+
+        std::string key = trimCopy(line.substr(0, eq));
+        std::string value = line.substr(eq + 1);
+        prefsOut[key] = value;
+    }
+    return true;
+}
+
+MainWindow::SessionState sessionStateFromPreferences(const PreferenceMap& prefs) {
+    auto lookup = [&](const std::string& key) -> std::string {
+        auto it = prefs.find(key);
+        return it != prefs.end() ? it->second : std::string();
+    };
+
+    MainWindow::SessionState state;
+    state.windowX = parseIntOr(lookup("window_x"), -1);
+    state.windowY = parseIntOr(lookup("window_y"), -1);
+    state.windowW = parseIntOr(lookup("window_w"), 1200);
+    state.windowH = parseIntOr(lookup("window_h"), 800);
+    state.leftPaneWidth = parseIntOr(lookup("left_pane_w"), 300);
+    state.leftPanePreviewHeight = parseIntOr(lookup("left_pane_preview_h"), 150);
+    state.activeStudyTab = parseIntOr(lookup("active_study_tab"), 0);
+    state.documentsTabActive = parseBoolOr(lookup("documents_tab_active"), false);
+    state.documentPath = lookup("document_path");
+
+    int tabCount = std::max(0, parseIntOr(lookup("study_tab_count"), 0));
+    tabCount = std::min(tabCount, 64);
+    for (int i = 0; i < tabCount; ++i) {
+        std::string pfx = "study_tab_" + std::to_string(i) + "_";
+        MainWindow::StudyTabState tab;
+        auto lookup = [&](const std::string& key) -> std::string {
+            auto it = prefs.find(pfx + key);
+            return it != prefs.end() ? it->second : std::string();
+        };
+
+        tab.module = lookup("module");
+        tab.book = lookup("book");
+        tab.chapter = parseIntOr(lookup("chapter"), 1);
+        tab.verse = parseIntOr(lookup("verse"), 1);
+        tab.paragraphMode = parseBoolOr(lookup("paragraph_mode"), false);
+        tab.parallelMode = parseBoolOr(lookup("parallel_mode"), false);
+        tab.parallelModules = splitCsv(lookup("parallel_modules"));
+        tab.biblePaneWidth = parseIntOr(lookup("bible_pane_w"), 0);
+        tab.bibleScrollY = parseIntOr(lookup("bible_scroll_y"), -1);
+        tab.commentaryModule = lookup("commentary_module");
+        tab.commentaryReference = lookup("commentary_ref");
+        tab.commentaryScrollY = parseIntOr(lookup("commentary_scroll_y"), -1);
+        tab.dictionaryModule = lookup("dictionary_module");
+        tab.dictionaryKey = lookup("dictionary_key");
+        tab.generalBookModule = lookup("general_book_module");
+        tab.generalBookKey = lookup("general_book_key");
+        tab.dictionaryPaneHeight = parseIntOr(lookup("dictionary_pane_h"), 0);
+        std::string activeRaw = lookup("general_book_active");
+        if (activeRaw.empty()) activeRaw = lookup("dictionary_active");
+        tab.dictionaryActive = parseBoolOr(activeRaw, false);
+        state.studyTabs.push_back(std::move(tab));
+    }
+
+    return state;
+}
+
+void preserveCurrentLayout(MainWindow::SessionState& imported,
+                           const MainWindow::SessionState& current) {
+    imported.windowX = current.windowX;
+    imported.windowY = current.windowY;
+    imported.windowW = current.windowW;
+    imported.windowH = current.windowH;
+    imported.leftPaneWidth = current.leftPaneWidth;
+    imported.leftPanePreviewHeight = current.leftPanePreviewHeight;
+
+    for (auto& tab : imported.studyTabs) {
+        tab.biblePaneWidth = 0;
+        tab.dictionaryPaneHeight = 0;
+        tab.bibleScrollY = -1;
+        tab.commentaryScrollY = -1;
+    }
+}
+
 } // namespace
 
 VerdadApp* VerdadApp::instance_ = nullptr;
@@ -340,61 +431,66 @@ void VerdadApp::ensureConfigDir() {
 }
 
 void VerdadApp::loadPreferences() {
-    std::string prefFile = getConfigDir() + "/preferences.conf";
-    std::ifstream file(prefFile);
-    if (!file.is_open()) return;
+    loadPreferencesFromFile(getConfigDir() + "/preferences.conf", false);
+}
 
-    std::unordered_map<std::string, std::string> prefs;
-    std::string line;
-    while (std::getline(file, line)) {
-        if (line.empty() || line[0] == '#') continue;
+bool VerdadApp::loadPreferencesFromFile(const std::string& prefFile,
+                                        bool preserveLayout) {
+    PreferenceMap prefs;
+    if (!readPreferencesFile(prefFile, prefs)) return false;
+    return applyPreferencesMap(prefs, preserveLayout);
+}
 
-        size_t eq = line.find('=');
-        if (eq == std::string::npos) continue;
+bool VerdadApp::applyPreferencesMap(const PreferenceMap& prefs,
+                                    bool preserveLayout) {
+    if (!mainWindow_) return false;
 
-        std::string key = trimCopy(line.substr(0, eq));
-        std::string value = line.substr(eq + 1);
-        prefs[key] = value;
+    auto lookup = [&](const std::string& key) -> std::string {
+        auto it = prefs.find(key);
+        return it != prefs.end() ? it->second : std::string();
+    };
+
+    AppearanceSettings importedAppearance = appearanceSettings_;
+    importedAppearance.appFontName =
+        normalizeAppFontName(lookup("app_font"));
+    importedAppearance.appFontSize =
+        clampFontSize(parseIntOr(lookup("app_font_size"),
+                                 importedAppearance.appFontSize));
+    if (!lookup("text_font_family").empty()) {
+        importedAppearance.textFontFamily = lookup("text_font_family");
     }
+    importedAppearance.textFontSize =
+        clampFontSize(parseIntOr(lookup("text_font_size"),
+                                 importedAppearance.textFontSize));
+    importedAppearance.hoverDelayMs =
+        clampHoverDelayMs(parseIntOr(lookup("hover_delay_ms"),
+                                     importedAppearance.hoverDelayMs));
+    importedAppearance.editorIndentWidth =
+        clampEditorIndentWidth(parseIntOr(lookup("editor_indent_width"),
+                                          importedAppearance.editorIndentWidth));
 
-    if (!mainWindow_) return;
+    OptionDisplaySettings importedOptions = optionDisplaySettings_;
+    importedOptions.showStrongsMarkers =
+        parseBoolOr(lookup("show_strongs_markers"),
+                    importedOptions.showStrongsMarkers);
+    importedOptions.showMorphMarkers =
+        parseBoolOr(lookup("show_morph_markers"),
+                    importedOptions.showMorphMarkers);
+    importedOptions.showFootnoteMarkers =
+        parseBoolOr(lookup("show_footnote_markers"),
+                    importedOptions.showFootnoteMarkers);
+    importedOptions.showCrossReferenceMarkers =
+        parseBoolOr(lookup("show_cross_reference_markers"),
+                    importedOptions.showCrossReferenceMarkers);
 
-    appearanceSettings_.appFontName =
-        normalizeAppFontName(prefs["app_font"]);
-    appearanceSettings_.appFontSize =
-        clampFontSize(parseIntOr(prefs["app_font_size"],
-                                 appearanceSettings_.appFontSize));
-    if (!prefs["text_font_family"].empty()) {
-        appearanceSettings_.textFontFamily = prefs["text_font_family"];
-    }
-    appearanceSettings_.textFontSize =
-        clampFontSize(parseIntOr(prefs["text_font_size"],
-                                 appearanceSettings_.textFontSize));
-    appearanceSettings_.hoverDelayMs =
-        clampHoverDelayMs(parseIntOr(prefs["hover_delay_ms"],
-                                     appearanceSettings_.hoverDelayMs));
-    appearanceSettings_.editorIndentWidth =
-        clampEditorIndentWidth(parseIntOr(prefs["editor_indent_width"],
-                                          appearanceSettings_.editorIndentWidth));
-    optionDisplaySettings_.showStrongsMarkers =
-        parseBoolOr(prefs["show_strongs_markers"],
-                    optionDisplaySettings_.showStrongsMarkers);
-    optionDisplaySettings_.showMorphMarkers =
-        parseBoolOr(prefs["show_morph_markers"],
-                    optionDisplaySettings_.showMorphMarkers);
-    optionDisplaySettings_.showFootnoteMarkers =
-        parseBoolOr(prefs["show_footnote_markers"],
-                    optionDisplaySettings_.showFootnoteMarkers);
-    optionDisplaySettings_.showCrossReferenceMarkers =
-        parseBoolOr(prefs["show_cross_reference_markers"],
-                    optionDisplaySettings_.showCrossReferenceMarkers);
-    previewDictionarySettings_.greekModule =
-        normalizePreviewDictionaryModule(prefs["preview_dict_greek"],
-                                         previewDictionarySettings_.greekModule.c_str());
-    previewDictionarySettings_.hebrewModule =
-        normalizePreviewDictionaryModule(prefs["preview_dict_hebrew"],
-                                         previewDictionarySettings_.hebrewModule.c_str());
-    previewDictionarySettings_.languageModules.clear();
+    PreviewDictionarySettings importedPreview = previewDictionarySettings_;
+    importedPreview.greekModule =
+        normalizePreviewDictionaryModule(lookup("preview_dict_greek"),
+                                         importedPreview.greekModule.c_str());
+    importedPreview.hebrewModule =
+        normalizePreviewDictionaryModule(lookup("preview_dict_hebrew"),
+                                         importedPreview.hebrewModule.c_str());
+    importedPreview.languageModules.clear();
     for (const auto& kv : prefs) {
         static const std::string prefix = "default_dict_lang_";
         if (kv.first.compare(0, prefix.size(), prefix) != 0) continue;
@@ -402,57 +498,22 @@ void VerdadApp::loadPreferences() {
         std::string code = normalizeLanguageCode(kv.first.substr(prefix.size()));
         std::string module = trimCopy(kv.second);
         if (!code.empty() && !module.empty()) {
-            previewDictionarySettings_.languageModules[code] = module;
+            importedPreview.languageModules[code] = module;
         }
     }
-    setPreviewDictionarySettings(previewDictionarySettings_);
+    setPreviewDictionarySettings(importedPreview);
+    setOptionDisplaySettings(importedOptions);
 
     // New session format: restore full window/tabs/splitter state.
     if (prefs.find("study_tab_count") != prefs.end()) {
-        MainWindow::SessionState state;
-        state.windowX = parseIntOr(prefs["window_x"], -1);
-        state.windowY = parseIntOr(prefs["window_y"], -1);
-        state.windowW = parseIntOr(prefs["window_w"], 1200);
-        state.windowH = parseIntOr(prefs["window_h"], 800);
-        state.leftPaneWidth = parseIntOr(prefs["left_pane_w"], 300);
-        state.leftPanePreviewHeight = parseIntOr(prefs["left_pane_preview_h"], 150);
-        state.activeStudyTab = parseIntOr(prefs["active_study_tab"], 0);
-        state.documentsTabActive = parseBoolOr(prefs["documents_tab_active"], false);
-        state.documentPath = prefs["document_path"];
-
-        int tabCount = std::max(0, parseIntOr(prefs["study_tab_count"], 0));
-        tabCount = std::min(tabCount, 64);
-        for (int i = 0; i < tabCount; ++i) {
-            std::string pfx = "study_tab_" + std::to_string(i) + "_";
-            MainWindow::StudyTabState tab;
-            tab.module = prefs[pfx + "module"];
-            tab.book = prefs[pfx + "book"];
-            tab.chapter = parseIntOr(prefs[pfx + "chapter"], 1);
-            tab.verse = parseIntOr(prefs[pfx + "verse"], 1);
-            tab.paragraphMode = parseBoolOr(prefs[pfx + "paragraph_mode"], false);
-            tab.parallelMode = parseBoolOr(prefs[pfx + "parallel_mode"], false);
-            tab.parallelModules = splitCsv(prefs[pfx + "parallel_modules"]);
-            tab.biblePaneWidth = parseIntOr(prefs[pfx + "bible_pane_w"], 0);
-            tab.bibleScrollY = parseIntOr(prefs[pfx + "bible_scroll_y"], -1);
-            tab.commentaryModule = prefs[pfx + "commentary_module"];
-            tab.commentaryReference = prefs[pfx + "commentary_ref"];
-            tab.commentaryScrollY = parseIntOr(prefs[pfx + "commentary_scroll_y"], -1);
-            tab.dictionaryModule = prefs[pfx + "dictionary_module"];
-            tab.dictionaryKey = prefs[pfx + "dictionary_key"];
-            tab.generalBookModule = prefs[pfx + "general_book_module"];
-            tab.generalBookKey = prefs[pfx + "general_book_key"];
-            tab.dictionaryPaneHeight = parseIntOr(prefs[pfx + "dictionary_pane_h"], 0);
-            // Backward-compatible key name: dictionary_active now maps to
-            // "secondary right tab active" (General Books).
-            std::string activeRaw = prefs[pfx + "general_book_active"];
-            if (activeRaw.empty()) activeRaw = prefs[pfx + "dictionary_active"];
-            tab.dictionaryActive = parseBoolOr(activeRaw, false);
-            state.studyTabs.push_back(tab);
+        MainWindow::SessionState state = sessionStateFromPreferences(prefs);
+        if (preserveLayout && mainWindow_) {
+            preserveCurrentLayout(state, mainWindow_->captureSessionState());
         }
 
         mainWindow_->restoreSessionState(state);
-        setAppearanceSettings(appearanceSettings_);
-        return;
+        setAppearanceSettings(importedAppearance);
+        return true;
     }
 
     // Legacy format fallback.
@@ -474,7 +535,8 @@ void VerdadApp::loadPreferences() {
         }
     }
 
-    setAppearanceSettings(appearanceSettings_);
+    setAppearanceSettings(importedAppearance);
+    return true;
 }
 
 void VerdadApp::savePreferences() {
