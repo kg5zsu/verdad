@@ -228,6 +228,7 @@ private:
     Fl_Button* documentNewButton_;
     Fl_Button* documentSaveButton_;
     Fl_Button* documentExportButton_;
+    Fl_Button* documentDeleteButton_;
     HtmlEditorWidget* documentsEditor_;
     std::vector<std::string> documentChoicePaths_;
     std::string currentDocumentPath_;
@@ -264,6 +265,7 @@ private:
     bool saveCommentaryEdit(bool exitEditMode);
     void cancelCommentaryEdit();
     bool maybeSaveDocumentChanges();
+    bool deleteCurrentDocument();
     bool saveDocumentAs();
     bool saveDocumentToPath(const std::string& path);
     bool exportDocumentToOdtPath(const std::string& path);
@@ -288,6 +290,7 @@ private:
     static void onDocumentNew(Fl_Widget* w, void* data);
     static void onDocumentSave(Fl_Widget* w, void* data);
     static void onDocumentExportOdt(Fl_Widget* w, void* data);
+    static void onDocumentDelete(Fl_Widget* w, void* data);
 };
 
 } // namespace verdad

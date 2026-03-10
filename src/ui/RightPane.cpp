@@ -12,6 +12,7 @@
 
 #include <FL/Fl.H>
 #include <FL/Fl_Native_File_Chooser.H>
+#include <FL/Fl_SVG_Image.H>
 #include <FL/fl_ask.H>
 
 #include <algorithm>
@@ -28,6 +29,11 @@ namespace verdad {
 namespace {
 
 namespace fs = std::filesystem;
+
+constexpr int kStudypadToolbarButtonW = 32;
+constexpr int kStudypadToolbarButtonH = 26;
+constexpr int kStudypadToolbarIconSize = 22;
+constexpr int kStudypadToolbarButtonGap = 2;
 
 std::string composeCss(const std::string& base, const std::string& extra) {
     if (base.empty()) return extra;
@@ -91,6 +97,80 @@ public:
 private:
     ResizeCallback resizeCb_;
 };
+
+enum class StudypadToolbarIcon {
+    New,
+    Save,
+    Export,
+    Delete,
+};
+
+std::string studypadToolbarIconSvg(StudypadToolbarIcon icon) {
+    switch (icon) {
+    case StudypadToolbarIcon::New:
+        return R"SVG(
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <path d="M4 1.5h5l3 3v10H4z" fill="none" stroke="#2563eb" stroke-width="1.4" stroke-linejoin="round"/>
+  <path d="M9 1.5V5h3" fill="none" stroke="#2563eb" stroke-width="1.4" stroke-linejoin="round"/>
+  <path d="M8 7v4M6 9h4" fill="none" stroke="#2563eb" stroke-width="1.6" stroke-linecap="round"/>
+</svg>
+)SVG";
+    case StudypadToolbarIcon::Save:
+        return R"SVG(
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <path d="M2.5 2.5h9l2 2v9h-11z" fill="none" stroke="#16a34a" stroke-width="1.4" stroke-linejoin="round"/>
+  <path d="M5 2.5h5v3H5z" fill="none" stroke="#16a34a" stroke-width="1.2" stroke-linejoin="round"/>
+  <path d="M5 10.5h6" fill="none" stroke="#16a34a" stroke-width="1.6" stroke-linecap="round"/>
+</svg>
+)SVG";
+    case StudypadToolbarIcon::Export:
+        return R"SVG(
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <path d="M3 12.5h10" fill="none" stroke="#d97706" stroke-width="1.4" stroke-linecap="round"/>
+  <path d="M8 3.5v6" fill="none" stroke="#d97706" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M5.5 7l2.5 2.5L10.5 7" fill="none" stroke="#d97706" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M3.5 2.5h9v8h-9z" fill="none" stroke="#d97706" stroke-width="1.2" stroke-linejoin="round" opacity="0.75"/>
+</svg>
+)SVG";
+    case StudypadToolbarIcon::Delete:
+        return R"SVG(
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6" fill="none" stroke="#dc2626" stroke-width="2.1" stroke-linecap="round"/>
+</svg>
+)SVG";
+    }
+    return "";
+}
+
+Fl_SVG_Image* makeStudypadToolbarIcon(StudypadToolbarIcon icon) {
+    std::string svg = studypadToolbarIconSvg(icon);
+    auto* image = new Fl_SVG_Image(nullptr, svg.c_str());
+    if (image->fail()) {
+        delete image;
+        return nullptr;
+    }
+    image->scale(kStudypadToolbarIconSize, kStudypadToolbarIconSize, 1, 1);
+    return image;
+}
+
+void configureStudypadToolbarButton(Fl_Button* button, StudypadToolbarIcon icon) {
+    if (!button) return;
+
+    Fl_SVG_Image* image = makeStudypadToolbarIcon(icon);
+    if (!image) return;
+
+    button->bind_image(image);
+
+    Fl_Image* inactiveImage = image->copy(kStudypadToolbarIconSize, kStudypadToolbarIconSize);
+    if (inactiveImage) {
+        inactiveImage->inactive();
+        button->bind_deimage(inactiveImage);
+    }
+}
+
+int studypadToolbarButtonsWidth() {
+    return (kStudypadToolbarButtonW * 4) + (kStudypadToolbarButtonGap * 3);
+}
 
 void layoutDictionaryPaneContents(int paneX,
                                   int paneY,
@@ -440,6 +520,7 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     , documentNewButton_(nullptr)
     , documentSaveButton_(nullptr)
     , documentExportButton_(nullptr)
+    , documentDeleteButton_(nullptr)
     , documentsEditor_(nullptr)
     , currentDocumentPath_() {
     box(FL_FLAT_BOX);
@@ -527,18 +608,44 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
 
     documentsGroup_ = new Fl_Group(tileX, panelY, tileW, panelH, "Studypad");
     documentsGroup_->begin();
-    documentChoice_ = new Fl_Choice(tileX + 2, panelY + 2, tileW - 98, choiceH);
+    documentChoice_ = new Fl_Choice(tileX + 2,
+                                    panelY + 2,
+                                    std::max(20, (tileW - 4) - studypadToolbarButtonsWidth() - kStudypadToolbarButtonGap),
+                                    choiceH);
     documentChoice_->callback(onDocumentChoiceChange, this);
     documentChoice_->tooltip("Select a studypad");
-    documentNewButton_ = new Fl_Button(tileX + tileW - 94, panelY + 2, 30, choiceH, "@filenew");
+    auto* documentNewButton = new Fl_Button(tileX + tileW - studypadToolbarButtonsWidth() - 2,
+                                            panelY + 4,
+                                            kStudypadToolbarButtonW,
+                                            kStudypadToolbarButtonH);
+    configureStudypadToolbarButton(documentNewButton, StudypadToolbarIcon::New);
+    documentNewButton_ = documentNewButton;
     documentNewButton_->callback(onDocumentNew, this);
     documentNewButton_->tooltip("Create a new studypad");
-    documentSaveButton_ = new Fl_Button(tileX + tileW - 62, panelY + 2, 30, choiceH, "@filesave");
+    auto* documentSaveButton = new Fl_Button(documentNewButton->x() + kStudypadToolbarButtonW + kStudypadToolbarButtonGap,
+                                             panelY + 4,
+                                             kStudypadToolbarButtonW,
+                                             kStudypadToolbarButtonH);
+    configureStudypadToolbarButton(documentSaveButton, StudypadToolbarIcon::Save);
+    documentSaveButton_ = documentSaveButton;
     documentSaveButton_->callback(onDocumentSave, this);
     documentSaveButton_->tooltip("Save the current studypad");
-    documentExportButton_ = new Fl_Button(tileX + tileW - 30, panelY + 2, 30, choiceH, "@filesaveas");
+    auto* documentExportButton = new Fl_Button(documentSaveButton->x() + kStudypadToolbarButtonW + kStudypadToolbarButtonGap,
+                                               panelY + 4,
+                                               kStudypadToolbarButtonW,
+                                               kStudypadToolbarButtonH);
+    configureStudypadToolbarButton(documentExportButton, StudypadToolbarIcon::Export);
+    documentExportButton_ = documentExportButton;
     documentExportButton_->callback(onDocumentExportOdt, this);
     documentExportButton_->tooltip("Export the current studypad to ODT");
+    auto* documentDeleteButton = new Fl_Button(documentExportButton->x() + kStudypadToolbarButtonW + kStudypadToolbarButtonGap,
+                                               panelY + 4,
+                                               kStudypadToolbarButtonW,
+                                               kStudypadToolbarButtonH);
+    configureStudypadToolbarButton(documentDeleteButton, StudypadToolbarIcon::Delete);
+    documentDeleteButton_ = documentDeleteButton;
+    documentDeleteButton_->callback(onDocumentDelete, this);
+    documentDeleteButton_->tooltip("Delete the current studypad");
     documentsEditor_ = new HtmlEditorWidget(tileX + 2,
                                             panelY + choiceH + 4,
                                             tileW - 4,
@@ -643,7 +750,7 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
         !commentaryEditor_ || !generalBooksGroup_ || !generalBookChoice_ ||
         !generalBookTocChoice_ || !generalBookHtml_ ||
         !documentsGroup_ || !documentChoice_ || !documentNewButton_ ||
-        !documentSaveButton_ || !documentExportButton_ ||
+        !documentSaveButton_ || !documentExportButton_ || !documentDeleteButton_ ||
         !documentsEditor_) {
         return;
     }
@@ -694,20 +801,27 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
                              contentW,
                              std::max(10, panelH - (rowH * 2) - 8));
 
-    int docsButtonsW = documentNewButton_->w() + documentSaveButton_->w() +
-                       documentExportButton_->w() + (buttonGap * 2);
-    int documentChoiceW = std::max(20, contentW - docsButtonsW - buttonGap);
-    int docsButtonsX = contentX + documentChoiceW + buttonGap;
+    int docsButtonsW = studypadToolbarButtonsWidth();
+    int documentChoiceW = std::max(20, contentW - docsButtonsW - kStudypadToolbarButtonGap);
+    int docsButtonsX = contentX + documentChoiceW + kStudypadToolbarButtonGap;
+    int docsButtonY = panelY + 2 + std::max(0, (rowH - kStudypadToolbarButtonH) / 2);
     documentChoice_->resize(contentX, panelY + 2, documentChoiceW, rowH);
-    documentNewButton_->resize(docsButtonsX, panelY + 2, documentNewButton_->w(), rowH);
-    documentSaveButton_->resize(documentNewButton_->x() + documentNewButton_->w() + buttonGap,
-                                panelY + 2,
-                                documentSaveButton_->w(),
-                                rowH);
-    documentExportButton_->resize(documentSaveButton_->x() + documentSaveButton_->w() + buttonGap,
-                                  panelY + 2,
-                                  documentExportButton_->w(),
-                                  rowH);
+    documentNewButton_->resize(docsButtonsX,
+                               docsButtonY,
+                               kStudypadToolbarButtonW,
+                               kStudypadToolbarButtonH);
+    documentSaveButton_->resize(documentNewButton_->x() + kStudypadToolbarButtonW + kStudypadToolbarButtonGap,
+                                docsButtonY,
+                                kStudypadToolbarButtonW,
+                                kStudypadToolbarButtonH);
+    documentExportButton_->resize(documentSaveButton_->x() + kStudypadToolbarButtonW + kStudypadToolbarButtonGap,
+                                  docsButtonY,
+                                  kStudypadToolbarButtonW,
+                                  kStudypadToolbarButtonH);
+    documentDeleteButton_->resize(documentExportButton_->x() + kStudypadToolbarButtonW + kStudypadToolbarButtonGap,
+                                  docsButtonY,
+                                  kStudypadToolbarButtonW,
+                                  kStudypadToolbarButtonH);
     static_cast<Fl_Widget*>(documentsEditor_)
         ->resize(contentX,
                  panelY + rowH + 4,
@@ -1332,6 +1446,7 @@ void RightPane::redrawChrome() {
     if (documentNewButton_) documentNewButton_->redraw();
     if (documentSaveButton_) documentSaveButton_->redraw();
     if (documentExportButton_) documentExportButton_->redraw();
+    if (documentDeleteButton_) documentDeleteButton_->redraw();
     redraw();
 }
 
@@ -1600,11 +1715,20 @@ void RightPane::updateDocumentChrome() {
                       (documentsEditor_->isModified() ||
                        !documentsEditor_->html().empty() ||
                        !currentDocumentPath_.empty());
+    bool canDelete = false;
+    if (!currentDocumentPath_.empty() && isManagedStudypadPath(currentDocumentPath_)) {
+        std::error_code ec;
+        canDelete = fs::exists(fs::path(currentDocumentPath_), ec) && !ec;
+    }
     if (documentSaveButton_) documentSaveButton_->activate();
     if (documentNewButton_) documentNewButton_->activate();
     if (documentExportButton_) {
         if (hasContent) documentExportButton_->activate();
         else documentExportButton_->deactivate();
+    }
+    if (documentDeleteButton_) {
+        if (canDelete) documentDeleteButton_->activate();
+        else documentDeleteButton_->deactivate();
     }
 }
 
@@ -1854,6 +1978,52 @@ bool RightPane::saveDocumentAs() {
         if (overwrite != 1) return false;
     }
     return saveDocumentToPath(path);
+}
+
+bool RightPane::deleteCurrentDocument() {
+    if (!documentsEditor_ || currentDocumentPath_.empty() ||
+        !isManagedStudypadPath(currentDocumentPath_)) {
+        return false;
+    }
+
+    std::string normalizedPath = normalizePath(currentDocumentPath_);
+    std::string name = studypadDisplayName(normalizedPath);
+    std::error_code existsError;
+    bool exists = fs::exists(fs::path(normalizedPath), existsError) && !existsError;
+    if (!exists) {
+        fl_alert("The current studypad file is no longer available:\n%s",
+                 normalizedPath.c_str());
+        updateDocumentChrome();
+        return false;
+    }
+
+    std::string prompt = "Delete studypad \"%s\"?\n\n"
+                         "This permanently removes the file.";
+    if (documentsEditor_->isModified()) {
+        prompt += "\nUnsaved edits in the editor will also be lost.";
+    }
+
+    int confirm = fl_choice(prompt.c_str(), "Cancel", "Delete", nullptr, name.c_str());
+    if (confirm != 1) return false;
+
+    std::error_code removeError;
+    bool removed = fs::remove(fs::path(normalizedPath), removeError);
+    if (removeError || !removed) {
+        fl_alert("Failed to delete studypad:\n%s", normalizedPath.c_str());
+        return false;
+    }
+
+    currentDocumentPath_.clear();
+    documentsEditor_->clearDocument();
+    documentsEditor_->setModified(false);
+    refreshDocumentChoices();
+    updateDocumentChrome();
+    setDocumentsTabActive(true);
+    documentsEditor_->focusEditor();
+    if (app_ && app_->mainWindow()) {
+        app_->mainWindow()->showTransientStatus("Deleted " + name, 2.8);
+    }
+    return true;
 }
 
 bool RightPane::exportDocumentToOdtPath(const std::string& path) {
@@ -2248,6 +2418,12 @@ void RightPane::onDocumentExportOdt(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self) return;
     self->exportDocumentToOdt();
+}
+
+void RightPane::onDocumentDelete(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self) return;
+    self->deleteCurrentDocument();
 }
 
 } // namespace verdad
