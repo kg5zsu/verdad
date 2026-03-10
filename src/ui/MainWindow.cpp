@@ -2,6 +2,7 @@
 #include "app/VerdadApp.h"
 #include "ui/LeftPane.h"
 #include "ui/BiblePane.h"
+#include "ui/FilterableChoiceWidget.h"
 #include "ui/HtmlWidget.h"
 #include "ui/RightPane.h"
 #include "ui/ModuleManagerDialog.h"
@@ -2360,18 +2361,7 @@ void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
     int labelX = groupX + groupPadX;
     int fieldX = groupX + fieldXOffset;
 
-    const auto& fonts = self->app_->systemFontFamilies();
-    auto addFontChoices = [&fonts](Fl_Choice* choice) {
-        for (const auto& f : fonts) {
-            std::string escaped = f;
-            size_t pos = 0;
-            while ((pos = escaped.find('/', pos)) != std::string::npos) {
-                escaped.replace(pos, 1, "\\/");
-                pos += 2;
-            }
-            choice->add(escaped.c_str());
-        }
-    };
+    const std::vector<std::string> fonts = self->app_->systemFontFamilies();
 
     Fl_Group* appearanceTab =
         new Fl_Group(groupX, groupY, groupW, groupH, "Appearance");
@@ -2380,10 +2370,10 @@ void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
     int rowY = groupY + groupPadY;
     Fl_Box* appFontLabel = new Fl_Box(labelX, rowY, labelW, 24, "Application font:");
     appFontLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-    Fl_Choice* appFontChoice = new Fl_Choice(fieldX, rowY, fieldW, 24);
-    addFontChoices(appFontChoice);
-    int appFontIdx = findChoiceIndexByLabel(appFontChoice, current.appFontName);
-    appFontChoice->value(appFontIdx >= 0 ? appFontIdx : 0);
+    auto* appFontChoice = new FilterableChoiceWidget(fieldX, rowY, fieldW, 24);
+    appFontChoice->setNoMatchesLabel("No matching fonts");
+    appFontChoice->setItems(fonts);
+    appFontChoice->setSelectedValue(current.appFontName);
     rowY += rowStep;
 
     Fl_Box* appSizeLabel = new Fl_Box(labelX, rowY, labelW, 24, "Application size:");
@@ -2397,10 +2387,10 @@ void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
 
     Fl_Box* textFontLabel = new Fl_Box(labelX, rowY, labelW, 24, "Text font:");
     textFontLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-    Fl_Choice* textFontChoice = new Fl_Choice(fieldX, rowY, fieldW, 24);
-    addFontChoices(textFontChoice);
-    int textFontIdx = findChoiceIndexByLabel(textFontChoice, current.textFontFamily);
-    textFontChoice->value(textFontIdx >= 0 ? textFontIdx : 0);
+    auto* textFontChoice = new FilterableChoiceWidget(fieldX, rowY, fieldW, 24);
+    textFontChoice->setNoMatchesLabel("No matching fonts");
+    textFontChoice->setItems(fonts);
+    textFontChoice->setSelectedValue(current.textFontFamily);
     rowY += rowStep;
 
     Fl_Box* textSizeLabel = new Fl_Box(labelX, rowY, labelW, 24, "Text size:");
@@ -2551,16 +2541,15 @@ void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
         VerdadApp::AppearanceSettings updated = current;
         VerdadApp::PreviewDictionarySettings updatedPreview = currentPreview;
 
-        const Fl_Menu_Item* appFontItem = appFontChoice->mvalue();
-        if (appFontItem && appFontItem->label()) {
-            updated.appFontName = appFontItem->label();
+        std::string appFontName = appFontChoice->selectedValue();
+        if (!appFontName.empty()) {
+            updated.appFontName = appFontName;
         }
-        // Keep current name if nothing selected
         updated.appFontSize = static_cast<int>(appSizeSpinner->value());
 
-        const Fl_Menu_Item* textFontItem = textFontChoice->mvalue();
-        if (textFontItem && textFontItem->label()) {
-            updated.textFontFamily = textFontItem->label();
+        std::string textFontName = textFontChoice->selectedValue();
+        if (!textFontName.empty()) {
+            updated.textFontFamily = textFontName;
         }
         updated.textFontSize = static_cast<int>(textSizeSpinner->value());
         updated.textLineHeight = textLineHeightSpinner->value();

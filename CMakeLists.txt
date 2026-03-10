@@ -48,6 +48,7 @@ set(SOURCES
     src/search/SearchIndexer.cpp
     src/tags/TagManager.cpp
     src/ui/MainWindow.cpp
+    src/ui/FilterableChoiceWidget.cpp
     src/ui/StyledTabs.cpp
     src/ui/ModuleManagerDialog.cpp
     src/ui/HtmlWidget.cpp
@@ -68,6 +69,7 @@ set(HEADERS
     src/search/SearchIndexer.h
     src/tags/TagManager.h
     src/ui/MainWindow.h
+    src/ui/FilterableChoiceWidget.h
     src/ui/StyledTabs.h
     src/ui/ModuleManagerDialog.h
     src/ui/HtmlWidget.h

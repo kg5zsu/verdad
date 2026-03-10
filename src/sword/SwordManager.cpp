@@ -2471,6 +2471,12 @@ SwordManager::~SwordManager() = default;
 bool SwordManager::initialize() {
     std::lock_guard<std::mutex> lock(mutex_);
     try {
+        postProcessCache_.clear();
+        postProcessLru_.clear();
+        verseHtmlCache_.clear();
+        verseHtmlLru_.clear();
+        dictionaryKeyCache_.clear();
+
         // Create SWORD manager with XHTML markup filter
         mgr_ = std::make_unique<sword::SWMgr>(
             new sword::MarkupFilterMgr(sword::FMT_XHTML));
@@ -3110,7 +3116,9 @@ bool SwordManager::setRawEntry(const std::string& moduleName,
     } else {
         mod->setEntry(text.c_str());
     }
-    return !mod->popError();
+    bool ok = !mod->popError();
+    if (ok) dictionaryKeyCache_.erase(moduleName);
+    return ok;
 }
 
 bool SwordManager::deleteEntry(const std::string& moduleName,
@@ -3123,14 +3131,72 @@ bool SwordManager::deleteEntry(const std::string& moduleName,
     if (mod->popError()) return false;
 
     mod->deleteEntry();
-    return !mod->popError();
+    bool ok = !mod->popError();
+    if (ok) dictionaryKeyCache_.erase(moduleName);
+    return ok;
+}
+
+std::vector<std::string> SwordManager::getDictionaryKeys(
+        const std::string& moduleName) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto cached = dictionaryKeyCache_.find(moduleName);
+    if (cached != dictionaryKeyCache_.end()) {
+        return cached->second;
+    }
+
+    std::vector<std::string> keys;
+    sword::SWModule* mod = getModule(moduleName);
+    if (!mod) return keys;
+
+    if (std::unique_ptr<sword::SWKey> createdKey(mod->createKey());
+        createdKey) {
+        if (auto* treeKey = dynamic_cast<sword::TreeKey*>(createdKey.get())) {
+            std::vector<GeneralBookTocEntry> toc;
+            treeKey->root();
+            if (treeKey->hasChildren() && treeKey->firstChild()) {
+                appendGeneralBookTocEntries(treeKey, 0, toc);
+            }
+            keys.reserve(toc.size());
+            for (const auto& entry : toc) {
+                std::string key = trimCopy(entry.key);
+                if (!key.empty()) keys.push_back(std::move(key));
+            }
+        } else {
+            std::unique_ptr<sword::SWKey> restoreKey(
+                mod->getKey() ? mod->getKey()->clone() : nullptr);
+            mod->setPosition(sword::TOP);
+            if (!mod->popError()) {
+                for (size_t count = 0; count < 50000; ++count) {
+                    std::string key = trimCopy(mod->getKeyText());
+                    if (!key.empty() &&
+                        (keys.empty() || keys.back() != key)) {
+                        keys.push_back(std::move(key));
+                    }
+                    (*mod)++;
+                    if (mod->popError()) break;
+                }
+            }
+            if (restoreKey) {
+                mod->setKey(*restoreKey);
+                mod->popError();
+            }
+        }
+    }
+
+    auto [it, inserted] =
+        dictionaryKeyCache_.emplace(moduleName, std::move(keys));
+    (void)inserted;
+    return it->second;
 }
 
 std::string SwordManager::getDictionaryEntry(const std::string& moduleName,
-                                              const std::string& key) {
+                                             const std::string& key,
+                                             std::string* resolvedKeyOut) {
     std::lock_guard<std::mutex> lock(mutex_);
     sword::SWModule* mod = getModule(moduleName);
     if (!mod) return "<p><i>Dictionary module not found: " + moduleName + "</i></p>";
+    if (resolvedKeyOut) resolvedKeyOut->clear();
 
     std::string requestedKey = trimCopy(key);
     std::string displayKey = requestedKey;
@@ -3156,12 +3222,15 @@ std::string SwordManager::getDictionaryEntry(const std::string& moduleName,
         text = renderLexiconEntryHtml(mod, requestedKey, requestedKey, &resolvedKey);
     }
 
-    if (text.empty() && !resolvedKey.empty()) {
+    if (!resolvedKey.empty()) {
         displayKey = resolvedKey;
     }
 
     if (text.empty()) {
         return "<p><i>No entry found for: " + htmlEscapeAttr(requestedKey) + "</i></p>";
+    }
+    if (resolvedKeyOut) {
+        *resolvedKeyOut = resolvedKey.empty() ? displayKey : resolvedKey;
     }
 
     std::ostringstream html;

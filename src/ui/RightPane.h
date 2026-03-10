@@ -6,7 +6,6 @@
 #include <FL/Fl_Tile.H>
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Choice.H>
-#include <FL/Fl_Input.H>
 #include <FL/Fl_Button.H>
 #include <FL/Enumerations.H>
 #include <memory>
@@ -22,6 +21,7 @@ namespace verdad {
 class VerdadApp;
 class HtmlWidget;
 class HtmlEditorWidget;
+class FilterableChoiceWidget;
 
 /// Right pane for commentary, dictionary, and general books.
 /// Commentary/General Books are top tabs; dictionary is a resizable bottom pane.
@@ -205,11 +205,14 @@ private:
 
     // Dictionary pane (bottom pane)
     Fl_Group* dictionaryPaneGroup_;
-    Fl_Input* dictionaryKeyInput_;
+    Fl_Button* dictionaryBackButton_;
+    FilterableChoiceWidget* dictionaryKeyInput_;
+    Fl_Button* dictionaryForwardButton_;
     Fl_Choice* dictionaryChoice_;
     HtmlWidget* dictionaryHtml_;
     std::vector<std::string> dictionaryChoiceModules_;
     std::vector<std::string> dictionaryChoiceLabels_;
+    std::vector<std::string> dictionaryKeys_;
     std::string currentDictionary_;
     std::string currentDictKey_;
 
@@ -253,6 +256,12 @@ private:
 
     /// Populate dictionary module choices
     void populateDictionaryModules();
+    void populateDictionaryKeyChoices();
+    void updateDictionaryNavigationChrome();
+    int currentDictionaryKeyIndex() const;
+    void showAdjacentDictionaryEntry(int delta);
+    void showDictionaryEntryInternal(const std::string& moduleName,
+                                     const std::string& key);
 
     /// Populate general book module choices
     void populateGeneralBookModules();
@@ -284,6 +293,8 @@ private:
     static void onCommentaryCancel(Fl_Widget* w, void* data);
     static void onDictionaryModuleChange(Fl_Widget* w, void* data);
     static void onDictionaryKeyInput(Fl_Widget* w, void* data);
+    static void onDictionaryBack(Fl_Widget* w, void* data);
+    static void onDictionaryForward(Fl_Widget* w, void* data);
     static void onTopTabChange(Fl_Widget* w, void* data);
     static void onGeneralBookModuleChange(Fl_Widget* w, void* data);
     static void onGeneralBookTocChange(Fl_Widget* w, void* data);

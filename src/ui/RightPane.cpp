@@ -1,6 +1,7 @@
 #include "ui/RightPane.h"
 #include "app/VerdadApp.h"
 #include "ui/BiblePane.h"
+#include "ui/FilterableChoiceWidget.h"
 #include "ui/HtmlEditorWidget.h"
 #include "ui/HtmlWidget.h"
 #include "ui/LeftPane.h"
@@ -34,6 +35,7 @@ constexpr int kStudypadToolbarButtonW = 32;
 constexpr int kStudypadToolbarButtonH = 26;
 constexpr int kStudypadToolbarIconSize = 22;
 constexpr int kStudypadToolbarButtonGap = 2;
+constexpr int kDictionaryNavButtonW = 28;
 
 std::string composeCss(const std::string& base, const std::string& extra) {
     if (base.empty()) return extra;
@@ -234,10 +236,13 @@ void layoutDictionaryPaneContents(int paneX,
                                   int paneY,
                                   int paneW,
                                   int paneH,
-                                  Fl_Input* dictionaryKeyInput,
+                                  Fl_Button* dictionaryBackButton,
+                                  FilterableChoiceWidget* dictionaryKeyInput,
+                                  Fl_Button* dictionaryForwardButton,
                                   Fl_Choice* dictionaryChoice,
                                   HtmlWidget* dictionaryHtml) {
-    if (!dictionaryKeyInput || !dictionaryChoice || !dictionaryHtml) {
+    if (!dictionaryBackButton || !dictionaryKeyInput || !dictionaryForwardButton ||
+        !dictionaryChoice || !dictionaryHtml) {
         return;
     }
 
@@ -247,10 +252,21 @@ void layoutDictionaryPaneContents(int paneX,
     int clampedPaneH = std::max(20, paneH);
 
     int rowW = std::max(20, clampedPaneW - 4);
-    int inputW = std::clamp(rowW / 3, 110, std::max(110, rowW - 150));
-    int choiceW = std::max(20, rowW - inputW - 2);
-    dictionaryKeyInput->resize(paneX + 2, paneY + 2, inputW, choiceH);
-    dictionaryChoice->resize(paneX + 2 + inputW + 2, paneY + 2, choiceW, choiceH);
+    int keyAreaW = std::clamp((rowW * 7) / 20,
+                              150,
+                              std::max(150, rowW - 140));
+    int choiceW = std::max(20, rowW - keyAreaW - 2);
+    int keyX = paneX + 2;
+    dictionaryBackButton->resize(keyX, paneY + 2, kDictionaryNavButtonW, choiceH);
+    dictionaryKeyInput->resize(keyX + kDictionaryNavButtonW,
+                               paneY + 2,
+                               std::max(40, keyAreaW - (kDictionaryNavButtonW * 2)),
+                               choiceH);
+    dictionaryForwardButton->resize(dictionaryKeyInput->x() + dictionaryKeyInput->w(),
+                                    paneY + 2,
+                                    kDictionaryNavButtonW,
+                                    choiceH);
+    dictionaryChoice->resize(keyX + keyAreaW + 2, paneY + 2, choiceW, choiceH);
     dictionaryHtml->resize(paneX + 2,
                            paneY + choiceH + 4,
                            rowW,
@@ -262,10 +278,13 @@ void layoutDictionaryPane(int paneX,
                           int paneW,
                           int paneH,
                           Fl_Group* dictionaryPaneGroup,
-                          Fl_Input* dictionaryKeyInput,
+                          Fl_Button* dictionaryBackButton,
+                          FilterableChoiceWidget* dictionaryKeyInput,
+                          Fl_Button* dictionaryForwardButton,
                           Fl_Choice* dictionaryChoice,
                           HtmlWidget* dictionaryHtml) {
-    if (!dictionaryPaneGroup || !dictionaryKeyInput ||
+    if (!dictionaryPaneGroup || !dictionaryBackButton || !dictionaryKeyInput ||
+        !dictionaryForwardButton ||
         !dictionaryChoice || !dictionaryHtml) {
         return;
     }
@@ -280,7 +299,9 @@ void layoutDictionaryPane(int paneX,
                                  paneY,
                                  clampedPaneW,
                                  clampedPaneH,
+                                 dictionaryBackButton,
                                  dictionaryKeyInput,
+                                 dictionaryForwardButton,
                                  dictionaryChoice,
                                  dictionaryHtml);
 }
@@ -562,7 +583,9 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     , currentCommentary_()
     , currentCommentaryRef_()
     , dictionaryPaneGroup_(nullptr)
+    , dictionaryBackButton_(nullptr)
     , dictionaryKeyInput_(nullptr)
+    , dictionaryForwardButton_(nullptr)
     , dictionaryChoice_(nullptr)
     , dictionaryHtml_(nullptr)
     , currentDictionary_()
@@ -737,16 +760,33 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     dictionaryPaneGroup_ = resizeDictionaryPane;
     dictionaryPaneGroup_->begin();
     int dictRowW = std::max(20, tileW - 4);
-    int dictInputW = std::clamp(dictRowW / 3, 110, std::max(110, dictRowW - 150));
-    int dictChoiceW = std::max(20, dictRowW - dictInputW - 2);
-    dictionaryKeyInput_ = new Fl_Input(tileX + 2,
-                                       tileY + tabsInitH + 2,
-                                       dictInputW,
-                                       choiceH);
-    dictionaryKeyInput_->tooltip("Type a dictionary key and press Enter");
-    dictionaryKeyInput_->when(FL_WHEN_ENTER_KEY);
+    int dictKeyAreaW = std::clamp((dictRowW * 7) / 20,
+                                  150,
+                                  std::max(150, dictRowW - 140));
+    int dictChoiceW = std::max(20, dictRowW - dictKeyAreaW - 2);
+    dictionaryBackButton_ = new Fl_Button(tileX + 2,
+                                          tileY + tabsInitH + 2,
+                                          kDictionaryNavButtonW,
+                                          choiceH,
+                                          "@<-");
+    dictionaryBackButton_->callback(onDictionaryBack, this);
+    dictionaryBackButton_->tooltip("Show previous dictionary entry");
+    dictionaryKeyInput_ = new FilterableChoiceWidget(tileX + 2 + kDictionaryNavButtonW,
+                                                     tileY + tabsInitH + 2,
+                                                     std::max(40, dictKeyAreaW - (kDictionaryNavButtonW * 2)),
+                                                     choiceH);
+    dictionaryKeyInput_->setNoMatchesLabel("No matching keys");
+    dictionaryKeyInput_->setShowAllWhenFilterEmpty(false);
     dictionaryKeyInput_->callback(onDictionaryKeyInput, this);
-    dictionaryChoice_ = new Fl_Choice(tileX + 2 + dictInputW + 2,
+    dictionaryKeyInput_->tooltip("Type a dictionary key or choose one from the list");
+    dictionaryForwardButton_ = new Fl_Button(tileX + 2 + dictKeyAreaW - kDictionaryNavButtonW,
+                                             tileY + tabsInitH + 2,
+                                             kDictionaryNavButtonW,
+                                             choiceH,
+                                             "@->");
+    dictionaryForwardButton_->callback(onDictionaryForward, this);
+    dictionaryForwardButton_->tooltip("Show next dictionary entry");
+    dictionaryChoice_ = new Fl_Choice(tileX + 2 + dictKeyAreaW + 2,
                                       tileY + tabsInitH + 2,
                                       dictChoiceW,
                                       choiceH);
@@ -770,7 +810,9 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
                                          paneY,
                                          paneW,
                                          paneH,
+                                         dictionaryBackButton_,
                                          dictionaryKeyInput_,
+                                         dictionaryForwardButton_,
                                          dictionaryChoice_,
                                          dictionaryHtml_);
         });
@@ -909,7 +951,8 @@ void RightPane::resize(int X, int Y, int W, int H) {
     if (!contentTile_ || !contentResizeBox_ || !tabs_ || !commentaryGroup_ ||
         !commentaryChoice_ || !commentaryHtml_ || !commentaryEditor_ ||
         !documentsGroup_ || !documentChoice_ || !documentsEditor_ || !dictionaryPaneGroup_ ||
-        !dictionaryKeyInput_ || !dictionaryChoice_ || !dictionaryHtml_ ||
+        !dictionaryBackButton_ || !dictionaryKeyInput_ || !dictionaryForwardButton_ ||
+        !dictionaryChoice_ || !dictionaryHtml_ ||
         !generalBooksGroup_ ||
         !generalBookChoice_ || !generalBookTocChoice_ ||
         !generalBookHtml_) {
@@ -944,7 +987,9 @@ void RightPane::resize(int X, int Y, int W, int H) {
                          tileW,
                          dictH,
                          dictionaryPaneGroup_,
+                         dictionaryBackButton_,
                          dictionaryKeyInput_,
+                         dictionaryForwardButton_,
                          dictionaryChoice_,
                          dictionaryHtml_);
 
@@ -1089,7 +1134,7 @@ void RightPane::showDictionaryEntry(const std::string& key) {
     }
 
     if (!currentDictionary_.empty()) {
-        showDictionaryEntry(currentDictionary_, key);
+        showDictionaryEntryInternal(currentDictionary_, key);
     }
 }
 
@@ -1107,22 +1152,34 @@ void RightPane::showDictionaryLookup(const std::string& key,
     }
 
     if (!currentDictionary_.empty()) {
-        showDictionaryEntry(currentDictionary_, key);
+        showDictionaryEntryInternal(currentDictionary_, key);
     }
 }
 
 void RightPane::showDictionaryEntry(const std::string& moduleName,
                                     const std::string& key) {
-    currentDictionary_ = moduleName;
-    currentDictKey_ = key;
-    if (dictionaryKeyInput_) {
-        dictionaryKeyInput_->value(currentDictKey_.c_str());
-    }
+    showDictionaryEntryInternal(moduleName, key);
+}
 
-    std::string html = app_->swordManager().getDictionaryEntry(moduleName, key);
+void RightPane::showDictionaryEntryInternal(const std::string& moduleName,
+                                            const std::string& key) {
+    currentDictionary_ = moduleName;
+    currentDictKey_ = trimCopy(key);
+    setDictionaryModule(moduleName);
+
+    std::string resolvedKey;
+    std::string html = app_->swordManager().getDictionaryEntry(
+        moduleName, currentDictKey_, &resolvedKey);
+    if (!resolvedKey.empty()) {
+        currentDictKey_ = resolvedKey;
+    }
+    if (dictionaryKeyInput_) {
+        dictionaryKeyInput_->setSelectedValue(currentDictKey_);
+    }
     if (dictionaryHtml_) {
         dictionaryHtml_->setHtml(html);
     }
+    updateDictionaryNavigationChrome();
 }
 
 void RightPane::showGeneralBookEntry(const std::string& key) {
@@ -1196,6 +1253,8 @@ void RightPane::setDictionaryModule(const std::string& moduleName) {
                                     dictionaryChoiceModules_,
                                     dictionaryChoiceLabels_,
                                     moduleName);
+    populateDictionaryKeyChoices();
+    updateDictionaryNavigationChrome();
 }
 
 void RightPane::setGeneralBookModule(const std::string& moduleName) {
@@ -1265,7 +1324,8 @@ void RightPane::setDictionaryPaneHeight(int height) {
         !generalBooksGroup_ || !generalBookChoice_ ||
         !generalBookTocChoice_ || !generalBookHtml_ ||
         !documentsGroup_ || !documentsEditor_ ||
-        !dictionaryPaneGroup_ || !dictionaryKeyInput_ ||
+        !dictionaryPaneGroup_ || !dictionaryBackButton_ || !dictionaryKeyInput_ ||
+        !dictionaryForwardButton_ ||
         !dictionaryChoice_ || !dictionaryHtml_) {
         return;
     }
@@ -1292,7 +1352,9 @@ void RightPane::setDictionaryPaneHeight(int height) {
                          tileW,
                          bottomH,
                          dictionaryPaneGroup_,
+                         dictionaryBackButton_,
                          dictionaryKeyInput_,
+                         dictionaryForwardButton_,
                          dictionaryChoice_,
                          dictionaryHtml_);
 
@@ -1323,8 +1385,9 @@ void RightPane::setStudyState(const std::string& commentaryModule,
     currentDictKey_ = dictionaryKey;
     currentGeneralBookKey_ = generalBookKey;
     if (dictionaryKeyInput_) {
-        dictionaryKeyInput_->value(currentDictKey_.c_str());
+        dictionaryKeyInput_->setSelectedValue(currentDictKey_);
     }
+    populateDictionaryKeyChoices();
     populateGeneralBookToc();
 
     setDictionaryTabActive(dictionaryActive);
@@ -1502,7 +1565,9 @@ void RightPane::redrawChrome() {
     if (commentaryEditButton_) commentaryEditButton_->redraw();
     if (commentarySaveButton_) commentarySaveButton_->redraw();
     if (commentaryCancelButton_) commentaryCancelButton_->redraw();
+    if (dictionaryBackButton_) dictionaryBackButton_->redraw();
     if (dictionaryKeyInput_) dictionaryKeyInput_->redraw();
+    if (dictionaryForwardButton_) dictionaryForwardButton_->redraw();
     if (dictionaryChoice_) dictionaryChoice_->redraw();
     if (generalBookChoice_) generalBookChoice_->redraw();
     if (generalBookTocChoice_) generalBookTocChoice_->redraw();
@@ -1522,7 +1587,7 @@ void RightPane::refresh() {
         showCommentary(currentCommentary_, currentCommentaryRef_);
     }
     if (!currentDictionary_.empty() && !currentDictKey_.empty()) {
-        showDictionaryEntry(currentDictionary_, currentDictKey_);
+        showDictionaryEntryInternal(currentDictionary_, currentDictKey_);
     }
     // Lazy-load general books to avoid paying parse/render cost on every cold
     // tab activation when user is reading commentary.
@@ -1665,17 +1730,91 @@ void RightPane::populateDictionaryModules() {
 
     if (dictionaryChoice_->size() > 0) {
         currentDictionary_ = dictionaryChoiceModules_.front();
+        populateDictionaryKeyChoices();
     } else {
+        dictionaryKeys_.clear();
         currentDictionary_.clear();
         currentDictKey_.clear();
         if (dictionaryKeyInput_) {
-            dictionaryKeyInput_->value("");
+            dictionaryKeyInput_->setItems({});
+            dictionaryKeyInput_->setSelectedValue("");
         }
         if (dictionaryHtml_) {
             dictionaryHtml_->setHtml(
                 "<p><i>No dictionary modules installed.</i></p>");
         }
     }
+    updateDictionaryNavigationChrome();
+}
+
+void RightPane::populateDictionaryKeyChoices() {
+    if (!dictionaryKeyInput_ || !app_) return;
+
+    if (currentDictionary_.empty()) {
+        dictionaryKeys_.clear();
+        dictionaryKeyInput_->setItems({});
+        dictionaryKeyInput_->setSelectedValue(currentDictKey_);
+        return;
+    }
+
+    dictionaryKeys_ = app_->swordManager().getDictionaryKeys(currentDictionary_);
+    dictionaryKeyInput_->setItems(dictionaryKeys_);
+    dictionaryKeyInput_->setSelectedValue(currentDictKey_);
+}
+
+void RightPane::updateDictionaryNavigationChrome() {
+    const int keyIndex = currentDictionaryKeyIndex();
+    const bool canGoBack = keyIndex > 0;
+    const bool canGoForward =
+        keyIndex >= 0 &&
+        keyIndex + 1 < static_cast<int>(dictionaryKeys_.size());
+
+    if (dictionaryBackButton_) {
+        if (canGoBack) dictionaryBackButton_->activate();
+        else dictionaryBackButton_->deactivate();
+        dictionaryBackButton_->redraw();
+    }
+    if (dictionaryForwardButton_) {
+        if (canGoForward) dictionaryForwardButton_->activate();
+        else dictionaryForwardButton_->deactivate();
+        dictionaryForwardButton_->redraw();
+    }
+}
+
+int RightPane::currentDictionaryKeyIndex() const {
+    if (currentDictKey_.empty() || dictionaryKeys_.empty()) {
+        return -1;
+    }
+
+    auto it = std::find(dictionaryKeys_.begin(), dictionaryKeys_.end(),
+                        currentDictKey_);
+    if (it == dictionaryKeys_.end()) {
+        std::string selected = dictionaryKeyInput_
+            ? dictionaryKeyInput_->selectedValue()
+            : "";
+        if (!selected.empty()) {
+            it = std::find(dictionaryKeys_.begin(), dictionaryKeys_.end(),
+                           selected);
+        }
+    }
+    if (it == dictionaryKeys_.end()) return -1;
+    return static_cast<int>(it - dictionaryKeys_.begin());
+}
+
+void RightPane::showAdjacentDictionaryEntry(int delta) {
+    if (currentDictionary_.empty() || dictionaryKeys_.empty()) return;
+
+    int keyIndex = currentDictionaryKeyIndex();
+    if (keyIndex < 0) return;
+
+    int newIndex = keyIndex + delta;
+    if (newIndex < 0 || newIndex >= static_cast<int>(dictionaryKeys_.size())) {
+        updateDictionaryNavigationChrome();
+        return;
+    }
+
+    showDictionaryEntryInternal(currentDictionary_,
+                                dictionaryKeys_[static_cast<size_t>(newIndex)]);
 }
 
 void RightPane::populateGeneralBookModules() {
@@ -2351,9 +2490,16 @@ void RightPane::onDictionaryModuleChange(Fl_Widget* /*w*/, void* data) {
     if (!self || !self->dictionaryChoice_) return;
     self->currentDictionary_ = module_choice::selectedModuleName(
         self->dictionaryChoice_, self->dictionaryChoiceModules_);
-    if (!self->currentDictionary_.empty() && !self->currentDictKey_.empty()) {
-        self->showDictionaryEntry(self->currentDictionary_,
-                                  self->currentDictKey_);
+    self->populateDictionaryKeyChoices();
+    std::string key = self->dictionaryKeyInput_ && self->dictionaryKeyInput_->value()
+        ? self->dictionaryKeyInput_->value()
+        : "";
+    key = trimCopy(key);
+    if (key.empty()) key = self->currentDictKey_;
+    if (!self->currentDictionary_.empty() && !key.empty()) {
+        self->showDictionaryEntryInternal(self->currentDictionary_, key);
+    } else {
+        self->updateDictionaryNavigationChrome();
     }
 }
 
@@ -2374,7 +2520,19 @@ void RightPane::onDictionaryKeyInput(Fl_Widget* /*w*/, void* data) {
     }
     if (self->currentDictionary_.empty()) return;
 
-    self->showDictionaryEntry(self->currentDictionary_, key);
+    self->showDictionaryEntryInternal(self->currentDictionary_, key);
+}
+
+void RightPane::onDictionaryBack(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self) return;
+    self->showAdjacentDictionaryEntry(-1);
+}
+
+void RightPane::onDictionaryForward(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self) return;
+    self->showAdjacentDictionaryEntry(1);
 }
 
 void RightPane::onTopTabChange(Fl_Widget* /*w*/, void* data) {
