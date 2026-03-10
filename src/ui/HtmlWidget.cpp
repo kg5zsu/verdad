@@ -3,6 +3,7 @@
 #include "app/VerdadApp.h"
 
 #include <FL/Fl.H>
+#include <FL/Fl_Tooltip.H>
 #include <FL/fl_draw.H>
 #include <FL/Fl_Scrollbar.H>
 #include <FL/fl_utf8.h>
@@ -1349,6 +1350,8 @@ int HtmlWidget::handle(int event) {
                     [](const std::shared_ptr<litehtml::render_item>&) { return true; });
 
                 std::string word, href, strong, morph, module, title;
+                litehtml::position titlePlacement;
+                bool hasTitlePlacement = false;
                 if (el) {
                     word = wordAtScreenPoint(Fl::event_x(), Fl::event_y());
                     if (word.empty()) {
@@ -1401,7 +1404,11 @@ int HtmlWidget::handle(int event) {
                         }
                         if (title.empty()) {
                             auto t = cur->get_attr("title");
-                            if (t && *t) title = t;
+                            if (t && *t) {
+                                title = t;
+                                titlePlacement = cur->get_placement();
+                                hasTitlePlacement = true;
+                            }
                         }
                         if (!strong.empty() && !morph.empty() &&
                             !href.empty() && !module.empty() && !title.empty())
@@ -1421,8 +1428,31 @@ int HtmlWidget::handle(int event) {
                     lastHoverTitle_  = title;
                     if (!title.empty()) {
                         copy_tooltip(title.c_str());
+                        int tooltipX = Fl::event_x() - x();
+                        int tooltipY = Fl::event_y() - y();
+                        int tooltipW = 1;
+                        int tooltipH = 1;
+                        if (hasTitlePlacement) {
+                            tooltipX = std::clamp(static_cast<int>(titlePlacement.x) - scrollX_,
+                                                  0,
+                                                  std::max(0, w() - 1));
+                            tooltipY = std::clamp(static_cast<int>(titlePlacement.y) - scrollY_,
+                                                  0,
+                                                  std::max(0, h() - 1));
+                            tooltipW = std::max(1, static_cast<int>(titlePlacement.width));
+                            tooltipH = std::max(1, static_cast<int>(titlePlacement.height));
+                            tooltipW = std::max(1, std::min(tooltipW, w() - tooltipX));
+                            tooltipH = std::max(1, std::min(tooltipH, h() - tooltipY));
+                        }
+                        Fl_Tooltip::enter_area(this,
+                                               tooltipX,
+                                               tooltipY,
+                                               tooltipW,
+                                               tooltipH,
+                                               tooltip());
                     } else {
                         tooltip(nullptr);
+                        Fl_Tooltip::current(nullptr);
                     }
                     hoverCallback_(word, href, strong, morph, module,
                                    Fl::event_x(), Fl::event_y());
@@ -1491,6 +1521,7 @@ int HtmlWidget::handle(int event) {
             lastHoverModule_.clear();
             lastHoverTitle_.clear();
             tooltip(nullptr);
+            Fl_Tooltip::current(nullptr);
             hoverCallback_("", "", "", "", "", 0, 0);
         }
         return 1;

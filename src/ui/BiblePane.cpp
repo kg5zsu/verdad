@@ -1309,7 +1309,9 @@ void BiblePane::onWordHover(const std::string& word, const std::string& href,
                              const std::string& /*module*/,
                              int x, int y) {
     if (app_->mainWindow()) {
-        if (!strong.empty() || !morph.empty() || !href.empty()) {
+        if (href.rfind("tags:", 0) == 0) {
+            app_->mainWindow()->hideWordInfo();
+        } else if (!strong.empty() || !morph.empty() || !href.empty()) {
             app_->mainWindow()->showWordInfo(word, href, strong, morph, x, y);
         } else {
             app_->mainWindow()->hideWordInfo();
