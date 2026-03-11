@@ -264,6 +264,7 @@ MainWindow::SessionState sessionStateFromPreferences(const PreferenceMap& prefs)
     state.windowH = parseIntOr(lookup("window_h"), 800);
     state.leftPaneWidth = parseIntOr(lookup("left_pane_w"), 300);
     state.leftPanePreviewHeight = parseIntOr(lookup("left_pane_preview_h"), 150);
+    state.dictionaryPaneHeight = parseIntOr(lookup("dictionary_pane_h"), 0);
     state.activeStudyTab = parseIntOr(lookup("active_study_tab"), 0);
     state.generalBooksTabActive = parseBoolOr(lookup("general_book_active"), false);
     state.generalBookModule = lookup("general_book_module");
@@ -278,6 +279,8 @@ MainWindow::SessionState sessionStateFromPreferences(const PreferenceMap& prefs)
     std::string firstActiveLegacyGeneralBookKey;
     std::string firstLegacyGeneralBookModule;
     std::string firstLegacyGeneralBookKey;
+    int activeLegacyDictionaryPaneHeight = 0;
+    int firstLegacyDictionaryPaneHeight = 0;
 
     int tabCount = std::max(0, parseIntOr(lookup("study_tab_count"), 0));
     tabCount = std::min(tabCount, 64);
@@ -303,7 +306,7 @@ MainWindow::SessionState sessionStateFromPreferences(const PreferenceMap& prefs)
         tab.commentaryScrollY = parseIntOr(lookup("commentary_scroll_y"), -1);
         tab.dictionaryModule = lookup("dictionary_module");
         tab.dictionaryKey = lookup("dictionary_key");
-        tab.dictionaryPaneHeight = parseIntOr(lookup("dictionary_pane_h"), 0);
+        int legacyDictionaryPaneHeight = parseIntOr(lookup("dictionary_pane_h"), 0);
         std::string legacyGeneralBookModule = lookup("general_book_module");
         std::string legacyGeneralBookKey = lookup("general_book_key");
         std::string legacyActiveRaw = lookup("general_book_active");
@@ -314,6 +317,7 @@ MainWindow::SessionState sessionStateFromPreferences(const PreferenceMap& prefs)
             activeLegacyGeneralBookModule = legacyGeneralBookModule;
             activeLegacyGeneralBookKey = legacyGeneralBookKey;
             activeLegacyGeneralBooksTabActive = legacyGeneralBooksTabActive;
+            activeLegacyDictionaryPaneHeight = legacyDictionaryPaneHeight;
         }
         if (firstActiveLegacyGeneralBookModule.empty() &&
             legacyGeneralBooksTabActive &&
@@ -325,8 +329,19 @@ MainWindow::SessionState sessionStateFromPreferences(const PreferenceMap& prefs)
             firstLegacyGeneralBookModule = legacyGeneralBookModule;
             firstLegacyGeneralBookKey = legacyGeneralBookKey;
         }
+        if (firstLegacyDictionaryPaneHeight <= 0 && legacyDictionaryPaneHeight > 0) {
+            firstLegacyDictionaryPaneHeight = legacyDictionaryPaneHeight;
+        }
 
         state.studyTabs.push_back(std::move(tab));
+    }
+
+    if (state.dictionaryPaneHeight <= 0) {
+        if (activeLegacyDictionaryPaneHeight > 0) {
+            state.dictionaryPaneHeight = activeLegacyDictionaryPaneHeight;
+        } else if (firstLegacyDictionaryPaneHeight > 0) {
+            state.dictionaryPaneHeight = firstLegacyDictionaryPaneHeight;
+        }
     }
 
     if (state.generalBookModule.empty()) {
@@ -355,10 +370,10 @@ void preserveCurrentLayout(MainWindow::SessionState& imported,
     imported.windowH = current.windowH;
     imported.leftPaneWidth = current.leftPaneWidth;
     imported.leftPanePreviewHeight = current.leftPanePreviewHeight;
+    imported.dictionaryPaneHeight = current.dictionaryPaneHeight;
 
     for (auto& tab : imported.studyTabs) {
         tab.biblePaneWidth = 0;
-        tab.dictionaryPaneHeight = 0;
         tab.bibleScrollY = -1;
         tab.commentaryScrollY = -1;
     }
@@ -653,6 +668,7 @@ void VerdadApp::savePreferences() {
         file << "window_h=" << state.windowH << "\n";
         file << "left_pane_w=" << state.leftPaneWidth << "\n";
         file << "left_pane_preview_h=" << state.leftPanePreviewHeight << "\n";
+        file << "dictionary_pane_h=" << state.dictionaryPaneHeight << "\n";
         file << "active_study_tab=" << state.activeStudyTab << "\n";
         file << "general_book_active=" << (state.generalBooksTabActive ? 1 : 0) << "\n";
         file << "general_book_module=" << state.generalBookModule << "\n";
@@ -678,7 +694,6 @@ void VerdadApp::savePreferences() {
             file << pfx << "commentary_scroll_y=" << t.commentaryScrollY << "\n";
             file << pfx << "dictionary_module=" << t.dictionaryModule << "\n";
             file << pfx << "dictionary_key=" << t.dictionaryKey << "\n";
-            file << pfx << "dictionary_pane_h=" << t.dictionaryPaneHeight << "\n";
         }
 
         // Also keep legacy keys for backwards compatibility with older builds.

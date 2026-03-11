@@ -666,7 +666,6 @@ void MainWindow::addStudyTab(const std::string& module,
     if (rightPane_) {
         ctx.state.commentaryModule = rightPane_->currentCommentaryModule();
         ctx.state.dictionaryModule = rightPane_->currentDictionaryModule();
-        ctx.state.dictionaryPaneHeight = rightPane_->dictionaryPaneHeight();
     }
     if (!ctx.state.commentaryModule.empty()) {
         ctx.state.commentaryReference = initBook + " " + std::to_string(initChapter) +
@@ -954,7 +953,6 @@ void MainWindow::captureActiveTabState() {
         ctx.state.commentaryScrollY = rightPane_->commentaryScrollY();
         ctx.state.dictionaryModule = rightPane_->currentDictionaryModule();
         ctx.state.dictionaryKey = rightPane_->currentDictionaryKey();
-        ctx.state.dictionaryPaneHeight = rightPane_->dictionaryPaneHeight();
     }
 }
 
@@ -1112,12 +1110,6 @@ void MainWindow::applyTabState(int index) {
     perf::logf("applyTabState tab=%d rightPane_->setStudyState: %.3f ms",
                index, step.elapsedMs());
     step.reset();
-    if (ctx.state.dictionaryPaneHeight > 0) {
-        rightPane_->setDictionaryPaneHeight(ctx.state.dictionaryPaneHeight);
-        perf::logf("applyTabState tab=%d rightPane_->setDictionaryPaneHeight: %.3f ms",
-                   index, step.elapsedMs());
-        step.reset();
-    }
     bool restoredRight = ctx.hasRightBuffer;
     if (restoredRight) {
         RightPane::DisplayBuffer r;
@@ -1631,6 +1623,7 @@ MainWindow::SessionState MainWindow::captureSessionState() {
     }
     state.activeStudyTab = activeStudyTab_;
     if (rightPane_) {
+        state.dictionaryPaneHeight = rightPane_->dictionaryPaneHeight();
         state.generalBooksTabActive = rightPane_->isDictionaryTabActive();
         state.generalBookModule = rightPane_->currentGeneralBookModule();
         state.generalBookKey = rightPane_->currentGeneralBookKey();
@@ -1696,6 +1689,9 @@ void MainWindow::restoreSessionState(const SessionState& state) {
     if (state.studyTabs.empty() || !studyTabsWidget_) {
         addStudyTab("", "Genesis", 1, 1);
         if (rightPane_) {
+            if (state.dictionaryPaneHeight > 0) {
+                rightPane_->setDictionaryPaneHeight(state.dictionaryPaneHeight);
+            }
             if (!state.generalBookModule.empty()) {
                 rightPane_->showGeneralBookEntry(state.generalBookModule,
                                                  state.generalBookKey);
@@ -1756,6 +1752,9 @@ void MainWindow::restoreSessionState(const SessionState& state) {
     }
 
     if (rightPane_) {
+        if (state.dictionaryPaneHeight > 0) {
+            rightPane_->setDictionaryPaneHeight(state.dictionaryPaneHeight);
+        }
         if (!state.generalBookModule.empty()) {
             rightPane_->showGeneralBookEntry(state.generalBookModule,
                                              state.generalBookKey);

@@ -43,7 +43,6 @@ public:
         int commentaryScrollY = -1;
         std::string dictionaryModule;
         std::string dictionaryKey;
-        int dictionaryPaneHeight = 0;
     };
 
     struct SessionState {
@@ -53,6 +52,7 @@ public:
         int windowH = 800;
         int leftPaneWidth = 300;
         int leftPanePreviewHeight = 150;
+        int dictionaryPaneHeight = 0;
         int activeStudyTab = 0;
         bool generalBooksTabActive = false;
         std::string generalBookModule;
