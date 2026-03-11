@@ -126,7 +126,7 @@ public:
     void savePreferences();
 
     /// Get sorted list of available system font family names.
-    const std::vector<std::string>& systemFontFamilies() const { return systemFontFamilies_; }
+    const std::vector<std::string>& systemFontFamilies() const;
 
     /// Look up an FLTK font index by family name.  Returns FL_HELVETICA if not found.
     Fl_Font fltkFontFromFamily(const std::string& family) const;
@@ -157,7 +157,7 @@ private:
     void enumerateSystemFonts();
 
     /// Load user preferences
-    void loadPreferences();
+    bool loadPreferences();
 
     /// Apply parsed preference data to the running app.
     bool applyPreferencesMap(const std::unordered_map<std::string, std::string>& prefs,

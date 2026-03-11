@@ -3136,7 +3136,7 @@ bool SwordManager::deleteEntry(const std::string& moduleName,
     return ok;
 }
 
-std::vector<std::string> SwordManager::getDictionaryKeys(
+std::shared_ptr<const std::vector<std::string>> SwordManager::getDictionaryKeys(
         const std::string& moduleName) {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -3147,7 +3147,9 @@ std::vector<std::string> SwordManager::getDictionaryKeys(
 
     std::vector<std::string> keys;
     sword::SWModule* mod = getModule(moduleName);
-    if (!mod) return keys;
+    if (!mod) {
+        return std::make_shared<const std::vector<std::string>>();
+    }
 
     if (std::unique_ptr<sword::SWKey> createdKey(mod->createKey());
         createdKey) {
@@ -3184,8 +3186,11 @@ std::vector<std::string> SwordManager::getDictionaryKeys(
         }
     }
 
+    auto sharedKeys =
+        std::shared_ptr<const std::vector<std::string>>(
+            std::make_shared<std::vector<std::string>>(std::move(keys)));
     auto [it, inserted] =
-        dictionaryKeyCache_.emplace(moduleName, std::move(keys));
+        dictionaryKeyCache_.emplace(moduleName, std::move(sharedKeys));
     (void)inserted;
     return it->second;
 }

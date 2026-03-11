@@ -5,11 +5,17 @@
 
 #include <algorithm>
 #include <cctype>
+#include <string_view>
 
 namespace verdad {
 namespace {
 
-std::string trimCopy(const std::string& text) {
+char lowerAsciiChar(char c) {
+    return static_cast<char>(
+        std::tolower(static_cast<unsigned char>(c)));
+}
+
+std::string_view trimView(std::string_view text) {
     size_t start = 0;
     while (start < text.size() &&
            std::isspace(static_cast<unsigned char>(text[start]))) {
@@ -25,17 +31,26 @@ std::string trimCopy(const std::string& text) {
     return text.substr(start, end - start);
 }
 
-std::string lowerAsciiCopy(std::string text) {
-    std::transform(text.begin(), text.end(), text.begin(),
-                   [](unsigned char c) {
-                       return static_cast<char>(std::tolower(c));
-                   });
-    return text;
+bool equalsNoCase(std::string_view left, std::string_view right) {
+    if (left.size() != right.size()) return false;
+
+    for (size_t i = 0; i < left.size(); ++i) {
+        if (lowerAsciiChar(left[i]) != lowerAsciiChar(right[i])) {
+            return false;
+        }
+    }
+    return true;
 }
 
-bool containsNoCase(const std::string& haystack, const std::string& needle) {
+bool containsNoCase(std::string_view haystack, std::string_view needle) {
     if (needle.empty()) return true;
-    return lowerAsciiCopy(haystack).find(lowerAsciiCopy(needle)) != std::string::npos;
+
+    auto it = std::search(haystack.begin(), haystack.end(),
+                          needle.begin(), needle.end(),
+                          [](char left, char right) {
+                              return lowerAsciiChar(left) == lowerAsciiChar(right);
+                          });
+    return it != haystack.end();
 }
 
 std::string escapeChoiceLabel(const std::string& label) {
@@ -90,7 +105,16 @@ FilterableChoiceWidget::FilterableChoiceWidget(int X, int Y, int W, int H,
 FilterableChoiceWidget::~FilterableChoiceWidget() = default;
 
 void FilterableChoiceWidget::setItems(const std::vector<std::string>& items) {
-    items_ = items;
+    ownedItems_ = items;
+    items_ = &ownedItems_;
+    if (!selectedItem_.empty() && exactItemMatch(selectedItem_).empty()) {
+        selectedItem_.clear();
+    }
+    refreshMenu(input() && input()->value() ? input()->value() : "");
+}
+
+void FilterableChoiceWidget::setItemsView(const std::vector<std::string>* items) {
+    items_ = items ? items : &ownedItems_;
     if (!selectedItem_.empty() && exactItemMatch(selectedItem_).empty()) {
         selectedItem_.clear();
     }
@@ -101,6 +125,12 @@ void FilterableChoiceWidget::setSelectedValue(const std::string& value) {
     selectedItem_ = exactItemMatch(value);
     Fl_Input_Choice::value(value.c_str());
     refreshMenu(value);
+}
+
+void FilterableChoiceWidget::setDisplayedValue(const std::string& value) {
+    selectedItem_ = exactItemMatch(value);
+    Fl_Input_Choice::value(value.c_str());
+    clearMenu();
 }
 
 std::string FilterableChoiceWidget::selectedValue() const {
@@ -120,28 +150,55 @@ void FilterableChoiceWidget::setShowAllWhenFilterEmpty(bool showAll) {
     refreshMenu(input() && input()->value() ? input()->value() : "");
 }
 
+void FilterableChoiceWidget::setMaxVisibleItems(size_t maxItems) {
+    if (maxItems == 0) {
+        maxVisibleItems_ = std::numeric_limits<size_t>::max();
+    } else {
+        maxVisibleItems_ = maxItems;
+    }
+    refreshMenu(input() && input()->value() ? input()->value() : "");
+}
+
+void FilterableChoiceWidget::setEnsureItemsCallback(std::function<void()> callback) {
+    ensureItemsCallback_ = std::move(callback);
+}
+
+const std::vector<std::string>& FilterableChoiceWidget::items() const {
+    return items_ ? *items_ : ownedItems_;
+}
+
+void FilterableChoiceWidget::clearMenu() {
+    Fl_Menu_Button* menuButton = menubutton();
+    if (!menuButton) return;
+
+    menuButton->clear();
+    menuButton->deactivate();
+}
+
 void FilterableChoiceWidget::refreshMenu(const std::string& filter) {
     Fl_Menu_Button* menuButton = menubutton();
     if (!menuButton) return;
 
-    std::string normalizedFilter = trimCopy(filter);
+    std::string_view normalizedFilter = trimView(filter);
     if (normalizedFilter.empty() && !showAllWhenFilterEmpty_) {
-        menuButton->clear();
-        menuButton->deactivate();
+        clearMenu();
         return;
     }
 
-    std::vector<std::string> filtered;
-    filtered.reserve(items_.size());
-    for (const auto& item : items_) {
+    clearMenu();
+
+    size_t matchCount = 0;
+    for (const auto& item : items()) {
         if (normalizedFilter.empty() ||
             containsNoCase(item, normalizedFilter)) {
-            filtered.push_back(item);
+            if (matchCount < maxVisibleItems_) {
+                menuButton->add(escapeChoiceLabel(item).c_str());
+            }
+            ++matchCount;
         }
     }
 
-    menuButton->clear();
-    if (filtered.empty()) {
+    if (matchCount == 0) {
         if (!noMatchesLabel_.empty()) {
             menuButton->add(noMatchesLabel_.c_str());
             menuButton->value(0);
@@ -151,10 +208,6 @@ void FilterableChoiceWidget::refreshMenu(const std::string& filter) {
     }
 
     menuButton->activate();
-    for (const auto& item : filtered) {
-        menuButton->add(escapeChoiceLabel(item).c_str());
-    }
-
     std::string exact = exactItemMatch(
         input() && input()->value() ? input()->value() : "");
     if (!exact.empty()) {
@@ -174,11 +227,11 @@ void FilterableChoiceWidget::refreshMenu(const std::string& filter) {
 }
 
 std::string FilterableChoiceWidget::exactItemMatch(const std::string& value) const {
-    std::string wanted = lowerAsciiCopy(trimCopy(value));
+    std::string_view wanted = trimView(value);
     if (wanted.empty()) return "";
 
-    for (const auto& item : items_) {
-        if (lowerAsciiCopy(item) == wanted) {
+    for (const auto& item : items()) {
+        if (equalsNoCase(item, wanted)) {
             return item;
         }
     }
@@ -188,6 +241,10 @@ std::string FilterableChoiceWidget::exactItemMatch(const std::string& value) con
 void FilterableChoiceWidget::onInputChanged(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<FilterableChoiceWidget*>(data);
     if (!self) return;
+
+    if (self->items().empty() && self->ensureItemsCallback_) {
+        self->ensureItemsCallback_();
+    }
 
     std::string filter = self->input() && self->input()->value()
         ? self->input()->value()

@@ -148,13 +148,6 @@ BiblePane::BiblePane(VerdadApp* app, int X, int Y, int W, int H)
     }
     syncOptionButtons();
 
-    // Select default module (if available). Initial navigation is performed
-    // by MainWindow after this pane is attached to a context tab.
-    auto bibles = app_->swordManager().getBibleModules();
-    if (!bibles.empty()) {
-        moduleName_ = bibles[0].name;
-        setModule(moduleName_);
-    }
 }
 
 BiblePane::~BiblePane() {

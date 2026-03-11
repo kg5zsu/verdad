@@ -588,6 +588,7 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     , dictionaryForwardButton_(nullptr)
     , dictionaryChoice_(nullptr)
     , dictionaryHtml_(nullptr)
+    , dictionaryKeysModule_()
     , currentDictionary_()
     , currentDictKey_()
     , generalBooksGroup_(nullptr)
@@ -777,6 +778,10 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
                                                      choiceH);
     dictionaryKeyInput_->setNoMatchesLabel("No matching keys");
     dictionaryKeyInput_->setShowAllWhenFilterEmpty(false);
+    dictionaryKeyInput_->setMaxVisibleItems(200);
+    dictionaryKeyInput_->setEnsureItemsCallback([this]() {
+        ensureDictionaryKeysLoaded();
+    });
     dictionaryKeyInput_->callback(onDictionaryKeyInput, this);
     dictionaryKeyInput_->tooltip("Type a dictionary key or choose one from the list");
     dictionaryForwardButton_ = new Fl_Button(tileX + 2 + dictKeyAreaW - kDictionaryNavButtonW,
@@ -838,8 +843,8 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     }
 
     populateCommentaryModules();
-    populateDictionaryModules();
-    populateGeneralBookModules();
+    populateDictionaryModules(false);
+    populateGeneralBookModules(false);
     documentsEditor_->clearDocument();
     documentsEditor_->setModified(false);
     ensureDirectoryExists(studypadDirectory(app_));
@@ -1163,9 +1168,12 @@ void RightPane::showDictionaryEntry(const std::string& moduleName,
 
 void RightPane::showDictionaryEntryInternal(const std::string& moduleName,
                                             const std::string& key) {
+    bool moduleChanged = (moduleName != currentDictionary_);
     currentDictionary_ = moduleName;
     currentDictKey_ = trimCopy(key);
-    setDictionaryModule(moduleName);
+    if (moduleChanged) {
+        setDictionaryModule(moduleName);
+    }
 
     std::string resolvedKey;
     std::string html = app_->swordManager().getDictionaryEntry(
@@ -1174,7 +1182,7 @@ void RightPane::showDictionaryEntryInternal(const std::string& moduleName,
         currentDictKey_ = resolvedKey;
     }
     if (dictionaryKeyInput_) {
-        dictionaryKeyInput_->setSelectedValue(currentDictKey_);
+        dictionaryKeyInput_->setDisplayedValue(currentDictKey_);
     }
     if (dictionaryHtml_) {
         dictionaryHtml_->setHtml(html);
@@ -1246,18 +1254,42 @@ void RightPane::setCommentaryModule(const std::string& moduleName,
     }
 }
 
-void RightPane::setDictionaryModule(const std::string& moduleName) {
+void RightPane::setDictionaryModule(const std::string& moduleName,
+                                    bool loadKeys) {
+    if (moduleName == currentDictionary_ &&
+        dictionaryKeysModule_ == moduleName) {
+        module_choice::applyChoiceValue(dictionaryChoice_,
+                                        dictionaryChoiceModules_,
+                                        dictionaryChoiceLabels_,
+                                        moduleName);
+        if (dictionaryKeyInput_) {
+            dictionaryKeyInput_->setDisplayedValue(currentDictKey_);
+        }
+        updateDictionaryNavigationChrome();
+        return;
+    }
+
     currentDictionary_ = moduleName;
 
     module_choice::applyChoiceValue(dictionaryChoice_,
                                     dictionaryChoiceModules_,
                                     dictionaryChoiceLabels_,
                                     moduleName);
-    populateDictionaryKeyChoices();
+    if (loadKeys) {
+        populateDictionaryKeyChoices();
+    } else {
+        dictionaryKeys_.reset();
+        dictionaryKeysModule_.clear();
+        if (dictionaryKeyInput_) {
+            dictionaryKeyInput_->setItems({});
+            dictionaryKeyInput_->setDisplayedValue(currentDictKey_);
+        }
+    }
     updateDictionaryNavigationChrome();
 }
 
-void RightPane::setGeneralBookModule(const std::string& moduleName) {
+void RightPane::setGeneralBookModule(const std::string& moduleName,
+                                     bool loadToc) {
     currentGeneralBook_ = moduleName;
 
     module_choice::applyChoiceValue(generalBookChoice_,
@@ -1265,7 +1297,14 @@ void RightPane::setGeneralBookModule(const std::string& moduleName) {
                                     generalBookChoiceLabels_,
                                     moduleName);
 
-    populateGeneralBookToc();
+    if (loadToc) {
+        populateGeneralBookToc();
+    } else {
+        generalBookToc_.clear();
+        if (generalBookTocChoice_) {
+            generalBookTocChoice_->clear();
+        }
+    }
 }
 
 bool RightPane::isDictionaryTabActive() const {
@@ -1374,21 +1413,22 @@ void RightPane::setStudyState(const std::string& commentaryModule,
     if (!commentaryModule.empty()) {
         setCommentaryModule(commentaryModule);
     }
+    currentDictKey_ = dictionaryKey;
     if (!dictionaryModule.empty()) {
-        setDictionaryModule(dictionaryModule);
+        setDictionaryModule(dictionaryModule, false);
     }
     if (!generalBookModule.empty()) {
-        setGeneralBookModule(generalBookModule);
+        setGeneralBookModule(generalBookModule, dictionaryActive);
     }
 
     currentCommentaryRef_ = commentaryReference;
-    currentDictKey_ = dictionaryKey;
     currentGeneralBookKey_ = generalBookKey;
-    if (dictionaryKeyInput_) {
-        dictionaryKeyInput_->setSelectedValue(currentDictKey_);
+    if (dictionaryModule.empty() && dictionaryKeyInput_) {
+        dictionaryKeyInput_->setDisplayedValue(currentDictKey_);
     }
-    populateDictionaryKeyChoices();
-    populateGeneralBookToc();
+    if (dictionaryActive) {
+        populateGeneralBookToc();
+    }
 
     setDictionaryTabActive(dictionaryActive);
     updateCommentaryEditorChrome();
@@ -1591,8 +1631,7 @@ void RightPane::refresh() {
     }
     // Lazy-load general books to avoid paying parse/render cost on every cold
     // tab activation when user is reading commentary.
-    if (!currentGeneralBook_.empty() &&
-        (secondaryTabIsGeneralBooks_ || !currentGeneralBookKey_.empty())) {
+    if (!currentGeneralBook_.empty() && secondaryTabIsGeneralBooks_) {
         showGeneralBookEntry(currentGeneralBook_, currentGeneralBookKey_);
     }
 
@@ -1720,7 +1759,7 @@ void RightPane::populateCommentaryModules() {
     updateCommentaryEditorChrome();
 }
 
-void RightPane::populateDictionaryModules() {
+void RightPane::populateDictionaryModules(bool eagerKeyLoad) {
     if (!dictionaryChoice_) return;
 
     auto mods = app_->swordManager().getDictionaryModules();
@@ -1730,14 +1769,24 @@ void RightPane::populateDictionaryModules() {
 
     if (dictionaryChoice_->size() > 0) {
         currentDictionary_ = dictionaryChoiceModules_.front();
-        populateDictionaryKeyChoices();
+        if (eagerKeyLoad) {
+            populateDictionaryKeyChoices();
+        } else {
+            dictionaryKeys_.reset();
+            dictionaryKeysModule_.clear();
+            if (dictionaryKeyInput_) {
+                dictionaryKeyInput_->setItems({});
+                dictionaryKeyInput_->setDisplayedValue(currentDictKey_);
+            }
+        }
     } else {
-        dictionaryKeys_.clear();
+        dictionaryKeys_.reset();
+        dictionaryKeysModule_.clear();
         currentDictionary_.clear();
         currentDictKey_.clear();
         if (dictionaryKeyInput_) {
             dictionaryKeyInput_->setItems({});
-            dictionaryKeyInput_->setSelectedValue("");
+            dictionaryKeyInput_->setDisplayedValue("");
         }
         if (dictionaryHtml_) {
             dictionaryHtml_->setHtml(
@@ -1751,15 +1800,25 @@ void RightPane::populateDictionaryKeyChoices() {
     if (!dictionaryKeyInput_ || !app_) return;
 
     if (currentDictionary_.empty()) {
-        dictionaryKeys_.clear();
+        dictionaryKeys_.reset();
+        dictionaryKeysModule_.clear();
         dictionaryKeyInput_->setItems({});
-        dictionaryKeyInput_->setSelectedValue(currentDictKey_);
+        dictionaryKeyInput_->setDisplayedValue(currentDictKey_);
         return;
     }
 
+    ensureDictionaryKeysLoaded();
+    dictionaryKeyInput_->setDisplayedValue(currentDictKey_);
+}
+
+void RightPane::ensureDictionaryKeysLoaded() {
+    if (!dictionaryKeyInput_ || !app_ || currentDictionary_.empty()) return;
+    if (dictionaryKeysModule_ == currentDictionary_ && dictionaryKeys_) return;
+
     dictionaryKeys_ = app_->swordManager().getDictionaryKeys(currentDictionary_);
-    dictionaryKeyInput_->setItems(dictionaryKeys_);
-    dictionaryKeyInput_->setSelectedValue(currentDictKey_);
+    dictionaryKeysModule_ = currentDictionary_;
+    dictionaryKeyInput_->setItemsView(dictionaryKeys_.get());
+    updateDictionaryNavigationChrome();
 }
 
 void RightPane::updateDictionaryNavigationChrome() {
@@ -1767,7 +1826,8 @@ void RightPane::updateDictionaryNavigationChrome() {
     const bool canGoBack = keyIndex > 0;
     const bool canGoForward =
         keyIndex >= 0 &&
-        keyIndex + 1 < static_cast<int>(dictionaryKeys_.size());
+        dictionaryKeys_ &&
+        keyIndex + 1 < static_cast<int>(dictionaryKeys_->size());
 
     if (dictionaryBackButton_) {
         if (canGoBack) dictionaryBackButton_->activate();
@@ -1782,42 +1842,44 @@ void RightPane::updateDictionaryNavigationChrome() {
 }
 
 int RightPane::currentDictionaryKeyIndex() const {
-    if (currentDictKey_.empty() || dictionaryKeys_.empty()) {
+    if (currentDictKey_.empty() || !dictionaryKeys_ || dictionaryKeys_->empty()) {
         return -1;
     }
 
-    auto it = std::find(dictionaryKeys_.begin(), dictionaryKeys_.end(),
+    auto it = std::find(dictionaryKeys_->begin(), dictionaryKeys_->end(),
                         currentDictKey_);
-    if (it == dictionaryKeys_.end()) {
+    if (it == dictionaryKeys_->end()) {
         std::string selected = dictionaryKeyInput_
             ? dictionaryKeyInput_->selectedValue()
             : "";
         if (!selected.empty()) {
-            it = std::find(dictionaryKeys_.begin(), dictionaryKeys_.end(),
+            it = std::find(dictionaryKeys_->begin(), dictionaryKeys_->end(),
                            selected);
         }
     }
-    if (it == dictionaryKeys_.end()) return -1;
-    return static_cast<int>(it - dictionaryKeys_.begin());
+    if (it == dictionaryKeys_->end()) return -1;
+    return static_cast<int>(it - dictionaryKeys_->begin());
 }
 
 void RightPane::showAdjacentDictionaryEntry(int delta) {
-    if (currentDictionary_.empty() || dictionaryKeys_.empty()) return;
+    if (currentDictionary_.empty() || !dictionaryKeys_ || dictionaryKeys_->empty()) {
+        return;
+    }
 
     int keyIndex = currentDictionaryKeyIndex();
     if (keyIndex < 0) return;
 
     int newIndex = keyIndex + delta;
-    if (newIndex < 0 || newIndex >= static_cast<int>(dictionaryKeys_.size())) {
+    if (newIndex < 0 || newIndex >= static_cast<int>(dictionaryKeys_->size())) {
         updateDictionaryNavigationChrome();
         return;
     }
 
     showDictionaryEntryInternal(currentDictionary_,
-                                dictionaryKeys_[static_cast<size_t>(newIndex)]);
+                                (*dictionaryKeys_)[static_cast<size_t>(newIndex)]);
 }
 
-void RightPane::populateGeneralBookModules() {
+void RightPane::populateGeneralBookModules(bool eagerLoad) {
     if (!generalBookChoice_) return;
 
     auto mods = app_->swordManager().getGeneralBookModules();
@@ -1827,8 +1889,15 @@ void RightPane::populateGeneralBookModules() {
 
     if (generalBookChoice_->size() > 0) {
         currentGeneralBook_ = generalBookChoiceModules_.front();
-        populateGeneralBookToc();
-        showGeneralBookEntry(currentGeneralBook_, currentGeneralBookKey_);
+        if (eagerLoad) {
+            populateGeneralBookToc();
+            showGeneralBookEntry(currentGeneralBook_, currentGeneralBookKey_);
+        } else {
+            generalBookToc_.clear();
+            if (generalBookTocChoice_) {
+                generalBookTocChoice_->clear();
+            }
+        }
     } else {
         currentGeneralBook_.clear();
         currentGeneralBookKey_.clear();

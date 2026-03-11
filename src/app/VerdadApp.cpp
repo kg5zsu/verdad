@@ -364,17 +364,20 @@ bool VerdadApp::initialize(int argc, char* argv[]) {
     Fl::scheme("gtk+");
     Fl_File_Icon::load_system_icons();
 
-    // Enumerate system fonts
-    enumerateSystemFonts();
-
     // Create main window
     mainWindow_ = std::make_unique<MainWindow>(this, 1200, 800, "Verdad Bible Study");
 
     // Load user preferences
-    loadPreferences();
+    bool loadedPreferences = loadPreferences();
 
-    // Ensure appearance is applied even when no preference file exists.
-    setAppearanceSettings(appearanceSettings_);
+    // Enumerate system fonts lazily when the settings dialog needs them.
+    if (!loadedPreferences) {
+        // Ensure appearance is applied even when no preference file exists.
+        setAppearanceSettings(appearanceSettings_);
+        if (mainWindow_) {
+            mainWindow_->ensureDefaultStudyTab();
+        }
+    }
 
     // Index current Bible first, then queue remaining Bible modules.
     if (searchIndexer_) {
@@ -450,8 +453,8 @@ void VerdadApp::ensureConfigDir() {
 #endif
 }
 
-void VerdadApp::loadPreferences() {
-    loadPreferencesFromFile(getConfigDir() + "/preferences.conf", false);
+bool VerdadApp::loadPreferences() {
+    return loadPreferencesFromFile(getConfigDir() + "/preferences.conf", false);
 }
 
 bool VerdadApp::loadPreferencesFromFile(const std::string& prefFile,
@@ -529,6 +532,7 @@ bool VerdadApp::applyPreferencesMap(const PreferenceMap& prefs,
     }
     setPreviewDictionarySettings(importedPreview);
     setOptionDisplaySettings(importedOptions);
+    setAppearanceSettings(importedAppearance);
 
     // New session format: restore full window/tabs/splitter state.
     if (prefs.find("study_tab_count") != prefs.end()) {
@@ -538,7 +542,6 @@ bool VerdadApp::applyPreferencesMap(const PreferenceMap& prefs,
         }
 
         mainWindow_->restoreSessionState(state);
-        setAppearanceSettings(importedAppearance);
         return true;
     }
 
@@ -561,7 +564,6 @@ bool VerdadApp::applyPreferencesMap(const PreferenceMap& prefs,
         }
     }
 
-    setAppearanceSettings(importedAppearance);
     return true;
 }
 
@@ -811,6 +813,13 @@ std::string VerdadApp::preferredWordDictionary(
     return "";
 }
 
+const std::vector<std::string>& VerdadApp::systemFontFamilies() const {
+    if (systemFontFamilies_.empty()) {
+        const_cast<VerdadApp*>(this)->enumerateSystemFonts();
+    }
+    return systemFontFamilies_;
+}
+
 Fl_Font VerdadApp::appFont() const {
     return fltkFontFromFamily(appearanceSettings_.appFontName);
 }
@@ -886,6 +895,8 @@ static std::string stripRegularSuffix(const char* name) {
 }
 
 void VerdadApp::enumerateSystemFonts() {
+    if (!systemFontFamilies_.empty() || !fontFamilyMap_.empty()) return;
+
     Fl_Font count = Fl::set_fonts("-*");
 
     std::set<std::string> families;
@@ -949,6 +960,10 @@ void VerdadApp::enumerateSystemFonts() {
 }
 
 Fl_Font VerdadApp::fltkFontFromFamily(const std::string& family) const {
+    if (fontFamilyMap_.empty()) {
+        const_cast<VerdadApp*>(this)->enumerateSystemFonts();
+    }
+
     std::string lower = family;
     std::transform(lower.begin(), lower.end(), lower.begin(),
                    [](unsigned char c) { return std::tolower(c); });
@@ -972,6 +987,10 @@ Fl_Font VerdadApp::fltkFontFromFamily(const std::string& family) const {
 }
 
 Fl_Font VerdadApp::boldFltkFont(Fl_Font regular) const {
+    if (boldVariantMap_.empty() && fontFamilyMap_.empty()) {
+        const_cast<VerdadApp*>(this)->enumerateSystemFonts();
+    }
+
     auto it = boldVariantMap_.find(regular);
     if (it != boldVariantMap_.end()) return it->second;
     return regular;  // no bold variant found; return font unchanged

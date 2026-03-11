@@ -597,7 +597,6 @@ MainWindow::MainWindow(VerdadApp* app, int W, int H, const char* title)
     end();
     callback(onWindowClose, this);
 
-    addStudyTab("", "Genesis", 1, 1);
     layoutStudyTabHeader();
 
     lastUserInteraction_ = std::chrono::steady_clock::now();
@@ -864,7 +863,14 @@ void MainWindow::activateStudyTab(int index) {
                from, index, step.elapsedMs());
     updateStatusBar();
 
-    scheduleBackgroundPrewarm(0.2);
+    if (from >= 0) {
+        scheduleBackgroundPrewarm(0.2);
+    }
+}
+
+void MainWindow::ensureDefaultStudyTab() {
+    if (!studyTabs_.empty()) return;
+    addStudyTab("", "Genesis", 1, 1);
 }
 
 void MainWindow::layoutStudyTabHeader() {
@@ -1783,7 +1789,6 @@ void MainWindow::restoreSessionState(const SessionState& state) {
     }
 
     redraw();
-    scheduleBackgroundPrewarm(0.1);
     updateStatusBar();
 }
 

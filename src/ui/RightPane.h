@@ -81,10 +81,12 @@ public:
                              bool activateCurrentVerse = false);
 
     /// Set the current dictionary module
-    void setDictionaryModule(const std::string& moduleName);
+    void setDictionaryModule(const std::string& moduleName,
+                             bool loadKeys = true);
 
     /// Set the current general book module
-    void setGeneralBookModule(const std::string& moduleName);
+    void setGeneralBookModule(const std::string& moduleName,
+                              bool loadToc = true);
 
     /// Current commentary module
     const std::string& currentCommentaryModule() const { return currentCommentary_; }
@@ -212,7 +214,8 @@ private:
     HtmlWidget* dictionaryHtml_;
     std::vector<std::string> dictionaryChoiceModules_;
     std::vector<std::string> dictionaryChoiceLabels_;
-    std::vector<std::string> dictionaryKeys_;
+    std::shared_ptr<const std::vector<std::string>> dictionaryKeys_;
+    std::string dictionaryKeysModule_;
     std::string currentDictionary_;
     std::string currentDictKey_;
 
@@ -255,7 +258,8 @@ private:
                                    const std::string& reference);
 
     /// Populate dictionary module choices
-    void populateDictionaryModules();
+    void populateDictionaryModules(bool eagerKeyLoad);
+    void ensureDictionaryKeysLoaded();
     void populateDictionaryKeyChoices();
     void updateDictionaryNavigationChrome();
     int currentDictionaryKeyIndex() const;
@@ -264,7 +268,7 @@ private:
                                      const std::string& key);
 
     /// Populate general book module choices
-    void populateGeneralBookModules();
+    void populateGeneralBookModules(bool eagerLoad);
     void populateGeneralBookToc();
 
     void layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH);

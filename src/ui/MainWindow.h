@@ -123,6 +123,12 @@ public:
                                  int appFontSize,
                                  const std::string& textCssOverride);
 
+    /// Ensure the window has at least one study tab.
+    void ensureDefaultStudyTab();
+
+    /// True when session state has created at least one study tab.
+    bool hasStudyTabs() const { return !studyTabs_.empty(); }
+
     /// Capture all session-restorable state.
     SessionState captureSessionState();
 

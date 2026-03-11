@@ -165,7 +165,8 @@ public:
                                    std::string* resolvedKeyOut = nullptr);
 
     /// Return traversable keys for a dictionary or lexicon module.
-    std::vector<std::string> getDictionaryKeys(const std::string& moduleName);
+    std::shared_ptr<const std::vector<std::string>> getDictionaryKeys(
+        const std::string& moduleName);
 
     /// Get a general book entry
     std::string getGeneralBookEntry(const std::string& moduleName,
@@ -281,7 +282,9 @@ private:
     mutable std::unordered_map<std::string, VerseHtmlCacheEntry> verseHtmlCache_;
     mutable std::list<std::string> verseHtmlLru_;
     static constexpr size_t kVerseHtmlCacheLimit = 2048;
-    mutable std::unordered_map<std::string, std::vector<std::string>> dictionaryKeyCache_;
+    mutable std::unordered_map<
+        std::string,
+        std::shared_ptr<const std::vector<std::string>>> dictionaryKeyCache_;
 
     /// Get rendered chapter heading for the requested chapter.
     /// Caller must hold mutex_.
