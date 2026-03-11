@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -36,6 +37,14 @@ constexpr int kStudypadToolbarButtonH = 26;
 constexpr int kStudypadToolbarIconSize = 22;
 constexpr int kStudypadToolbarButtonGap = 2;
 constexpr int kDictionaryNavButtonW = 28;
+constexpr int kGeneralBookNavButtonW = 28;
+constexpr int kGeneralBookContentsButtonW = 78;
+constexpr int kGeneralBookOverlayHeaderH = 24;
+constexpr int kGeneralBookOverlayMinW = 220;
+constexpr int kGeneralBookOverlayMaxW = 360;
+constexpr int kGeneralBookLazyThresholdPx = 280;
+constexpr int kGeneralBookVisibleAnchorMarginPx = 36;
+constexpr int kGeneralBookMaxLoadedSections = 8;
 
 std::string composeCss(const std::string& base, const std::string& extra) {
     if (base.empty()) return extra;
@@ -565,6 +574,46 @@ int findGeneralBookTocIndex(
     return -1;
 }
 
+std::string generalBookSectionAnchorId(int tocIndex) {
+    return "gb-section-" + std::to_string(tocIndex);
+}
+
+void noteGeneralBookSectionCacheUse(std::deque<std::string>& order,
+                                    const std::string& cacheKey) {
+    auto it = std::find(order.begin(), order.end(), cacheKey);
+    if (it != order.end()) {
+        order.erase(it);
+    }
+    order.push_back(cacheKey);
+}
+
+void evictGeneralBookSectionCache(
+        std::unordered_map<std::string, std::string>& cache,
+        std::deque<std::string>& order,
+        size_t limit) {
+    while (order.size() > limit) {
+        cache.erase(order.front());
+        order.pop_front();
+    }
+}
+
+int parseGeneralBookLoadedEdge(const std::string& html, bool wantLast) {
+    constexpr const char* marker = "id=\"gb-section-";
+    size_t pos = wantLast ? html.rfind(marker) : html.find(marker);
+    if (pos == std::string::npos) return -1;
+    pos += std::strlen(marker);
+
+    int value = 0;
+    bool sawDigit = false;
+    while (pos < html.size() &&
+           std::isdigit(static_cast<unsigned char>(html[pos]))) {
+        sawDigit = true;
+        value = (value * 10) + (html[pos] - '0');
+        ++pos;
+    }
+    return sawDigit ? value : -1;
+}
+
 } // namespace
 
 RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
@@ -593,8 +642,13 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     , currentDictKey_()
     , generalBooksGroup_(nullptr)
     , generalBookChoice_(nullptr)
-    , generalBookTocChoice_(nullptr)
+    , generalBookBackButton_(nullptr)
+    , generalBookForwardButton_(nullptr)
+    , generalBookContentsButton_(nullptr)
     , generalBookHtml_(nullptr)
+    , generalBookTocPanel_(nullptr)
+    , generalBookTocPanelHeader_(nullptr)
+    , generalBookTocTree_(nullptr)
     , currentGeneralBook_()
     , currentGeneralBookKey_()
     , documentsGroup_(nullptr)
@@ -674,11 +728,22 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     generalBooksGroup_->begin();
     generalBookChoice_ = new Fl_Choice(tileX + 2, panelY + 2, tileW - 4, choiceH);
     generalBookChoice_->callback(onGeneralBookModuleChange, this);
-    generalBookTocChoice_ = new Fl_Choice(tileX + 2,
-                                          panelY + choiceH + 4,
-                                          tileW - 4,
-                                          choiceH);
-    generalBookTocChoice_->callback(onGeneralBookTocChange, this);
+    generalBookBackButton_ = new Fl_Button(tileX + 2, panelY + choiceH + 4,
+                                           kGeneralBookNavButtonW, choiceH, "@<-");
+    generalBookBackButton_->callback(onGeneralBookBack, this);
+    generalBookBackButton_->tooltip("Show previous table-of-contents entry");
+    generalBookForwardButton_ = new Fl_Button(tileX + 2 + kGeneralBookNavButtonW,
+                                              panelY + choiceH + 4,
+                                              kGeneralBookNavButtonW, choiceH, "@->");
+    generalBookForwardButton_->callback(onGeneralBookForward, this);
+    generalBookForwardButton_->tooltip("Show next table-of-contents entry");
+    generalBookContentsButton_ = new Fl_Button(tileX + 2 + (kGeneralBookNavButtonW * 2) + 2,
+                                               panelY + choiceH + 4,
+                                               kGeneralBookContentsButtonW,
+                                               choiceH,
+                                               "Contents");
+    generalBookContentsButton_->callback(onGeneralBookContents, this);
+    generalBookContentsButton_->tooltip("Open the general-book contents tree");
 
     generalBookHtml_ = new HtmlWidget(tileX + 2,
                                       panelY + (choiceH * 2) + 6,
@@ -686,6 +751,35 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
                                       panelH - (choiceH * 2) - 8);
     generalBookHtml_->setLinkCallback(
         [this](const std::string& url) { onHtmlLink(url, false); });
+    generalBookHtml_->setScrollCallback(
+        [this](int scrollY) { onGeneralBookScroll(scrollY); });
+    generalBookTocPanel_ = new Fl_Group(tileX + 10,
+                                        panelY + (choiceH * 2) + 14,
+                                        std::min(kGeneralBookOverlayMaxW,
+                                                 std::max(kGeneralBookOverlayMinW,
+                                                          (tileW * 2) / 5)),
+                                        std::max(120, panelH - (choiceH * 2) - 28));
+    generalBookTocPanel_->box(FL_THIN_UP_BOX);
+    generalBookTocPanel_->color(FL_WHITE);
+    generalBookTocPanel_->begin();
+    generalBookTocPanelHeader_ = new Fl_Box(generalBookTocPanel_->x() + 8,
+                                            generalBookTocPanel_->y() + 2,
+                                            std::max(20, generalBookTocPanel_->w() - 16),
+                                            kGeneralBookOverlayHeaderH,
+                                            "Contents");
+    generalBookTocPanelHeader_->labelfont(FL_HELVETICA_BOLD);
+    generalBookTocPanelHeader_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    generalBookTocTree_ = new Fl_Tree(generalBookTocPanel_->x() + 4,
+                                      generalBookTocPanel_->y() + kGeneralBookOverlayHeaderH + 2,
+                                      std::max(20, generalBookTocPanel_->w() - 8),
+                                      std::max(40, generalBookTocPanel_->h() - kGeneralBookOverlayHeaderH - 6));
+    generalBookTocTree_->showroot(0);
+    generalBookTocTree_->selectmode(FL_TREE_SELECT_SINGLE);
+    generalBookTocTree_->item_reselect_mode(FL_TREE_SELECTABLE_ALWAYS);
+    generalBookTocTree_->when(FL_WHEN_CHANGED | FL_WHEN_RELEASE);
+    generalBookTocTree_->callback(onGeneralBookTreeSelect, this);
+    generalBookTocPanel_->end();
+    generalBookTocPanel_->hide();
     generalBooksGroup_->end();
     generalBooksGroup_->resizable(generalBookHtml_);
 
@@ -859,7 +953,9 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
     if (!commentaryGroup_ || !commentaryChoice_ || !commentaryEditButton_ ||
         !commentarySaveButton_ || !commentaryCancelButton_ || !commentaryHtml_ ||
         !commentaryEditor_ || !generalBooksGroup_ || !generalBookChoice_ ||
-        !generalBookTocChoice_ || !generalBookHtml_ ||
+        !generalBookBackButton_ || !generalBookForwardButton_ ||
+        !generalBookContentsButton_ || !generalBookHtml_ ||
+        !generalBookTocPanel_ || !generalBookTocPanelHeader_ || !generalBookTocTree_ ||
         !documentsGroup_ || !documentChoice_ || !documentNewButton_ ||
         !documentSaveButton_ || !documentExportButton_ || !documentDeleteButton_ ||
         !documentsEditor_) {
@@ -906,11 +1002,43 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
         ->resize(contentX, commentaryContentY, contentW, commentaryContentH);
 
     generalBookChoice_->resize(contentX, panelY + 2, contentW, rowH);
-    generalBookTocChoice_->resize(contentX, panelY + rowH + 4, contentW, rowH);
+    int generalBookNavY = panelY + rowH + 4;
+    generalBookBackButton_->resize(contentX,
+                                   generalBookNavY,
+                                   kGeneralBookNavButtonW,
+                                   rowH);
+    generalBookForwardButton_->resize(contentX + kGeneralBookNavButtonW,
+                                      generalBookNavY,
+                                      kGeneralBookNavButtonW,
+                                      rowH);
+    generalBookContentsButton_->resize(contentX + (kGeneralBookNavButtonW * 2) + buttonGap,
+                                       generalBookNavY,
+                                       std::min(kGeneralBookContentsButtonW,
+                                                std::max(60,
+                                                         contentW - (kGeneralBookNavButtonW * 2) - buttonGap)),
+                                       rowH);
+    int generalBookHtmlY = panelY + (rowH * 2) + 6;
+    int generalBookHtmlH = std::max(10, panelH - (rowH * 2) - 8);
     generalBookHtml_->resize(contentX,
-                             panelY + (rowH * 2) + 6,
+                             generalBookHtmlY,
                              contentW,
-                             std::max(10, panelH - (rowH * 2) - 8));
+                             generalBookHtmlH);
+
+    int overlayAvailW = std::max(120, contentW - 16);
+    int overlayW = std::min(overlayAvailW,
+                            std::clamp((contentW * 2) / 5,
+                                       kGeneralBookOverlayMinW,
+                                       kGeneralBookOverlayMaxW));
+    int overlayH = std::max(120, generalBookHtmlH - 16);
+    generalBookTocPanel_->resize(contentX + 8, generalBookHtmlY + 8, overlayW, overlayH);
+    generalBookTocPanelHeader_->resize(generalBookTocPanel_->x() + 8,
+                                       generalBookTocPanel_->y() + 2,
+                                       std::max(20, overlayW - 16),
+                                       kGeneralBookOverlayHeaderH);
+    generalBookTocTree_->resize(generalBookTocPanel_->x() + 4,
+                                generalBookTocPanel_->y() + kGeneralBookOverlayHeaderH + 2,
+                                std::max(20, overlayW - 8),
+                                std::max(40, overlayH - kGeneralBookOverlayHeaderH - 6));
 
     int docsButtonsW = studypadToolbarButtonsWidth();
     int documentChoiceW = std::max(20, contentW - docsButtonsW - kStudypadToolbarButtonGap);
@@ -959,7 +1087,9 @@ void RightPane::resize(int X, int Y, int W, int H) {
         !dictionaryBackButton_ || !dictionaryKeyInput_ || !dictionaryForwardButton_ ||
         !dictionaryChoice_ || !dictionaryHtml_ ||
         !generalBooksGroup_ ||
-        !generalBookChoice_ || !generalBookTocChoice_ ||
+        !generalBookChoice_ || !generalBookBackButton_ ||
+        !generalBookForwardButton_ || !generalBookContentsButton_ ||
+        !generalBookTocPanel_ || !generalBookTocPanelHeader_ || !generalBookTocTree_ ||
         !generalBookHtml_) {
         return;
     }
@@ -1010,6 +1140,25 @@ void RightPane::resize(int X, int Y, int W, int H) {
     }
     damage(FL_DAMAGE_ALL);
     redraw();
+}
+
+int RightPane::handle(int event) {
+    if (generalBookTocVisible_ && visibleTopTab() == TopTab::GeneralBooks) {
+        if (event == FL_PUSH) {
+            bool insidePanel = generalBookTocPanel_ && Fl::event_inside(generalBookTocPanel_);
+            bool insideButton = generalBookContentsButton_ &&
+                                Fl::event_inside(generalBookContentsButton_);
+            if (!insidePanel && !insideButton) {
+                showGeneralBookTocOverlay(false);
+            }
+        } else if ((event == FL_KEYDOWN || event == FL_SHORTCUT) &&
+                   Fl::event_key() == FL_Escape) {
+            showGeneralBookTocOverlay(false);
+            return 1;
+        }
+    }
+
+    return Fl_Group::handle(event);
 }
 
 void RightPane::showCommentary(const std::string& reference) {
@@ -1210,26 +1359,31 @@ void RightPane::showGeneralBookEntry(const std::string& moduleName,
     if (moduleChanged || generalBookToc_.empty()) {
         populateGeneralBookToc();
     }
-    currentGeneralBookKey_ = key;
-    if (currentGeneralBookKey_.empty() && !generalBookToc_.empty()) {
-        currentGeneralBookKey_ = generalBookToc_.front().key;
-    }
-    if (generalBookTocChoice_) {
-        for (int i = 0; i < generalBookTocChoice_->size(); ++i) {
-            const Fl_Menu_Item& item = generalBookTocChoice_->menu()[i];
-            if (item.label() && i < static_cast<int>(generalBookToc_.size()) &&
-                generalBookToc_[static_cast<size_t>(i)].key == currentGeneralBookKey_) {
-                generalBookTocChoice_->value(i);
-                break;
-            }
+
+    if (generalBookToc_.empty()) {
+        currentGeneralBookKey_.clear();
+        generalBookLoadedStart_ = -1;
+        generalBookLoadedEnd_ = -1;
+        showGeneralBookTocOverlay(false);
+        if (generalBookHtml_) {
+            generalBookScrollSyncing_ = true;
+            generalBookHtml_->setHtml(app_->swordManager().getGeneralBookEntry(moduleName, ""));
+            generalBookScrollSyncing_ = false;
         }
+        updateGeneralBookNavigationChrome();
+        return;
     }
 
-    std::string html = app_->swordManager().getGeneralBookEntry(
-        moduleName, currentGeneralBookKey_);
-    if (generalBookHtml_) {
-        generalBookHtml_->setHtml(html);
-    }
+    int targetIndex = findGeneralBookTocIndex(generalBookToc_, trimCopy(key));
+    if (targetIndex < 0) targetIndex = 0;
+
+    currentGeneralBookKey_ = generalBookToc_[static_cast<size_t>(targetIndex)].key;
+    generalBookLoadedStart_ = targetIndex;
+    generalBookLoadedEnd_ = targetIndex;
+    updateGeneralBookNavigationChrome();
+    syncGeneralBookTreeSelection();
+    rebuildGeneralBookWindow(targetIndex, true);
+    ensureGeneralBookViewportFilled();
 }
 
 void RightPane::setCommentaryModule(const std::string& moduleName,
@@ -1301,10 +1455,331 @@ void RightPane::setGeneralBookModule(const std::string& moduleName,
         populateGeneralBookToc();
     } else {
         generalBookToc_.clear();
-        if (generalBookTocChoice_) {
-            generalBookTocChoice_->clear();
+        generalBookTreeItemIndices_.clear();
+        generalBookLoadedStart_ = -1;
+        generalBookLoadedEnd_ = -1;
+        showGeneralBookTocOverlay(false);
+        if (generalBookTocTree_) generalBookTocTree_->clear();
+    }
+    updateGeneralBookNavigationChrome();
+}
+
+int RightPane::currentGeneralBookTocIndex() const {
+    return findGeneralBookTocIndex(generalBookToc_, currentGeneralBookKey_);
+}
+
+int RightPane::currentVisibleGeneralBookIndex() const {
+    int fallback = currentGeneralBookTocIndex();
+    if (!generalBookHtml_ || generalBookLoadedStart_ < 0 ||
+        generalBookLoadedEnd_ < generalBookLoadedStart_) {
+        return fallback;
+    }
+
+    int markerY = generalBookHtml_->scrollY() + kGeneralBookVisibleAnchorMarginPx;
+    int visibleIndex = generalBookLoadedStart_;
+    for (int tocIndex = generalBookLoadedStart_;
+         tocIndex <= generalBookLoadedEnd_;
+         ++tocIndex) {
+        int top = generalBookHtml_->elementTopById(generalBookSectionAnchorId(tocIndex));
+        if (top < 0) continue;
+        if (top <= markerY) {
+            visibleIndex = tocIndex;
+        } else {
+            break;
         }
     }
+    return visibleIndex;
+}
+
+std::string RightPane::generalBookSectionHtml(int tocIndex) {
+    if (!app_ || currentGeneralBook_.empty() ||
+        tocIndex < 0 || tocIndex >= static_cast<int>(generalBookToc_.size())) {
+        return "";
+    }
+
+    const std::string& key = generalBookToc_[static_cast<size_t>(tocIndex)].key;
+    std::string cacheKey = currentGeneralBook_ + "|" + key;
+    auto it = generalBookSectionCache_.find(cacheKey);
+    if (it != generalBookSectionCache_.end()) {
+        noteGeneralBookSectionCacheUse(generalBookSectionCacheOrder_, cacheKey);
+        return it->second;
+    }
+
+    std::string html = app_->swordManager().getGeneralBookEntry(currentGeneralBook_, key);
+    generalBookSectionCache_[cacheKey] = html;
+    noteGeneralBookSectionCacheUse(generalBookSectionCacheOrder_, cacheKey);
+    evictGeneralBookSectionCache(generalBookSectionCache_,
+                                 generalBookSectionCacheOrder_,
+                                 kGeneralBookSectionCacheLimit);
+    return html;
+}
+
+std::string RightPane::buildGeneralBookWindowHtml() {
+    if (generalBookLoadedStart_ < 0 || generalBookLoadedEnd_ < generalBookLoadedStart_ ||
+        generalBookLoadedStart_ >= static_cast<int>(generalBookToc_.size())) {
+        return "";
+    }
+
+    std::ostringstream html;
+    html << "<div class=\"general-book-stream\">\n";
+    for (int tocIndex = generalBookLoadedStart_;
+         tocIndex <= generalBookLoadedEnd_ &&
+         tocIndex < static_cast<int>(generalBookToc_.size());
+         ++tocIndex) {
+        html << "<div class=\"general-book-section\" id=\""
+             << generalBookSectionAnchorId(tocIndex) << "\" data-gb-index=\""
+             << tocIndex << "\">\n";
+        html << generalBookSectionHtml(tocIndex) << "\n";
+        html << "</div>\n";
+    }
+    html << "</div>\n";
+    return html.str();
+}
+
+void RightPane::rebuildGeneralBookWindow(int preserveIndex,
+                                         bool alignPreserveToTop) {
+    if (!generalBookHtml_) return;
+
+    const std::string preserveAnchor =
+        generalBookSectionAnchorId(std::clamp(preserveIndex,
+                                              generalBookLoadedStart_,
+                                              std::max(generalBookLoadedStart_,
+                                                       generalBookLoadedEnd_)));
+    int oldScrollY = generalBookHtml_->scrollY();
+    int oldAnchorTop = generalBookHtml_->elementTopById(preserveAnchor);
+
+    generalBookScrollSyncing_ = true;
+    generalBookHtml_->setHtml(buildGeneralBookWindowHtml());
+
+    if (alignPreserveToTop) {
+        generalBookHtml_->scrollToAnchor(preserveAnchor);
+    } else if (oldAnchorTop >= 0) {
+        int newAnchorTop = generalBookHtml_->elementTopById(preserveAnchor);
+        if (newAnchorTop >= 0) {
+            generalBookHtml_->setScrollY(oldScrollY + (newAnchorTop - oldAnchorTop));
+        }
+    }
+    generalBookScrollSyncing_ = false;
+
+    int visibleIndex = currentVisibleGeneralBookIndex();
+    if (visibleIndex >= 0 &&
+        visibleIndex < static_cast<int>(generalBookToc_.size())) {
+        currentGeneralBookKey_ =
+            generalBookToc_[static_cast<size_t>(visibleIndex)].key;
+    }
+    updateGeneralBookNavigationChrome();
+    syncGeneralBookTreeSelection();
+}
+
+void RightPane::ensureGeneralBookViewportFilled() {
+    if (!generalBookHtml_ || generalBookToc_.empty() ||
+        generalBookLoadedStart_ < 0 || generalBookLoadedEnd_ < generalBookLoadedStart_) {
+        return;
+    }
+
+    int guard = 0;
+    while (guard++ < kGeneralBookMaxLoadedSections &&
+           generalBookLoadedEnd_ + 1 < static_cast<int>(generalBookToc_.size()) &&
+           generalBookHtml_->contentHeight() <=
+               generalBookHtml_->viewportHeightPixels() + kGeneralBookLazyThresholdPx &&
+           (generalBookLoadedEnd_ - generalBookLoadedStart_ + 1) < kGeneralBookMaxLoadedSections) {
+        int preserveIndex = currentGeneralBookTocIndex();
+        if (preserveIndex < 0) preserveIndex = generalBookLoadedStart_;
+        ++generalBookLoadedEnd_;
+        rebuildGeneralBookWindow(preserveIndex, false);
+    }
+}
+
+void RightPane::maybeExtendGeneralBookWindow(int scrollY) {
+    if (!generalBookHtml_ || generalBookToc_.empty() ||
+        generalBookLoadedStart_ < 0 || generalBookLoadedEnd_ < generalBookLoadedStart_) {
+        return;
+    }
+
+    int visibleIndex = currentVisibleGeneralBookIndex();
+    if (visibleIndex >= 0 &&
+        visibleIndex < static_cast<int>(generalBookToc_.size()) &&
+        currentGeneralBookKey_ != generalBookToc_[static_cast<size_t>(visibleIndex)].key) {
+        currentGeneralBookKey_ =
+            generalBookToc_[static_cast<size_t>(visibleIndex)].key;
+        updateGeneralBookNavigationChrome();
+        syncGeneralBookTreeSelection();
+    }
+
+    int viewportH = generalBookHtml_->viewportHeightPixels();
+    int remainingBottom =
+        generalBookHtml_->contentHeight() - (scrollY + viewportH);
+
+    if (remainingBottom <= kGeneralBookLazyThresholdPx &&
+        generalBookLoadedEnd_ + 1 < static_cast<int>(generalBookToc_.size())) {
+        int preserveIndex = std::max(visibleIndex, generalBookLoadedStart_);
+        ++generalBookLoadedEnd_;
+        if (generalBookLoadedEnd_ - generalBookLoadedStart_ + 1 > kGeneralBookMaxLoadedSections &&
+            generalBookLoadedStart_ < preserveIndex) {
+            ++generalBookLoadedStart_;
+        }
+        rebuildGeneralBookWindow(preserveIndex, false);
+        return;
+    }
+
+    if (scrollY <= kGeneralBookLazyThresholdPx && generalBookLoadedStart_ > 0) {
+        int preserveIndex = std::clamp(visibleIndex,
+                                       generalBookLoadedStart_,
+                                       generalBookLoadedEnd_);
+        --generalBookLoadedStart_;
+        if (generalBookLoadedEnd_ - generalBookLoadedStart_ + 1 > kGeneralBookMaxLoadedSections &&
+            generalBookLoadedEnd_ > preserveIndex) {
+            --generalBookLoadedEnd_;
+        }
+        rebuildGeneralBookWindow(preserveIndex, false);
+    }
+}
+
+void RightPane::onGeneralBookScroll(int scrollY) {
+    if (generalBookScrollSyncing_ || visibleTopTab() != TopTab::GeneralBooks) {
+        return;
+    }
+    maybeExtendGeneralBookWindow(scrollY);
+}
+
+void RightPane::showGeneralBookTocOverlay(bool show) {
+    generalBookTocVisible_ = show && generalBookTocPanel_ &&
+                             generalBookTocTree_ &&
+                             !generalBookTreeItemIndices_.empty();
+    if (generalBookTocPanel_) {
+        if (generalBookTocVisible_) {
+            syncGeneralBookTreeSelection();
+            generalBookTocPanel_->show();
+        } else {
+            generalBookTocPanel_->hide();
+        }
+        generalBookTocPanel_->redraw();
+    }
+    updateGeneralBookNavigationChrome();
+}
+
+void RightPane::toggleGeneralBookTocOverlay() {
+    showGeneralBookTocOverlay(!generalBookTocVisible_);
+}
+
+void RightPane::updateGeneralBookNavigationChrome() {
+    int tocIndex = currentGeneralBookTocIndex();
+    bool canGoBack = tocIndex > 0;
+    bool canGoForward =
+        tocIndex >= 0 && tocIndex + 1 < static_cast<int>(generalBookToc_.size());
+    bool hasToc = !generalBookToc_.empty();
+
+    if (generalBookBackButton_) {
+        if (canGoBack) generalBookBackButton_->activate();
+        else generalBookBackButton_->deactivate();
+        generalBookBackButton_->redraw();
+    }
+    if (generalBookForwardButton_) {
+        if (canGoForward) generalBookForwardButton_->activate();
+        else generalBookForwardButton_->deactivate();
+        generalBookForwardButton_->redraw();
+    }
+    if (generalBookContentsButton_) {
+        if (hasToc) generalBookContentsButton_->activate();
+        else generalBookContentsButton_->deactivate();
+        generalBookContentsButton_->copy_label(generalBookTocVisible_ ? "Hide" : "Contents");
+        generalBookContentsButton_->tooltip(
+            generalBookTocVisible_
+                ? "Hide the general-book contents tree"
+                : "Open the general-book contents tree");
+        generalBookContentsButton_->redraw();
+    }
+}
+
+void RightPane::showAdjacentGeneralBookEntry(int delta) {
+    int tocIndex = currentGeneralBookTocIndex();
+    if (tocIndex < 0) return;
+
+    int newIndex = tocIndex + delta;
+    if (newIndex < 0 || newIndex >= static_cast<int>(generalBookToc_.size())) {
+        updateGeneralBookNavigationChrome();
+        return;
+    }
+
+    showGeneralBookEntry(currentGeneralBook_,
+                         generalBookToc_[static_cast<size_t>(newIndex)].key);
+}
+
+void RightPane::rebuildGeneralBookTocTree() {
+    if (!generalBookTocTree_) return;
+
+    generalBookTreeSyncing_ = true;
+    generalBookTocTree_->clear();
+    generalBookTreeItemIndices_.clear();
+
+    std::vector<Fl_Tree_Item*> depthItems;
+    depthItems.reserve(16);
+    for (size_t i = 0; i < generalBookToc_.size(); ++i) {
+        const auto& entry = generalBookToc_[i];
+        Fl_Tree_Item* item = nullptr;
+        if (entry.depth <= 0 || depthItems.empty()) {
+            item = generalBookTocTree_->add(entry.label.c_str());
+        } else {
+            int parentDepth = std::min<int>(entry.depth - 1,
+                                            static_cast<int>(depthItems.size()) - 1);
+            item = generalBookTocTree_->add(depthItems[static_cast<size_t>(parentDepth)],
+                                            entry.label.c_str());
+        }
+        if (!item) continue;
+
+        generalBookTreeItemIndices_[item] = static_cast<int>(i);
+
+        if (entry.depth <= 0) {
+            generalBookTocTree_->open(item, 0);
+            depthItems.assign(1, item);
+        } else {
+            if (static_cast<int>(depthItems.size()) <= entry.depth) {
+                depthItems.resize(static_cast<size_t>(entry.depth + 1), nullptr);
+            }
+            depthItems[static_cast<size_t>(entry.depth)] = item;
+        }
+    }
+    generalBookTreeSyncing_ = false;
+    syncGeneralBookTreeSelection();
+}
+
+void RightPane::syncGeneralBookTreeSelection() {
+    if (!generalBookTocTree_ || generalBookTreeItemIndices_.empty()) return;
+
+    int tocIndex = currentGeneralBookTocIndex();
+    if (tocIndex < 0) return;
+
+    Fl_Tree_Item* selected = nullptr;
+    for (const auto& [item, index] : generalBookTreeItemIndices_) {
+        if (index != tocIndex) continue;
+        selected = const_cast<Fl_Tree_Item*>(item);
+        break;
+    }
+    if (!selected) return;
+
+    generalBookTreeSyncing_ = true;
+    for (Fl_Tree_Item* parent = selected->parent(); parent; parent = parent->parent()) {
+        generalBookTocTree_->open(parent, 0);
+    }
+    generalBookTocTree_->select_only(selected, 0);
+    generalBookTocTree_->show_item(selected);
+    generalBookTreeSyncing_ = false;
+}
+
+void RightPane::restoreGeneralBookLoadedRangeFromHtml(const std::string& html) {
+    int parsedStart = parseGeneralBookLoadedEdge(html, false);
+    int parsedEnd = parseGeneralBookLoadedEdge(html, true);
+    if (parsedStart >= 0 && parsedEnd >= parsedStart &&
+        parsedEnd < static_cast<int>(generalBookToc_.size())) {
+        generalBookLoadedStart_ = parsedStart;
+        generalBookLoadedEnd_ = parsedEnd;
+    } else {
+        int tocIndex = currentGeneralBookTocIndex();
+        generalBookLoadedStart_ = tocIndex;
+        generalBookLoadedEnd_ = tocIndex;
+    }
+    updateGeneralBookNavigationChrome();
+    syncGeneralBookTreeSelection();
 }
 
 bool RightPane::isDictionaryTabActive() const {
@@ -1313,6 +1788,9 @@ bool RightPane::isDictionaryTabActive() const {
 
 void RightPane::setDictionaryTabActive(bool dictionaryActive) {
     secondaryTabIsGeneralBooks_ = dictionaryActive;
+    if (!dictionaryActive) {
+        showGeneralBookTocOverlay(false);
+    }
     if (!tabs_) return;
     if (visibleTopTab() == TopTab::Documents) {
         activeTopTab_ = TopTab::Documents;
@@ -1330,6 +1808,7 @@ bool RightPane::isDocumentsTabActive() const {
 void RightPane::setDocumentsTabActive(bool active) {
     if (!tabs_) return;
     if (active) {
+        showGeneralBookTocOverlay(false);
         tabs_->value(documentsGroup_);
         activeTopTab_ = TopTab::Documents;
         refreshDocumentChoices();
@@ -1361,7 +1840,10 @@ void RightPane::setDictionaryPaneHeight(int height) {
     if (!contentTile_ || !tabs_ || !commentaryGroup_ || !commentaryChoice_ ||
         !commentaryHtml_ || !commentaryEditor_ ||
         !generalBooksGroup_ || !generalBookChoice_ ||
-        !generalBookTocChoice_ || !generalBookHtml_ ||
+        !generalBookBackButton_ || !generalBookForwardButton_ ||
+        !generalBookContentsButton_ || !generalBookTocPanel_ ||
+        !generalBookTocPanelHeader_ || !generalBookTocTree_ ||
+        !generalBookHtml_ ||
         !documentsGroup_ || !documentsEditor_ ||
         !dictionaryPaneGroup_ || !dictionaryBackButton_ || !dictionaryKeyInput_ ||
         !dictionaryForwardButton_ ||
@@ -1410,6 +1892,7 @@ void RightPane::setStudyState(const std::string& commentaryModule,
                               const std::string& generalBookKey,
                               bool dictionaryActive) {
     perf::ScopeTimer timer("RightPane::setStudyState");
+    showGeneralBookTocOverlay(false);
     if (!commentaryModule.empty()) {
         setCommentaryModule(commentaryModule);
     }
@@ -1418,7 +1901,7 @@ void RightPane::setStudyState(const std::string& commentaryModule,
         setDictionaryModule(dictionaryModule, false);
     }
     if (!generalBookModule.empty()) {
-        setGeneralBookModule(generalBookModule, dictionaryActive);
+        setGeneralBookModule(generalBookModule, true);
     }
 
     currentCommentaryRef_ = commentaryReference;
@@ -1426,10 +1909,6 @@ void RightPane::setStudyState(const std::string& commentaryModule,
     if (dictionaryModule.empty() && dictionaryKeyInput_) {
         dictionaryKeyInput_->setDisplayedValue(currentDictKey_);
     }
-    if (dictionaryActive) {
-        populateGeneralBookToc();
-    }
-
     setDictionaryTabActive(dictionaryActive);
     updateCommentaryEditorChrome();
 }
@@ -1537,6 +2016,9 @@ void RightPane::restoreDisplayBuffer(const DisplayBuffer& buffer, bool dictionar
         dictionaryHtml_->restoreSnapshot(snap);
     }
     if (generalBookHtml_ && buffer.generalBook.valid) {
+        if (generalBookToc_.empty() && !currentGeneralBook_.empty()) {
+            populateGeneralBookToc();
+        }
         HtmlWidget::Snapshot snap;
         snap.doc = buffer.generalBook.doc;
         snap.html = buffer.generalBook.html;
@@ -1546,7 +2028,10 @@ void RightPane::restoreDisplayBuffer(const DisplayBuffer& buffer, bool dictionar
         snap.renderWidth = buffer.generalBook.renderWidth;
         snap.scrollbarVisible = buffer.generalBook.scrollbarVisible;
         snap.valid = buffer.generalBook.valid;
+        generalBookScrollSyncing_ = true;
         generalBookHtml_->restoreSnapshot(snap);
+        generalBookScrollSyncing_ = false;
+        restoreGeneralBookLoadedRangeFromHtml(buffer.generalBook.html);
     }
     setDictionaryTabActive(dictionaryActive);
 }
@@ -1580,6 +2065,9 @@ void RightPane::restoreDisplayBuffer(DisplayBuffer&& buffer, bool dictionaryActi
         dictionaryHtml_->restoreSnapshot(std::move(snap));
     }
     if (generalBookHtml_ && buffer.generalBook.valid) {
+        if (generalBookToc_.empty() && !currentGeneralBook_.empty()) {
+            populateGeneralBookToc();
+        }
         HtmlWidget::Snapshot snap;
         snap.doc = std::move(buffer.generalBook.doc);
         snap.html = std::move(buffer.generalBook.html);
@@ -1590,7 +2078,11 @@ void RightPane::restoreDisplayBuffer(DisplayBuffer&& buffer, bool dictionaryActi
         snap.scrollbarVisible = buffer.generalBook.scrollbarVisible;
         snap.valid = buffer.generalBook.valid;
         buffer.generalBook.valid = false;
+        std::string snapshotHtml = snap.html;
+        generalBookScrollSyncing_ = true;
         generalBookHtml_->restoreSnapshot(std::move(snap));
+        generalBookScrollSyncing_ = false;
+        restoreGeneralBookLoadedRangeFromHtml(snapshotHtml);
     }
     setDictionaryTabActive(dictionaryActive);
 }
@@ -1610,7 +2102,11 @@ void RightPane::redrawChrome() {
     if (dictionaryForwardButton_) dictionaryForwardButton_->redraw();
     if (dictionaryChoice_) dictionaryChoice_->redraw();
     if (generalBookChoice_) generalBookChoice_->redraw();
-    if (generalBookTocChoice_) generalBookTocChoice_->redraw();
+    if (generalBookBackButton_) generalBookBackButton_->redraw();
+    if (generalBookForwardButton_) generalBookForwardButton_->redraw();
+    if (generalBookContentsButton_) generalBookContentsButton_->redraw();
+    if (generalBookTocPanel_) generalBookTocPanel_->redraw();
+    if (generalBookTocTree_) generalBookTocTree_->redraw();
     if (documentChoice_) documentChoice_->redraw();
     if (documentNewButton_) documentNewButton_->redraw();
     if (documentSaveButton_) documentSaveButton_->redraw();
@@ -1894,39 +2390,43 @@ void RightPane::populateGeneralBookModules(bool eagerLoad) {
             showGeneralBookEntry(currentGeneralBook_, currentGeneralBookKey_);
         } else {
             generalBookToc_.clear();
-            if (generalBookTocChoice_) {
-                generalBookTocChoice_->clear();
-            }
+            generalBookTreeItemIndices_.clear();
+            generalBookLoadedStart_ = -1;
+            generalBookLoadedEnd_ = -1;
+            if (generalBookTocTree_) generalBookTocTree_->clear();
+            showGeneralBookTocOverlay(false);
         }
     } else {
         currentGeneralBook_.clear();
         currentGeneralBookKey_.clear();
         generalBookToc_.clear();
-        if (generalBookTocChoice_) {
-            generalBookTocChoice_->clear();
-        }
+        generalBookTreeItemIndices_.clear();
+        generalBookLoadedStart_ = -1;
+        generalBookLoadedEnd_ = -1;
+        if (generalBookTocTree_) generalBookTocTree_->clear();
+        showGeneralBookTocOverlay(false);
         if (generalBookHtml_) {
+            generalBookScrollSyncing_ = true;
             generalBookHtml_->setHtml(
                 "<p><i>No general book modules installed.</i></p>");
+            generalBookScrollSyncing_ = false;
         }
     }
+    updateGeneralBookNavigationChrome();
 }
 
 void RightPane::populateGeneralBookToc() {
     generalBookToc_.clear();
-    if (!generalBookTocChoice_) return;
-
-    generalBookTocChoice_->clear();
+    generalBookTreeItemIndices_.clear();
+    generalBookLoadedStart_ = -1;
+    generalBookLoadedEnd_ = -1;
+    showGeneralBookTocOverlay(false);
+    if (generalBookTocTree_) {
+        generalBookTocTree_->clear();
+    }
     if (currentGeneralBook_.empty()) return;
 
     generalBookToc_ = app_->swordManager().getGeneralBookToc(currentGeneralBook_);
-    for (const auto& entry : generalBookToc_) {
-        std::string label(static_cast<size_t>(entry.depth) * 2, ' ');
-        label += entry.label;
-        if (entry.hasChildren) label += " ...";
-        generalBookTocChoice_->add(label.c_str());
-    }
-
     if (!generalBookToc_.empty()) {
         int selectedIndex = findGeneralBookTocIndex(generalBookToc_,
                                                     currentGeneralBookKey_);
@@ -1934,8 +2434,11 @@ void RightPane::populateGeneralBookToc() {
             selectedIndex = 0;
             currentGeneralBookKey_ = generalBookToc_.front().key;
         }
-        generalBookTocChoice_->value(selectedIndex);
+        rebuildGeneralBookTocTree();
+    } else {
+        currentGeneralBookKey_.clear();
     }
+    updateGeneralBookNavigationChrome();
 }
 
 void RightPane::updateCommentaryEditorChrome() {
@@ -2622,6 +3125,7 @@ void RightPane::onTopTabChange(Fl_Widget* /*w*/, void* data) {
     }
 
     if (active == self->documentsGroup_) {
+        self->showGeneralBookTocOverlay(false);
         self->tabs_->value(self->documentsGroup_);
         self->activeTopTab_ = TopTab::Documents;
         self->refreshDocumentChoices();
@@ -2640,6 +3144,7 @@ void RightPane::onTopTabChange(Fl_Widget* /*w*/, void* data) {
                                        self->currentGeneralBookKey_);
         }
     } else if (active == self->commentaryGroup_) {
+        self->showGeneralBookTocOverlay(false);
         self->tabs_->value(self->commentaryGroup_);
         self->activeTopTab_ = TopTab::Commentary;
         self->secondaryTabIsGeneralBooks_ = false;
@@ -2664,21 +3169,40 @@ void RightPane::onGeneralBookModuleChange(Fl_Widget* /*w*/, void* data) {
                                self->currentGeneralBookKey_);
 }
 
-void RightPane::onGeneralBookTocChange(Fl_Widget* /*w*/, void* data) {
+void RightPane::onGeneralBookBack(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
-    if (!self || self->currentGeneralBook_.empty() || !self->generalBookTocChoice_) {
-        return;
-    }
+    if (!self) return;
+    self->showAdjacentGeneralBookEntry(-1);
+}
 
-    int index = self->generalBookTocChoice_->value();
-    if (index < 0 ||
-        index >= static_cast<int>(self->generalBookToc_.size())) {
-        return;
-    }
-    self->currentGeneralBookKey_ =
-        self->generalBookToc_[static_cast<size_t>(index)].key;
+void RightPane::onGeneralBookForward(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self) return;
+    self->showAdjacentGeneralBookEntry(1);
+}
+
+void RightPane::onGeneralBookContents(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self) return;
+    self->toggleGeneralBookTocOverlay();
+}
+
+void RightPane::onGeneralBookTreeSelect(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self || self->generalBookTreeSyncing_ || !self->generalBookTocTree_) return;
+
+    Fl_Tree_Item* item = self->generalBookTocTree_->callback_item();
+    if (!item) return;
+
+    auto it = self->generalBookTreeItemIndices_.find(item);
+    if (it == self->generalBookTreeItemIndices_.end()) return;
+
+    int index = it->second;
+    if (index < 0 || index >= static_cast<int>(self->generalBookToc_.size())) return;
+
+    self->showGeneralBookTocOverlay(false);
     self->showGeneralBookEntry(self->currentGeneralBook_,
-                               self->currentGeneralBookKey_);
+                               self->generalBookToc_[static_cast<size_t>(index)].key);
 }
 
 void RightPane::onDocumentChoiceChange(Fl_Widget* /*w*/, void* data) {

@@ -1186,6 +1186,7 @@ void HtmlWidget::scrollToAnchor(const std::string& anchor) {
 }
 
 void HtmlWidget::scrollToTop() {
+    int oldScrollY = scrollY_;
     scrollX_ = 0;
     scrollY_ = 0;
     if (allowHorizontalScroll_ && hScrollbar_ && hScrollbar_->visible()) {
@@ -1194,16 +1195,37 @@ void HtmlWidget::scrollToTop() {
     if (scrollbar_->visible()) {
         scrollbar_->value(0);
     }
+    notifyScrollChanged(oldScrollY);
     redraw();
 }
 
 void HtmlWidget::setScrollY(int y) {
+    int oldScrollY = scrollY_;
     int maxScroll = std::max(0, contentHeight_ - viewportHeight());
     scrollY_ = std::clamp(y, 0, maxScroll);
     if (scrollbar_->visible()) {
         scrollbar_->value(scrollY_, viewportHeight(), 0, contentHeight_);
     }
+    notifyScrollChanged(oldScrollY);
     redraw();
+}
+
+int HtmlWidget::viewportHeightPixels() const {
+    return viewportHeight();
+}
+
+int HtmlWidget::elementTopById(const std::string& id) const {
+    if (!doc_ || id.empty()) return -1;
+
+    std::shared_ptr<litehtml::element> target;
+    if (auto root = doc_->root()) {
+        target = root->select_one("#" + id);
+        if (!target) {
+            target = findElementByIdRecursive(root, id);
+        }
+    }
+    if (!target) return -1;
+    return std::max(0, static_cast<int>(target->get_placement().y));
 }
 
 HtmlWidget::Snapshot HtmlWidget::captureSnapshot() const {
@@ -1480,7 +1502,9 @@ void HtmlWidget::updateScrollbar() {
 void HtmlWidget::scrollbarCallback(Fl_Widget* w, void* data) {
     auto* self = static_cast<HtmlWidget*>(data);
     auto* sb = static_cast<Fl_Scrollbar*>(w);
+    int oldScrollY = self->scrollY_;
     self->scrollY_ = sb->value();
+    self->notifyScrollChanged(oldScrollY);
     self->redraw();
 }
 
@@ -1489,6 +1513,13 @@ void HtmlWidget::hScrollbarCallback(Fl_Widget* w, void* data) {
     auto* sb = static_cast<Fl_Scrollbar*>(w);
     self->scrollX_ = sb->value();
     self->redraw();
+}
+
+void HtmlWidget::notifyScrollChanged(int oldScrollY) {
+    if (oldScrollY == scrollY_) return;
+    if (scrollCallback_) {
+        scrollCallback_(scrollY_);
+    }
 }
 
 void HtmlWidget::draw() {

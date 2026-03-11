@@ -1220,22 +1220,6 @@ bool resolvedRefsMatchExpected(const std::vector<std::string>& resolvedRefs,
            normalizeBookLookupKey(got.book);
 }
 
-std::string sanitizeHtmlId(const std::string& text) {
-    std::string out;
-    out.reserve(text.size() + 8);
-    for (char c : text) {
-        unsigned char uc = static_cast<unsigned char>(c);
-        if (std::isalnum(uc)) {
-            out.push_back(static_cast<char>(std::tolower(uc)));
-        } else if (out.empty() || out.back() != '-') {
-            out.push_back('-');
-        }
-    }
-    while (!out.empty() && out.back() == '-') out.pop_back();
-    if (out.empty()) out = "section";
-    return out;
-}
-
 void appendGeneralBookTocEntries(sword::TreeKey* treeKey,
                                  int depth,
                                  std::vector<GeneralBookTocEntry>& out) {
@@ -1275,19 +1259,14 @@ int findGeneralBookTocIndex(const std::vector<GeneralBookTocEntry>& toc,
     return -1;
 }
 
-std::string renderGeneralBookSectionHtml(sword::SWModule* mod,
-                                         const GeneralBookTocEntry& entry) {
-    if (!mod) return "";
-    mod->setKey(entry.key.c_str());
-    if (mod->popError()) return "";
-
-    std::string text = std::string(mod->renderText().c_str());
+std::string renderGeneralBookSectionHtml(const GeneralBookTocEntry& entry,
+                                         const std::string& text) {
     if (trimCopy(text).empty()) return "";
 
     std::ostringstream html;
-    html << "<div class=\"general-book-section\" id=\"gb-"
-         << sanitizeHtmlId(entry.key) << "\">\n";
-    html << "<h4>" << htmlEscapeAttr(entry.label) << "</h4>\n";
+    html << "<div class=\"general-book\">\n";
+    html << "<div class=\"entry-key\">" << htmlEscapeAttr(entry.label)
+         << "</div>\n";
     html << text << "\n";
     html << "</div>\n";
     return html.str();
@@ -3283,53 +3262,45 @@ std::string SwordManager::getGeneralBookEntry(const std::string& moduleName,
     }
 
     int tocIndex = findGeneralBookTocIndex(toc, lookupKey);
-    if (tocIndex < 0) {
-        mod->setKey(lookupKey.c_str());
-        if (!mod->popError()) {
-            std::string text = std::string(mod->renderText().c_str());
-            if (!trimCopy(text).empty()) {
-                std::ostringstream html;
-                html << "<div class=\"general-book\">\n";
-                html << "<div class=\"entry-key\">" << htmlEscapeAttr(lookupKey) << "</div>\n";
-                html << text;
-                html << "</div>\n";
-                return html.str();
-            }
+    if (tocIndex >= 0) {
+        const GeneralBookTocEntry& entry = toc[static_cast<size_t>(tocIndex)];
+        mod->setKey(entry.key.c_str());
+        if (mod->popError()) {
+            return "<p><i>No entry found for: " + lookupKey + "</i></p>";
+        }
+        std::string text = std::string(mod->renderText().c_str());
+        text = this->postProcessHtml(text);
+        std::string html = renderGeneralBookSectionHtml(entry, text);
+        if (!trimCopy(html).empty()) {
+            return html;
+        }
+        if (entry.hasChildren) {
+            std::ostringstream placeholder;
+            placeholder << "<div class=\"general-book\">\n";
+            placeholder << "<div class=\"entry-key\">"
+                        << htmlEscapeAttr(entry.label) << "</div>\n";
+            placeholder << "<p><i>No direct text for this heading. "
+                        << "Continue scrolling for its subsections.</i></p>\n";
+            placeholder << "</div>\n";
+            return placeholder.str();
         }
         return "<p><i>No entry found for: " + lookupKey + "</i></p>";
     }
 
-    const GeneralBookTocEntry& selected = toc[static_cast<size_t>(tocIndex)];
-    std::ostringstream html;
-    html << "<div class=\"general-book\">\n";
-    html << "<div class=\"entry-key\">" << htmlEscapeAttr(selected.label) << "</div>\n";
-
-    if (!toc.empty()) {
-        html << "<div class=\"general-book-toc\">\n";
-        html << "<div class=\"general-book-toc-title\">Contents</div>\n";
-        html << "<ul>\n";
-        int baseDepth = selected.depth;
-        for (size_t i = static_cast<size_t>(tocIndex);
-             i < toc.size() && toc[i].depth >= baseDepth;
-             ++i) {
-            if (i != static_cast<size_t>(tocIndex) && toc[i].depth == baseDepth) break;
-            html << "<li class=\"depth-" << (toc[i].depth - baseDepth) << "\">";
-            html << "<a href=\"#gb-" << sanitizeHtmlId(toc[i].key) << "\">"
-                 << htmlEscapeAttr(toc[i].label) << "</a></li>\n";
+    mod->setKey(lookupKey.c_str());
+    if (!mod->popError()) {
+        std::string text = std::string(mod->renderText().c_str());
+        text = this->postProcessHtml(text);
+        if (!trimCopy(text).empty()) {
+            std::ostringstream html;
+            html << "<div class=\"general-book\">\n";
+            html << "<div class=\"entry-key\">" << htmlEscapeAttr(lookupKey) << "</div>\n";
+            html << text;
+            html << "</div>\n";
+            return html.str();
         }
-        html << "</ul>\n";
-        html << "</div>\n";
     }
-
-    for (size_t i = static_cast<size_t>(tocIndex);
-         i < toc.size() && toc[i].depth >= selected.depth;
-         ++i) {
-        if (i != static_cast<size_t>(tocIndex) && toc[i].depth == selected.depth) break;
-        html << renderGeneralBookSectionHtml(mod, toc[i]);
-    }
-
-    html << "</div>\n";
-    return html.str();
+    return "<p><i>No entry found for: " + lookupKey + "</i></p>";
 }
 
 std::string SwordManager::verseReferenceFromLink(const std::string& url) {

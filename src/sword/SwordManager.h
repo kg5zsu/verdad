@@ -168,7 +168,7 @@ public:
     std::shared_ptr<const std::vector<std::string>> getDictionaryKeys(
         const std::string& moduleName);
 
-    /// Get a general book entry
+    /// Get a single general book entry for a TOC key.
     std::string getGeneralBookEntry(const std::string& moduleName,
                                     const std::string& key);
 

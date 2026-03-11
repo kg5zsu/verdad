@@ -93,6 +93,15 @@ public:
     /// Set vertical scroll position (clamped to content range).
     void setScrollY(int y);
 
+    /// Current rendered document height in pixels.
+    int contentHeight() const { return contentHeight_; }
+
+    /// Current viewport height excluding visible scrollbars.
+    int viewportHeightPixels() const;
+
+    /// Return the top document-space Y position for an element id, or -1.
+    int elementTopById(const std::string& id) const;
+
     /// Get currently loaded HTML fragment.
     const std::string& currentHtml() const { return currentHtml_; }
 
@@ -122,6 +131,7 @@ public:
 
     // Callbacks
     using LinkCallback = std::function<void(const std::string& url)>;
+    using ScrollCallback = std::function<void(int scrollY)>;
     using HoverCallback = std::function<void(const std::string& word,
                                               const std::string& href,
                                               const std::string& strong,
@@ -136,6 +146,7 @@ public:
                                                 int x, int y)>;
 
     void setLinkCallback(LinkCallback cb) { linkCallback_ = std::move(cb); }
+    void setScrollCallback(ScrollCallback cb) { scrollCallback_ = std::move(cb); }
     void setHoverCallback(HoverCallback cb) { hoverCallback_ = std::move(cb); }
     void setContextCallback(ContextCallback cb) { contextCallback_ = std::move(cb); }
 
@@ -236,6 +247,7 @@ private:
 
     // Callbacks
     LinkCallback linkCallback_;
+    ScrollCallback scrollCallback_;
     HoverCallback hoverCallback_;
     ContextCallback contextCallback_;
     std::string pendingLinkUrl_;
@@ -292,6 +304,8 @@ private:
 
     /// Deferred document reflow callback used to coalesce rapid resize events.
     static void dispatchDeferredReflow(void* data);
+
+    void notifyScrollChanged(int oldScrollY);
 
     /// Map an FLTK font from a face name
     Fl_Font mapFont(const char* faceName, int weight, bool italic);

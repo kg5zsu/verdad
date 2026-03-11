@@ -7,6 +7,7 @@
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Choice.H>
 #include <FL/Fl_Button.H>
+#include <FL/Fl_Tree.H>
 #include <FL/Enumerations.H>
 #include <memory>
 #include <string>
@@ -171,6 +172,7 @@ public:
 
 protected:
     void resize(int X, int Y, int W, int H) override;
+    int handle(int event) override;
 
 private:
     VerdadApp* app_;
@@ -222,13 +224,27 @@ private:
     // General books tab (top pane)
     Fl_Group* generalBooksGroup_;
     Fl_Choice* generalBookChoice_;
-    Fl_Choice* generalBookTocChoice_;
+    Fl_Button* generalBookBackButton_;
+    Fl_Button* generalBookForwardButton_;
+    Fl_Button* generalBookContentsButton_;
     HtmlWidget* generalBookHtml_;
+    Fl_Group* generalBookTocPanel_;
+    Fl_Box* generalBookTocPanelHeader_;
+    Fl_Tree* generalBookTocTree_;
     std::vector<std::string> generalBookChoiceModules_;
     std::vector<std::string> generalBookChoiceLabels_;
     std::string currentGeneralBook_;
     std::string currentGeneralBookKey_;
     std::vector<GeneralBookTocEntry> generalBookToc_;
+    std::unordered_map<const Fl_Tree_Item*, int> generalBookTreeItemIndices_;
+    std::unordered_map<std::string, std::string> generalBookSectionCache_;
+    std::deque<std::string> generalBookSectionCacheOrder_;
+    int generalBookLoadedStart_ = -1;
+    int generalBookLoadedEnd_ = -1;
+    bool generalBookTocVisible_ = false;
+    bool generalBookTreeSyncing_ = false;
+    bool generalBookScrollSyncing_ = false;
+    static constexpr size_t kGeneralBookSectionCacheLimit = 48;
 
     // Studypad tab (global, not tied to study tabs)
     Fl_Group* documentsGroup_;
@@ -270,6 +286,22 @@ private:
     /// Populate general book module choices
     void populateGeneralBookModules(bool eagerLoad);
     void populateGeneralBookToc();
+    void rebuildGeneralBookTocTree();
+    void syncGeneralBookTreeSelection();
+    void showGeneralBookTocOverlay(bool show);
+    void toggleGeneralBookTocOverlay();
+    void updateGeneralBookNavigationChrome();
+    void showAdjacentGeneralBookEntry(int delta);
+    void rebuildGeneralBookWindow(int preserveIndex,
+                                  bool alignPreserveToTop = false);
+    void ensureGeneralBookViewportFilled();
+    void maybeExtendGeneralBookWindow(int scrollY);
+    void onGeneralBookScroll(int scrollY);
+    int currentGeneralBookTocIndex() const;
+    int currentVisibleGeneralBookIndex() const;
+    std::string generalBookSectionHtml(int tocIndex);
+    std::string buildGeneralBookWindowHtml();
+    void restoreGeneralBookLoadedRangeFromHtml(const std::string& html);
 
     void layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH);
     TopTab visibleTopTab() const;
@@ -301,7 +333,10 @@ private:
     static void onDictionaryForward(Fl_Widget* w, void* data);
     static void onTopTabChange(Fl_Widget* w, void* data);
     static void onGeneralBookModuleChange(Fl_Widget* w, void* data);
-    static void onGeneralBookTocChange(Fl_Widget* w, void* data);
+    static void onGeneralBookBack(Fl_Widget* w, void* data);
+    static void onGeneralBookForward(Fl_Widget* w, void* data);
+    static void onGeneralBookContents(Fl_Widget* w, void* data);
+    static void onGeneralBookTreeSelect(Fl_Widget* w, void* data);
     static void onDocumentChoiceChange(Fl_Widget* w, void* data);
     static void onDocumentNew(Fl_Widget* w, void* data);
     static void onDocumentSave(Fl_Widget* w, void* data);
