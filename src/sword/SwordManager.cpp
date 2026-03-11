@@ -3280,7 +3280,7 @@ std::string SwordManager::getGeneralBookEntry(const std::string& moduleName,
             placeholder << "<div class=\"entry-key\">"
                         << htmlEscapeAttr(entry.label) << "</div>\n";
             placeholder << "<p><i>No direct text for this heading. "
-                        << "Continue scrolling for its subsections.</i></p>\n";
+                        << "Subsections appear below or can be opened from Contents.</i></p>\n";
             placeholder << "</div>\n";
             return placeholder.str();
         }

@@ -243,7 +243,6 @@ private:
     int generalBookLoadedEnd_ = -1;
     bool generalBookTocVisible_ = false;
     bool generalBookTreeSyncing_ = false;
-    bool generalBookScrollSyncing_ = false;
     static constexpr size_t kGeneralBookSectionCacheLimit = 48;
 
     // Studypad tab (global, not tied to study tabs)
@@ -295,10 +294,7 @@ private:
     void rebuildGeneralBookWindow(int preserveIndex,
                                   bool alignPreserveToTop = false);
     void ensureGeneralBookViewportFilled();
-    void maybeExtendGeneralBookWindow(int scrollY);
-    void onGeneralBookScroll(int scrollY);
     int currentGeneralBookTocIndex() const;
-    int currentVisibleGeneralBookIndex() const;
     std::string generalBookSectionHtml(int tocIndex);
     std::string buildGeneralBookWindowHtml();
     void restoreGeneralBookLoadedRangeFromHtml(const std::string& html);

@@ -25,7 +25,7 @@ Implemented features
   - Linked verses and notes from commentary or general books can update the preview pane or populate the Search tab.
 - General books:
   - Module TOC chooser.
-  - Parent entries can render together with descendants for continuous scrolling.
+  - Loads a bounded page from the selected TOC entry; very small sections can include a few following entries.
   - Inline contents links scroll inside the current rendered section.
 - Documents and editing:
   - Lightweight HTML document editor with bold, italic, lists, text sizing, and horizontal rules.
