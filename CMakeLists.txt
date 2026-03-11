@@ -123,6 +123,9 @@ add_custom_target(copy_runtime_assets ALL
     COMMAND ${CMAKE_COMMAND} -E copy
             "${CMAKE_SOURCE_DIR}/data/help.html"
             "${CMAKE_BINARY_DIR}/data/help.html"
+    COMMAND ${CMAKE_COMMAND} -E copy
+            "${CMAKE_SOURCE_DIR}/data/verdad_icon.png"
+            "${CMAKE_BINARY_DIR}/data/verdad_icon.png"
     VERBATIM
 )
 add_dependencies(verdad copy_runtime_assets)
@@ -156,4 +159,14 @@ endif()
 
 # Installation
 install(TARGETS verdad DESTINATION bin)
-install(FILES data/master.css data/help.html DESTINATION share/verdad)
+install(FILES
+    data/master.css
+    data/help.html
+    data/verdad_icon.png
+    DESTINATION share/verdad)
+install(FILES data/verdad_icon.png
+    DESTINATION share/pixmaps
+    RENAME verdad.png)
+install(FILES data/verdad_icon.png
+    DESTINATION share/icons/hicolor/128x128/apps
+    RENAME verdad.png)

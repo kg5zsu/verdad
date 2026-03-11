@@ -25,6 +25,7 @@
 #include <FL/Fl_Hold_Browser.H>
 #include <FL/Fl_Input_.H>
 #include <FL/Fl_Menu_.H>
+#include <FL/Fl_PNG_Image.H>
 
 #include <algorithm>
 #include <cctype>
@@ -2694,13 +2695,78 @@ void MainWindow::showSearchHelpWindow() {
     searchHelpWindow_->take_focus();
 }
 
-void MainWindow::onHelpAbout(Fl_Widget* /*w*/, void* /*data*/) {
-    fl_message("Verdad Bible Study\n\n"
-               "A Bible study application using:\n"
-               "- FLTK for the user interface\n"
-               "- litehtml for XHTML rendering\n"
-               "- SWORD library for Bible modules\n\n"
-               "Version 0.1.0");
+void MainWindow::onHelpAbout(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<MainWindow*>(data);
+    if (!self) return;
+
+    constexpr int kDialogW = 420;
+    constexpr int kDialogH = 410;
+    constexpr int kIconSize = 192;
+
+    Fl_Double_Window dialog(kDialogW, kDialogH, "About Verdad");
+    dialog.set_modal();
+    dialog.begin();
+
+    Fl_Box iconBox((kDialogW - kIconSize) / 2, 18, kIconSize, kIconSize);
+    iconBox.box(FL_NO_BOX);
+
+    std::unique_ptr<Fl_PNG_Image> aboutIcon;
+    std::string aboutIconPath;
+    if (self->app_) {
+        aboutIconPath = self->app_->getDataDir() + "/verdad_icon.png";
+        aboutIcon = std::make_unique<Fl_PNG_Image>(aboutIconPath.c_str());
+        if (aboutIcon && aboutIcon->w() > 0 && aboutIcon->h() > 0) {
+            iconBox.image(aboutIcon.get());
+        }
+    }
+
+    Fl_Box titleBox(20, 220, kDialogW - 40, 30, "Verdad Bible Study");
+    titleBox.box(FL_NO_BOX);
+    titleBox.align(FL_ALIGN_CENTER | FL_ALIGN_INSIDE);
+    titleBox.labelsize(24);
+
+    Fl_Box versionBox(20, 252, kDialogW - 40, 22, "Version 0.1.0");
+    versionBox.box(FL_NO_BOX);
+    versionBox.align(FL_ALIGN_CENTER | FL_ALIGN_INSIDE);
+    versionBox.labelsize(14);
+
+    Fl_Box detailsBox(
+        44, 286, kDialogW - 88, 68,
+        "A Bible study application using:\n"
+        "FLTK for the user interface\n"
+        "litehtml for XHTML rendering\n"
+        "SWORD library for Bible modules");
+    detailsBox.box(FL_NO_BOX);
+    detailsBox.align(FL_ALIGN_CENTER | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
+    detailsBox.labelsize(14);
+
+    Fl_Return_Button closeButton((kDialogW - 96) / 2, 364, 96, 28, "Close");
+    auto hideDialog = [](Fl_Widget* /*w*/, void* data) {
+        auto* win = static_cast<Fl_Window*>(data);
+        if (win) win->hide();
+    };
+    closeButton.callback(hideDialog, &dialog);
+    dialog.callback(hideDialog, &dialog);
+
+    dialog.end();
+
+    if (self->appearanceApplied_) {
+        Fl_Font appFont = self->lastAppliedAppFont_;
+        Fl_Font boldFont = self->app_ ? self->app_->boldFltkFont(appFont) : appFont;
+        applyUiFontRecursively(&dialog, appFont, boldFont, self->lastAppliedAppFontSize_);
+        titleBox.labelfont(boldFont);
+        titleBox.labelsize(std::max(24, self->lastAppliedAppFontSize_ + 10));
+        versionBox.labelsize(std::max(14, self->lastAppliedAppFontSize_));
+        detailsBox.labelsize(std::max(14, self->lastAppliedAppFontSize_));
+    } else {
+        titleBox.labelfont(FL_HELVETICA_BOLD);
+    }
+
+    dialog.show();
+    closeButton.take_focus();
+    while (dialog.shown()) {
+        Fl::wait();
+    }
 }
 
 } // namespace verdad
