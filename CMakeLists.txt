@@ -186,29 +186,6 @@ add_custom_target(copy_runtime_assets ALL
 )
 add_dependencies(verdad copy_runtime_assets)
 
-# Standalone FLTK repro for search-results browser redraw behavior.
-add_executable(browser_redraw_test
-    tools/browser_redraw_test.cpp
-)
-
-target_link_libraries(browser_redraw_test PRIVATE
-    fltk::fltk
-)
-
-if(UNIX AND NOT APPLE)
-    target_link_libraries(browser_redraw_test PRIVATE
-        Threads::Threads
-    )
-endif()
-
-if(APPLE)
-    target_link_libraries(browser_redraw_test PRIVATE
-        "-framework Cocoa"
-        "-framework Carbon"
-        "-framework ApplicationServices"
-    )
-endif()
-
 # Installation
 install(TARGETS verdad DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES
