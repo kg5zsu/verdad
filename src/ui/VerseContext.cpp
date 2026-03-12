@@ -4,6 +4,7 @@
 #include "ui/BiblePane.h"
 #include "ui/LeftPane.h"
 #include "ui/TagPanel.h"
+#include "ui/UiFontUtils.h"
 #include "sword/SwordManager.h"
 
 #include <FL/Fl.H>
@@ -336,6 +337,7 @@ void VerseContext::show(const std::string& word, const std::string& href,
     }
 
     Fl_Menu_Button menu(screenX, screenY, 0, 0);
+    ui_font::applyCurrentAppMenuFont(&menu);
     copyActions_.reserve(4);
 
     if (hasSelection) {

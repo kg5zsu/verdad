@@ -1,6 +1,7 @@
 #ifndef VERDAD_VERSE_LIST_COPY_MENU_H
 #define VERDAD_VERSE_LIST_COPY_MENU_H
 
+#include "ui/UiFontUtils.h"
 #include "sword/SwordManager.h"
 
 #include <FL/Fl.H>
@@ -112,6 +113,7 @@ inline void showVerseListCopyMenu(SwordManager& swordManager,
     constexpr const char* kRefLastLabel = "Copy Verses: Refs last";
 
     Fl_Menu_Button menu(screenX, screenY, 0, 0);
+    ui_font::applyCurrentAppMenuFont(&menu);
     menu.add(kRefOnlyLabel);
     menu.add(kRefFirstLabel);
     menu.add(kRefLastLabel);

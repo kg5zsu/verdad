@@ -8,6 +8,7 @@
 #include "ui/RightPane.h"
 #include "ui/ModuleManagerDialog.h"
 #include "ui/StyledTabs.h"
+#include "ui/UiFontUtils.h"
 #include "sword/SwordManager.h"
 #include "search/SearchIndexer.h"
 #include "app/PerfTrace.h"
@@ -490,39 +491,6 @@ std::vector<std::string> preferredPreviewLexicons(VerdadApp* app,
         preferred.push_back(greekModule);
     }
     return preferred;
-}
-
-void applyUiFontRecursively(Fl_Widget* w, Fl_Font font, Fl_Font boldFont, int size) {
-    if (!w) return;
-    int clampedSize = std::clamp(size, 8, 36);
-
-    w->labelfont(font);
-    w->labelsize(clampedSize);
-
-    // Propagate explicit regular/bold pair to StyledTabs instances.
-    if (auto* stabs = dynamic_cast<verdad::StyledTabs*>(w)) {
-        stabs->setLabelFonts(font, boldFont);
-    }
-
-    if (auto* input = dynamic_cast<Fl_Input_*>(w)) {
-        input->textfont(font);
-        input->textsize(clampedSize);
-    } else if (auto* choice = dynamic_cast<Fl_Choice*>(w)) {
-        choice->textfont(font);
-        choice->textsize(clampedSize);
-    } else if (auto* browser = dynamic_cast<Fl_Browser_*>(w)) {
-        browser->textfont(font);
-        browser->textsize(clampedSize);
-    } else if (auto* menu = dynamic_cast<Fl_Menu_*>(w)) {
-        menu->textfont(font);
-        menu->textsize(clampedSize);
-    }
-
-    if (auto* group = dynamic_cast<Fl_Group*>(w)) {
-        for (int i = 0; i < group->children(); ++i) {
-            applyUiFontRecursively(group->child(i), font, boldFont, clampedSize);
-        }
-    }
 }
 
 } // namespace
@@ -1583,9 +1551,10 @@ void MainWindow::applyAppearanceSettings(Fl_Font appFont,
     // Re-apply widget fonts only when needed.
     if (!appearanceApplied_ || uiFontChanged) {
         Fl_Font boldFont = app_ ? app_->boldFltkFont(appFont) : appFont;
-        applyUiFontRecursively(this, appFont, boldFont, clampedSize);
+        ui_font::applyUiFontRecursively(this, appFont, boldFont, clampedSize);
         if (searchHelpWindow_) {
-            applyUiFontRecursively(searchHelpWindow_, appFont, boldFont, clampedSize);
+            ui_font::applyUiFontRecursively(
+                searchHelpWindow_, appFont, boldFont, clampedSize);
         }
     }
 
@@ -2544,6 +2513,7 @@ void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
         state);
 
     dlg->end();
+    ui_font::applyCurrentAppUiFont(dlg);
     dlg->show();
     while (dlg->shown()) {
         Fl::wait();
@@ -2699,10 +2669,10 @@ void MainWindow::showSearchHelpWindow() {
     if (appearanceApplied_ && searchHelpWindow_) {
         Fl_Font boldFont = app_ ? app_->boldFltkFont(lastAppliedAppFont_)
                                 : lastAppliedAppFont_;
-        applyUiFontRecursively(searchHelpWindow_,
-                               lastAppliedAppFont_,
-                               boldFont,
-                               lastAppliedAppFontSize_);
+        ui_font::applyUiFontRecursively(searchHelpWindow_,
+                                        lastAppliedAppFont_,
+                                        boldFont,
+                                        lastAppliedAppFontSize_);
         if (searchHelpHtml_) searchHelpHtml_->setStyleOverrideCss(lastAppliedTextCss_);
     }
 
@@ -2784,7 +2754,8 @@ void MainWindow::onHelpAbout(Fl_Widget* /*w*/, void* data) {
     if (self->appearanceApplied_) {
         Fl_Font appFont = self->lastAppliedAppFont_;
         Fl_Font boldFont = self->app_ ? self->app_->boldFltkFont(appFont) : appFont;
-        applyUiFontRecursively(&dialog, appFont, boldFont, self->lastAppliedAppFontSize_);
+        ui_font::applyUiFontRecursively(
+            &dialog, appFont, boldFont, self->lastAppliedAppFontSize_);
         titleBox.labelfont(boldFont);
         titleBox.labelsize(std::max(24, self->lastAppliedAppFontSize_ + 10));
         versionBox.labelsize(std::max(14, self->lastAppliedAppFontSize_));

@@ -3,6 +3,7 @@
 #include "ui/MainWindow.h"
 #include "ui/LeftPane.h"
 #include "ui/BiblePane.h"
+#include "ui/UiFontUtils.h"
 #include "ui/VerseReferenceSort.h"
 #include "ui/VerseListCopyMenu.h"
 #include "sword/SwordManager.h"
@@ -143,6 +144,7 @@ public:
 
         dialog_.end();
         updateVisibleTags();
+        ui_font::applyCurrentAppUiFont(&dialog_);
     }
 
     bool open(std::string& tagName) {

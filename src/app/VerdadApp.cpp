@@ -7,6 +7,7 @@
 
 #include <FL/Fl.H>
 #include <FL/Fl_File_Icon.H>
+#include <FL/Fl_Tooltip.H>
 #include <FL/fl_ask.H>
 
 #include <cstdlib>
@@ -736,6 +737,12 @@ void VerdadApp::setAppearanceSettings(const AppearanceSettings& settings) {
     appearanceSettings_.editorIndentWidth =
         clampEditorIndentWidth(settings.editorIndentWidth);
     appearanceSettings_.editorLineHeight = clampLineHeight(settings.editorLineHeight);
+
+    const Fl_Font uiFont = appFont();
+    const Fl_Fontsize uiFontSize = static_cast<Fl_Fontsize>(appearanceSettings_.appFontSize);
+    fl_message_font(uiFont, uiFontSize);
+    Fl_Tooltip::font(uiFont);
+    Fl_Tooltip::size(uiFontSize);
 
     if (mainWindow_) {
         mainWindow_->applyAppearanceSettings(

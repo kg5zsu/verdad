@@ -4,6 +4,7 @@
 #include "search/SearchIndexer.h"
 #include "sword/SwordManager.h"
 #include "ui/MainWindow.h"
+#include "ui/UiFontUtils.h"
 
 #include <FL/Fl.H>
 #include <FL/Fl_Box.H>
@@ -260,6 +261,7 @@ ModuleManagerDialog::ModuleManagerDialog(VerdadApp* app, int W, int H)
 ModuleManagerDialog::~ModuleManagerDialog() = default;
 
 void ModuleManagerDialog::openModal() {
+    ui_font::applyCurrentAppUiFont(this);
     set_modal();
     show();
     while (shown()) {

@@ -1,5 +1,6 @@
 #include "ui/HtmlEditorWidget.h"
 
+#include "ui/UiFontUtils.h"
 #include "sword/SwordManager.h"
 
 #include <FL/Fl.H>
@@ -1483,6 +1484,7 @@ void HtmlEditorTextArea::showContextMenuForPosition(int pos, int screenX, int sc
     bool canInsertVerse = !verseRef.empty() && static_cast<bool>(owner_->verseTextProvider_);
 
     Fl_Menu_Button menu(screenX, screenY, 0, 0);
+    ui_font::applyCurrentAppMenuFont(&menu);
     if (hasSelection) {
         menu.add("Copy");
         menu.add("Cut");
