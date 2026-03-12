@@ -5,7 +5,7 @@ Verdad is a desktop Bible study application for CrossWire SWORD modules. It keep
 ## Features
 
 - Multiple study tabs. Duplicate the current workspace, keep multiple passages open, and restore your tab set on the next launch.
-- Three-pane study layout. The left pane handles modules, search, tags, and preview; the center pane shows Bible text; the right pane shows commentary, dictionaries, general books, and documents.
+- Three-pane study layout. The left pane handles modules, search, tags, and preview; the center pane shows Bible text; the right pane shows commentary, dictionaries, general books, and Studypad.
 - Fast Bible search. Search by multi-word query, exact phrase, regex, or Strong's/lemma references, with canonical result ordering and a live preview pane.
 - Search results workflow. Single-click a result to preview it, double-click to navigate the current study tab, or middle-click to open it in a new study tab.
 - Bible reading tools. Jump by book, chapter, or typed reference; move chapter to chapter; switch between verse and paragraph mode; and compare up to seven Bible modules in parallel columns.
@@ -14,8 +14,8 @@ Verdad is a desktop Bible study application for CrossWire SWORD modules. It keep
 - Synced right pane. Commentary follows the selected verse, the dictionary pane stays available at the bottom, and general books use the module table of contents directly.
 - General books support. Pick a table of contents entry from the chooser, load one page at a time, and follow internal links without leaving the pane.
 - Verse tagging. Create tags, rename or delete them, filter tags by name or verse reference, browse all tagged verses, and jump from a tag entry back into the Bible.
-- Notes and editable content. The Documents tab opens and saves HTML study notes with lightweight rich-text editing, and writable commentary modules can be edited in place.
-- Session persistence. Verdad remembers window geometry, splitter sizes, active study tab, Bible state, right-pane selections, open document path, and scroll positions.
+- Notes and editable content. The Studypad tab opens and saves HTML study notes with lightweight rich-text editing, saved scripture links in a Studypad can be right-clicked to insert verse text, and writable commentary modules can be edited in place.
+- Session persistence. Verdad remembers window geometry, splitter sizes, active study tab, Bible state, right-pane selections, the open Studypad path, and scroll positions.
 - Built-in module management. Add local or remote SWORD sources, refresh them, and install or update modules from inside the app.
 - Appearance and dictionary preferences. Choose UI font, text font and size, hover delay, default Greek and Hebrew Strong's dictionaries, and language-specific word dictionaries.
 
@@ -23,7 +23,7 @@ Verdad is a desktop Bible study application for CrossWire SWORD modules. It keep
 
 The left pane combines the always-visible search box with three tabs: `Modules`, `Search`, and `Tags`. The preview area at the bottom is shared by search results, module metadata, word-hover preview content, and link previews from Bible, commentary, and general-book panes.
 
-The center pane is the active Bible workspace. The right pane keeps commentary, general books, and the global Documents editor in top tabs, with the dictionary or lexicon pane docked below them. Scripture links inside commentary and general books can populate the preview pane or the Search tab, depending on whether a link resolves to one verse or many.
+The center pane is the active Bible workspace. The right pane keeps commentary, general books, and the global Studypad editor in top tabs, with the dictionary or lexicon pane docked below them. Scripture links inside commentary and general books can populate the preview pane or the Search tab, depending on whether a link resolves to one verse or many.
 
 ## SWORD modules and local data
 
