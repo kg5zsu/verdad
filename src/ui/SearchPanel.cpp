@@ -768,6 +768,7 @@ SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
     static int widths[] = { 100, 0 };  // widths for each column
     resultBrowser_->column_widths(widths); // assign array to widget
     resultBrowser_->has_scrollbar(Fl_Browser_::BOTH);
+    resultBrowser_->linespacing(app_ ? app_->appearanceSettings().browserLineSpacing : 0);
     // Preview updates should follow selection changes, but navigation/opening
     // is handled directly from mouse-release events in SearchResultBrowser.
     resultBrowser_->when(FL_WHEN_CHANGED);
@@ -791,6 +792,14 @@ SearchPanel::~SearchPanel() {
         Fl::remove_timeout(onIndexingPoll, this);
         indexingIndicatorActive_ = false;
     }
+}
+
+void SearchPanel::setResultLineSpacing(int pixels) {
+    if (!resultBrowser_) return;
+    const int spacing = std::clamp(pixels, 0, 16);
+    if (resultBrowser_->linespacing() == spacing) return;
+    resultBrowser_->linespacing(spacing);
+    rebuildResultBrowserItems();
 }
 
 void SearchPanel::search(const std::string& query,
@@ -957,9 +966,8 @@ void SearchPanel::search(const std::string& query,
         const std::string& resultModule = r.module.empty() ? moduleName : r.module;
         std::string shortKey = app_->swordManager().getShortReference(resultModule, r.key);
         resultDisplayKeys_.push_back(shortKey.empty() ? r.key : shortKey);
-        resultBrowser_->add(" ");
     }
-    rebuildResultMetrics();
+    rebuildResultBrowserItems();
 
     std::string labelSuffix;
     if (usedIndexer && indexingPending) {
@@ -1033,9 +1041,8 @@ void SearchPanel::showReferenceResults(const std::string& moduleName,
     for (const auto& r : results_) {
         std::string shortKey = app_->swordManager().getShortReference(r.module, r.key);
         resultDisplayKeys_.push_back(shortKey.empty() ? r.key : shortKey);
-        resultBrowser_->add(" ");
     }
-    rebuildResultMetrics();
+    rebuildResultBrowserItems();
 
     setResultCountLabel(statusSuffix.empty() ? "(linked references)" : statusSuffix);
 
@@ -1063,6 +1070,25 @@ void SearchPanel::clear() {
     stopIndexingIndicator();
     setResultCountLabel();
     updateIndexingIndicator();
+}
+
+void SearchPanel::rebuildResultBrowserItems() {
+    if (!resultBrowser_) return;
+
+    const int selectedLine = resultBrowser_->value();
+    resultBrowser_->clear();
+    resultBrowser_->value(0);
+
+    for (size_t i = 0; i < results_.size(); ++i) {
+        resultBrowser_->add(" ");
+    }
+    rebuildResultMetrics();
+
+    if (selectedLine > 0 &&
+        selectedLine <= static_cast<int>(results_.size())) {
+        resultBrowser_->value(selectedLine);
+    }
+    resultBrowser_->redraw();
 }
 
 const SearchResult* SearchPanel::selectedResult() const {

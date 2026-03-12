@@ -59,6 +59,9 @@ public:
     /// Apply runtime HTML style overrides to the preview widget.
     void setHtmlStyleOverride(const std::string& css);
 
+    /// Set extra line spacing for search results and tagged-verse lists.
+    void setBrowserLineSpacing(int pixels);
+
     /// Current preview widget height in pixels.
     int previewHeight() const;
 

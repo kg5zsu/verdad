@@ -108,6 +108,10 @@ int clampHoverDelayMs(int ms) {
     return std::clamp(ms, 100, 5000);
 }
 
+int clampBrowserLineSpacing(int pixels) {
+    return std::clamp(pixels, 0, 16);
+}
+
 int clampEditorIndentWidth(int width) {
     return std::clamp(width, 1, 8);
 }
@@ -564,6 +568,9 @@ bool VerdadApp::applyPreferencesMap(const PreferenceMap& prefs,
     importedAppearance.textLineHeight =
         clampLineHeight(parseDoubleOr(lookup("text_line_height"),
                                       importedAppearance.textLineHeight));
+    importedAppearance.browserLineSpacing =
+        clampBrowserLineSpacing(parseIntOr(lookup("browser_line_spacing"),
+                                           importedAppearance.browserLineSpacing));
     importedAppearance.hoverDelayMs =
         clampHoverDelayMs(parseIntOr(lookup("hover_delay_ms"),
                                      importedAppearance.hoverDelayMs));
@@ -657,6 +664,7 @@ void VerdadApp::savePreferences() {
         file << "text_font_size=" << appearanceSettings_.textFontSize << "\n";
         file << "text_line_height="
              << formatPreferenceDouble(appearanceSettings_.textLineHeight) << "\n";
+        file << "browser_line_spacing=" << appearanceSettings_.browserLineSpacing << "\n";
         file << "hover_delay_ms=" << appearanceSettings_.hoverDelayMs << "\n";
         file << "editor_indent_width=" << appearanceSettings_.editorIndentWidth << "\n";
         file << "editor_line_height="
@@ -733,6 +741,8 @@ void VerdadApp::setAppearanceSettings(const AppearanceSettings& settings) {
             : trimCopy(settings.textFontFamily);
     appearanceSettings_.textFontSize = clampFontSize(settings.textFontSize);
     appearanceSettings_.textLineHeight = clampLineHeight(settings.textLineHeight);
+    appearanceSettings_.browserLineSpacing =
+        clampBrowserLineSpacing(settings.browserLineSpacing);
     appearanceSettings_.hoverDelayMs = clampHoverDelayMs(settings.hoverDelayMs);
     appearanceSettings_.editorIndentWidth =
         clampEditorIndentWidth(settings.editorIndentWidth);

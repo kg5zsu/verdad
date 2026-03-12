@@ -363,6 +363,7 @@ TagPanel::TagPanel(VerdadApp* app, int X, int Y, int W, int H)
     tagBrowser_->callback(onTagSelect, this);
 
     verseBrowser_ = new TagVerseBrowser(this, X, Y, W, H);
+    verseBrowser_->linespacing(app_ ? app_->appearanceSettings().browserLineSpacing : 0);
     verseBrowser_->callback(onVerseSelect, this);
     verseBrowser_->when(FL_WHEN_CHANGED);
 
@@ -395,6 +396,18 @@ void TagPanel::resize(int X, int Y, int W, int H) {
 
 void TagPanel::refresh() {
     populateTags();
+}
+
+void TagPanel::setVerseListLineSpacing(int pixels) {
+    if (!verseBrowser_) return;
+    const int spacing = std::clamp(pixels, 0, 16);
+    if (verseBrowser_->linespacing() == spacing) return;
+    verseBrowser_->linespacing(spacing);
+    if (!selectedTagName_.empty()) {
+        populateVerses(selectedTagName_);
+    } else {
+        verseBrowser_->redraw();
+    }
 }
 
 void TagPanel::showAddTagDialog(const std::string& verseKey) {

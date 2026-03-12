@@ -30,6 +30,9 @@ public:
     void showTagsForVerse(const std::string& verseKey);
     void resize(int X, int Y, int W, int H) override;
 
+    /// Set extra line spacing between tagged-verse rows, in pixels.
+    void setVerseListLineSpacing(int pixels);
+
 private:
     friend class TagFilterInput;
     friend class TagVerseBrowser;

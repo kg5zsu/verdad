@@ -43,6 +43,9 @@ public:
     /// Get number of results
     int resultCount() const { return static_cast<int>(results_.size()); }
 
+    /// Set extra line spacing between search result rows, in pixels.
+    void setResultLineSpacing(int pixels);
+
 private:
     friend class SearchResultBrowser;
 
@@ -109,6 +112,7 @@ private:
     void resetHighlightState();
     std::string applyPreviewHighlights(const std::string& html) const;
     void rebuildResultMetrics();
+    void rebuildResultBrowserItems();
     int resultLineWidth(int line) const;
 
     // Callbacks

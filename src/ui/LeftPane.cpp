@@ -350,6 +350,11 @@ void LeftPane::setHtmlStyleOverride(const std::string& css) {
     }
 }
 
+void LeftPane::setBrowserLineSpacing(int pixels) {
+    if (searchPanel_) searchPanel_->setResultLineSpacing(pixels);
+    if (tagPanel_) tagPanel_->setVerseListLineSpacing(pixels);
+}
+
 int LeftPane::previewHeight() const {
     return previewWidget_ ? previewWidget_->h() : 0;
 }

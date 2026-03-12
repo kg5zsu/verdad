@@ -1565,6 +1565,9 @@ void MainWindow::applyAppearanceSettings(Fl_Font appFont,
         if (rightPane_) rightPane_->setHtmlStyleOverride(textCssOverride);
         if (searchHelpHtml_) searchHelpHtml_->setStyleOverrideCss(textCssOverride);
     }
+    if (leftPane_ && app_) {
+        leftPane_->setBrowserLineSpacing(app_->appearanceSettings().browserLineSpacing);
+    }
     if (rightPane_ && app_) {
         rightPane_->setEditorIndentWidth(app_->appearanceSettings().editorIndentWidth);
         rightPane_->setEditorLineHeight(app_->appearanceSettings().editorLineHeight);
@@ -2320,7 +2323,7 @@ void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
     constexpr int fieldXOffset = 180;
     constexpr int spinnerW = 90;
 
-    int appearanceRowCount = 6;
+    int appearanceRowCount = 7;
     int dictionaryRowCount = 2 + static_cast<int>(languageCodes.size());
     int editorRowCount = 2;
     int maxRowCount = std::max({appearanceRowCount, dictionaryRowCount, editorRowCount});
@@ -2391,6 +2394,16 @@ void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
     textLineHeightSpinner->maximum(2.0);
     textLineHeightSpinner->step(0.05);
     textLineHeightSpinner->value(current.textLineHeight);
+    rowY += rowStep;
+
+    Fl_Box* browserSpacingLabel =
+        new Fl_Box(labelX, rowY, labelW, 24, "Browser line spacing:");
+    browserSpacingLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    Fl_Spinner* browserSpacingSpinner = new Fl_Spinner(fieldX, rowY, spinnerW, 24);
+    browserSpacingSpinner->minimum(0);
+    browserSpacingSpinner->maximum(16);
+    browserSpacingSpinner->step(1);
+    browserSpacingSpinner->value(current.browserLineSpacing);
     rowY += rowStep;
 
     Fl_Box* hoverLabel = new Fl_Box(labelX, rowY, labelW, 24, "Hover delay (ms):");
@@ -2535,6 +2548,7 @@ void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
         }
         updated.textFontSize = static_cast<int>(textSizeSpinner->value());
         updated.textLineHeight = textLineHeightSpinner->value();
+        updated.browserLineSpacing = static_cast<int>(browserSpacingSpinner->value());
         updated.hoverDelayMs = static_cast<int>(hoverDelaySpinner->value());
         updated.editorIndentWidth = static_cast<int>(indentSpinner->value());
         updated.editorLineHeight = editorLineHeightSpinner->value();
