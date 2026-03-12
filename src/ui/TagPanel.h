@@ -59,6 +59,7 @@ private:
     std::string activeBibleModule() const;
     void updateVersePreview(const std::string& verseKey);
     void activateVerseLine(int line, int mouseButton, bool isDoubleClick);
+    void showVerseListContextMenu(int screenX, int screenY);
     void updateFilterControls();
     void clearFilter(bool focusInput);
 

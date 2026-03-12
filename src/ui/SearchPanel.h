@@ -105,6 +105,7 @@ private:
     void schedulePreviewUpdate(const SearchResult& result);
     void applyPendingPreviewUpdate();
     void activateResultLine(int line, int mouseButton, bool isDoubleClick);
+    void showVerseListContextMenu(int screenX, int screenY);
     void resetHighlightState();
     std::string applyPreviewHighlights(const std::string& html) const;
     void rebuildResultMetrics();

@@ -3,6 +3,7 @@
 #include "ui/MainWindow.h"
 #include "ui/LeftPane.h"
 #include "ui/BiblePane.h"
+#include "ui/VerseListCopyMenu.h"
 #include "sword/SwordManager.h"
 #include "tags/TagManager.h"
 
@@ -288,6 +289,13 @@ public:
     int handle(int event) override {
         if (event == FL_PUSH) {
             int button = Fl::event_button();
+            if (button == FL_RIGHT_MOUSE) {
+                pressedLine_ = 0;
+                if (owner_) {
+                    owner_->showVerseListContextMenu(Fl::event_x(), Fl::event_y());
+                }
+                return 1;
+            }
             if (button == FL_LEFT_MOUSE || button == FL_MIDDLE_MOUSE) {
                 pressedLine_ = lineAtEvent();
             } else {
@@ -607,6 +615,22 @@ void TagPanel::activateVerseLine(int line, int mouseButton, bool isDoubleClick) 
             app_->mainWindow()->navigateTo(verseKey);
         }
     }
+}
+
+void TagPanel::showVerseListContextMenu(int screenX, int screenY) {
+    if (!app_ || !verseBrowser_ || verseBrowser_->size() <= 0) return;
+
+    std::vector<verse_list_copy::Entry> entries;
+    entries.reserve(static_cast<size_t>(verseBrowser_->size()));
+    const std::string module = activeBibleModule();
+    for (int line = 1; line <= verseBrowser_->size(); ++line) {
+        const char* text = verseBrowser_->text(line);
+        if (!text || !text[0]) continue;
+        entries.push_back({module, text});
+    }
+
+    verse_list_copy::showVerseListCopyMenu(
+        app_->swordManager(), entries, screenX, screenY);
 }
 
 void TagPanel::onFilterChange(Fl_Widget* /*w*/, void* data) {

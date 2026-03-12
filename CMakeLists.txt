@@ -82,6 +82,7 @@ set(HEADERS
     src/ui/SearchPanel.h
     src/ui/ModulePanel.h
     src/ui/TagPanel.h
+    src/ui/VerseListCopyMenu.h
     src/ui/VerseContext.h
 )
 
