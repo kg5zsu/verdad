@@ -12,11 +12,11 @@
 				</extensions>
 			</storageModule>
 			<storageModule moduleId="cdtBuildSystem" version="4.0.0">
-				<configuration artifactName="${ProjName}" buildProperties="" description="" id="cdt.managedbuild.toolchain.gnu.base.387880322" name="Default" optionalBuildProperties="org.eclipse.cdt.docker.launcher.containerbuild.property.dockerdpath=,org.eclipse.cdt.docker.launcher.containerbuild.property.volumes=,org.eclipse.cdt.docker.launcher.containerbuild.property.selectedvolumes=" parent="org.eclipse.cdt.build.core.emptycfg">
+				<configuration artifactName="${ProjName}" buildProperties="" description="" id="cdt.managedbuild.toolchain.gnu.base.387880322" name="Default" optionalBuildProperties="org.eclipse.cdt.docker.launcher.containerbuild.property.dockerdpath=,org.eclipse.cdt.docker.launcher.containerbuild.property.selectedvolumes=,org.eclipse.cdt.docker.launcher.containerbuild.property.volumes=" parent="org.eclipse.cdt.build.core.emptycfg">
 					<folderInfo id="cdt.managedbuild.toolchain.gnu.base.387880322.829388519" name="/" resourcePath="">
 						<toolChain id="cdt.managedbuild.toolchain.gnu.base.464131723" name="Linux GCC" superClass="cdt.managedbuild.toolchain.gnu.base">
 							<targetPlatform archList="all" binaryParser="org.eclipse.cdt.core.GNU_ELF" id="cdt.managedbuild.target.gnu.platform.base.1462758079" name="Debug Platform" osList="linux,hpux,aix,qnx" superClass="cdt.managedbuild.target.gnu.platform.base"/>
-							<builder id="cmake4eclipse.mbs.builder.1631735095" managedBuildOn="false" parallelBuildOn="false" superClass="cmake4eclipse.mbs.builder"/>
+							<builder command="cmake --build build" enableCleanBuild="false" enabledIncrementalBuild="false" id="cmake4eclipse.mbs.builder.1631735095" keepEnvironmentInBuildfile="false" managedBuildOn="false" name="CMake Builder" parallelBuildOn="true" parallelizationNumber="optimal" superClass="cmake4eclipse.mbs.builder"/>
 							<tool id="cdt.managedbuild.tool.gnu.archiver.base.1732892841" name="GCC Archiver" superClass="cdt.managedbuild.tool.gnu.archiver.base"/>
 							<tool id="cdt.managedbuild.tool.gnu.cpp.compiler.base.18721080" name="GCC C++ Compiler" superClass="cdt.managedbuild.tool.gnu.cpp.compiler.base">
 								<inputType id="cdt.managedbuild.tool.gnu.cpp.compiler.input.34411300" superClass="cdt.managedbuild.tool.gnu.cpp.compiler.input"/>
