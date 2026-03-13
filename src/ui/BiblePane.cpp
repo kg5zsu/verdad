@@ -23,7 +23,80 @@ constexpr int kNavH = 30;
 constexpr int kContentPadding = 2;
 constexpr int kParallelHeaderH = 28;
 constexpr int kParallelHeaderSpacing = 6;
-constexpr int kHistoryChoiceWidth = 170; // Fits most refs while leaving room for history buttons.
+constexpr int kHistoryChoiceWidth = 150; // Fits most refs while leaving room for history buttons.
+constexpr int kParagraphButtonW = 25;
+constexpr int kParallelButtonW = 25;
+constexpr int kStrongsButtonW = 34;
+constexpr int kMorphButtonW = 52;
+constexpr int kFootnotesButtonW = 50;
+constexpr int kCrossRefsButtonW = 46;
+
+class HistoryInputChoice : public Fl_Input_Choice {
+public:
+    HistoryInputChoice(int X, int Y, int W, int H, const char* L = nullptr)
+        : Fl_Input_Choice(X, Y, W, H, L) {}
+
+    void setPopupInitialIndex(int index) { popupInitialIndex_ = index; }
+
+    bool consumeMenuSelectionCallback() {
+        bool wasMenuSelection = menuSelectionPending_;
+        menuSelectionPending_ = false;
+        return wasMenuSelection;
+    }
+
+    int handle(int event) override {
+        if (event == FL_PUSH && eventInMenuButton()) {
+            if (Fl::visible_focus()) Fl::focus(menubutton());
+            if (showMenuWithInitialSelection()) return 1;
+        }
+
+        if (event == FL_KEYBOARD &&
+            Fl::focus() == menubutton() &&
+            Fl::event_key() == ' ' &&
+            !(Fl::event_state() & (FL_SHIFT | FL_CTRL | FL_ALT | FL_META))) {
+            if (showMenuWithInitialSelection()) return 1;
+        }
+
+        return Fl_Input_Choice::handle(event);
+    }
+
+private:
+    int popupInitialIndex_ = -1;
+    bool menuSelectionPending_ = false;
+
+    bool eventInMenuButton() const {
+        const int ex = Fl::event_x();
+        const int ey = Fl::event_y();
+        return ex >= menu_x() &&
+               ex < menu_x() + menu_w() &&
+               ey >= menu_y() &&
+               ey < menu_y() + menu_h();
+    }
+
+    bool showMenuWithInitialSelection() {
+        Fl_Menu_Button* button = menubutton();
+        if (!button || !button->menu() || !button->menu()->text) return false;
+
+        button->menu_end();
+
+        const Fl_Menu_Item* initial = nullptr;
+        if (popupInitialIndex_ >= 0 && popupInitialIndex_ < button->size()) {
+            initial = &button->menu()[popupInitialIndex_];
+        } else {
+            initial = button->mvalue();
+        }
+
+        const Fl_Menu_Item* picked = button->menu()->pulldown(
+            x(), y(), w(), h(), initial, button);
+        menuSelectionPending_ = (picked != nullptr);
+        button->picked(picked);
+        return true;
+    }
+};
+
+HistoryInputChoice* historyInputChoice(Fl_Input_Choice* choice) {
+    return static_cast<HistoryInputChoice*>(choice);
+}
 
 std::string htmlEscape(const std::string& text) {
     std::string out;
@@ -83,6 +156,7 @@ BiblePane::BiblePane(VerdadApp* app, int X, int Y, int W, int H)
     , historyChoice_(nullptr)
     , historyForwardButton_(nullptr)
     , historyRightSeparator_(nullptr)
+    , moduleRightSeparator_(nullptr)
     , parallelButton_(nullptr)
     , paragraphButton_(nullptr)
     , parallelAddButton_(nullptr)
@@ -90,6 +164,7 @@ BiblePane::BiblePane(VerdadApp* app, int X, int Y, int W, int H)
     , morphToggleButton_(nullptr)
     , footnotesToggleButton_(nullptr)
     , crossRefsToggleButton_(nullptr)
+    , crossRefsRightSeparator_(nullptr)
     , navSpacer_(nullptr)
     , parallelHeader_(nullptr)
     , htmlWidget_(nullptr)
@@ -163,10 +238,11 @@ void BiblePane::resize(int X, int Y, int W, int H) {
     if (!navBar_ || !bookChoice_ || !chapterChoice_ || !moduleChoice_ ||
         !prevButton_ || !nextButton_ || !historyLeftSeparator_ ||
         !historyBackButton_ || !historyChoice_ || !historyForwardButton_ ||
-        !historyRightSeparator_ ||
+        !historyRightSeparator_ || !moduleRightSeparator_ ||
         !parallelButton_ || !paragraphButton_ || !parallelAddButton_ ||
         !strongsToggleButton_ || !morphToggleButton_ ||
         !footnotesToggleButton_ || !crossRefsToggleButton_ ||
+        !crossRefsRightSeparator_ ||
         !navSpacer_ || !parallelHeader_ || !htmlWidget_) {
         return;
     }
@@ -175,7 +251,6 @@ void BiblePane::resize(int X, int Y, int W, int H) {
     const int padding = kContentPadding;
     const int spacing = 2;
     const int buttonW = 30;
-    const int compactBtnW = 25;
     const int historyBtnW = 24;
     const int separatorW = 4;
     const int bookW = 120;
@@ -218,26 +293,32 @@ void BiblePane::resize(int X, int Y, int W, int H) {
     moduleChoice_->resize(cx, cy, moduleW, nh);
     cx += moduleW + spacing;
 
-    parallelButton_->resize(cx, cy, compactBtnW, nh);
-    cx += compactBtnW + spacing;
+    moduleRightSeparator_->resize(cx, cy + 4, separatorW, std::max(10, nh - 8));
+    cx += separatorW + spacing;
 
-    paragraphButton_->resize(cx, cy, compactBtnW, nh);
-    cx += compactBtnW + spacing;
+    paragraphButton_->resize(cx, cy, kParagraphButtonW, nh);
+    cx += kParagraphButtonW + spacing;
 
-    strongsToggleButton_->resize(cx, cy, strongsToggleButton_->w(), nh);
-    cx += strongsToggleButton_->w() + spacing;
+    strongsToggleButton_->resize(cx, cy, kStrongsButtonW, nh);
+    cx += kStrongsButtonW + spacing;
 
-    morphToggleButton_->resize(cx, cy, morphToggleButton_->w(), nh);
-    cx += morphToggleButton_->w() + spacing;
+    morphToggleButton_->resize(cx, cy, kMorphButtonW, nh);
+    cx += kMorphButtonW + spacing;
 
-    footnotesToggleButton_->resize(cx, cy, footnotesToggleButton_->w(), nh);
-    cx += footnotesToggleButton_->w() + spacing;
+    footnotesToggleButton_->resize(cx, cy, kFootnotesButtonW, nh);
+    cx += kFootnotesButtonW + spacing;
 
-    crossRefsToggleButton_->resize(cx, cy, crossRefsToggleButton_->w(), nh);
-    cx += crossRefsToggleButton_->w() + spacing;
+    crossRefsToggleButton_->resize(cx, cy, kCrossRefsButtonW, nh);
+    cx += kCrossRefsButtonW + spacing;
 
-    parallelAddButton_->resize(cx, cy, compactBtnW, nh);
-    cx += compactBtnW + spacing;
+    crossRefsRightSeparator_->resize(cx, cy + 4, separatorW, std::max(10, nh - 8));
+    cx += separatorW + spacing;
+
+    parallelButton_->resize(cx, cy, kParallelButtonW, nh);
+    cx += kParallelButtonW + spacing;
+
+    parallelAddButton_->resize(cx, cy, kParallelButtonW, nh);
+    cx += kParallelButtonW + spacing;
 
     int spacerW = std::max(0, (X + W - 2) - cx);
     navSpacer_->resize(cx, cy, spacerW, nh);
@@ -464,8 +545,10 @@ void BiblePane::setNavigationHistory(const std::vector<std::string>& labels,
 
     if (currentIndex >= 0 && currentIndex < static_cast<int>(labels.size())) {
         historyChoice_->menubutton()->value(currentIndex);
+        historyInputChoice(historyChoice_)->setPopupInitialIndex(currentIndex);
     } else {
         historyChoice_->menubutton()->value(-1);
+        historyInputChoice(historyChoice_)->setPopupInitialIndex(-1);
     }
 
     historyBackButton_->activate();
@@ -703,7 +786,7 @@ void BiblePane::buildNavBar() {
     historyBackButton_->deactivate();
     cx += historyBackButton_->w() + 2;
 
-    historyChoice_ = new Fl_Input_Choice(cx, cy, kHistoryChoiceWidth, nh);
+    historyChoice_ = new HistoryInputChoice(cx, cy, kHistoryChoiceWidth, nh);
     historyChoice_->callback(onHistoryChoice, this);
     historyChoice_->when(FL_WHEN_CHANGED | FL_WHEN_RELEASE);
     historyChoice_->input()->when(FL_WHEN_ENTER_KEY_ALWAYS);
@@ -734,50 +817,57 @@ void BiblePane::buildNavBar() {
     }
     cx += 102;
 
-    parallelButton_ = new Fl_Button(cx, cy, 25, nh, "||");
-    parallelButton_->callback(onParallel, this);
-    parallelButton_->tooltip("Toggle parallel Bible view");
-    parallelButton_->type(FL_TOGGLE_BUTTON);
-    cx += parallelButton_->w() + 2;
+    moduleRightSeparator_ = new Fl_Box(cx, cy + 4, 4, std::max(10, nh - 8));
+    moduleRightSeparator_->box(FL_THIN_DOWN_BOX);
+    cx += moduleRightSeparator_->w() + 2;
 
-    paragraphButton_ = new Fl_Button(cx, cy, 25, nh, "\xC2\xB6");
+    paragraphButton_ = new Fl_Button(cx, cy, kParagraphButtonW, nh, "\xC2\xB6");
     paragraphButton_->callback(onParagraphToggle, this);
     paragraphButton_->tooltip("Toggle paragraph / verse-per-line display");
     paragraphButton_->type(FL_TOGGLE_BUTTON);
     cx += paragraphButton_->w() + 2;
 
-    strongsToggleButton_ = new Fl_Button(cx, cy, 34, nh, u8"αא");
+    strongsToggleButton_ = new Fl_Button(cx, cy, kStrongsButtonW, nh, u8"αא");
     strongsToggleButton_->callback(onStrongsToggle, this);
     strongsToggleButton_->tooltip("Show or hide inline Strong's markers");
     strongsToggleButton_->type(FL_TOGGLE_BUTTON);
     cx += strongsToggleButton_->w() + 2;
 
-    morphToggleButton_ = new Fl_Button(cx, cy, 52, nh, "Morph");
+    morphToggleButton_ = new Fl_Button(cx, cy, kMorphButtonW, nh, "Morph");
     morphToggleButton_->callback(onMorphToggle, this);
     morphToggleButton_->tooltip("Show or hide inline morphology markers");
     morphToggleButton_->type(FL_TOGGLE_BUTTON);
     cx += morphToggleButton_->w() + 2;
 
-    footnotesToggleButton_ = new Fl_Button(cx, cy, 50, nh, "Notes");
+    footnotesToggleButton_ = new Fl_Button(cx, cy, kFootnotesButtonW, nh, "Notes");
     footnotesToggleButton_->callback(onFootnotesToggle, this);
     footnotesToggleButton_->tooltip("Show or hide inline footnote markers");
     footnotesToggleButton_->type(FL_TOGGLE_BUTTON);
     cx += footnotesToggleButton_->w() + 2;
 
-    crossRefsToggleButton_ = new Fl_Button(cx, cy, 46, nh, "Xref");
+    crossRefsToggleButton_ = new Fl_Button(cx, cy, kCrossRefsButtonW, nh, "Xref");
     crossRefsToggleButton_->callback(onCrossRefsToggle, this);
     crossRefsToggleButton_->tooltip("Show or hide inline cross-reference markers");
     crossRefsToggleButton_->type(FL_TOGGLE_BUTTON);
     cx += crossRefsToggleButton_->w() + 2;
 
-    parallelAddButton_ = new Fl_Button(cx, cy, 25, nh, "+");
+    crossRefsRightSeparator_ = new Fl_Box(cx, cy + 4, 4, std::max(10, nh - 8));
+    crossRefsRightSeparator_->box(FL_THIN_DOWN_BOX);
+    cx += crossRefsRightSeparator_->w() + 2;
+
+    parallelButton_ = new Fl_Button(cx, cy, kParallelButtonW, nh, "||");
+    parallelButton_->callback(onParallel, this);
+    parallelButton_->tooltip("Toggle parallel Bible view");
+    parallelButton_->type(FL_TOGGLE_BUTTON);
+    cx += parallelButton_->w() + 2;
+
+    parallelAddButton_ = new Fl_Button(cx, cy, kParallelButtonW, nh, "+");
     parallelAddButton_->callback(onParallelAdd, this);
     parallelAddButton_->tooltip("Add parallel Bible column (up to 7)");
     parallelAddButton_->hide();
     cx += parallelAddButton_->w() + 2;
 
     navSpacer_ = new Fl_Box(cx, cy, 0, nh);
-    navBar_->resizable(navSpacer_);
 }
 
 void BiblePane::updateDisplay() {
@@ -1205,7 +1295,8 @@ void BiblePane::onHistoryChoice(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<BiblePane*>(data);
     if (!self || !self->historyChoice_) return;
 
-    if (self->historyChoice_->menubutton()->changed()) {
+    if (historyInputChoice(self->historyChoice_)->consumeMenuSelectionCallback() ||
+        self->historyChoice_->menubutton()->changed()) {
         if (self->app_ && self->app_->mainWindow()) {
             self->app_->mainWindow()->navigateToHistoryMenuIndex(
                 self->historyChoice_->menubutton()->value());

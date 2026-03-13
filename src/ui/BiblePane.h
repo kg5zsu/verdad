@@ -144,6 +144,7 @@ private:
     Fl_Input_Choice* historyChoice_;
     Fl_Button* historyForwardButton_;
     Fl_Box* historyRightSeparator_;
+    Fl_Box* moduleRightSeparator_;
     Fl_Button* parallelButton_;
     Fl_Button* paragraphButton_;
     Fl_Button* parallelAddButton_;
@@ -151,6 +152,7 @@ private:
     Fl_Button* morphToggleButton_;
     Fl_Button* footnotesToggleButton_;
     Fl_Button* crossRefsToggleButton_;
+    Fl_Box* crossRefsRightSeparator_;
     Fl_Box* navSpacer_;
     Fl_Group* parallelHeader_;
     std::vector<std::string> bibleChoiceModules_;
