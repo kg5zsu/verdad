@@ -27,6 +27,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <map>
+#include <sstream>
 #include <set>
 #include <sys/stat.h>
 
@@ -41,6 +42,7 @@ constexpr int kBottomBarHeight = 42;
 constexpr int kStatusBoxHeight = 26;
 constexpr int kInstallButtonWidth = 120;
 constexpr int kCloseButtonWidth = 80;
+constexpr long kDefaultInstallTimeoutMillis = 40000;
 
 std::string trimCopy(const std::string& s) {
     size_t start = 0;
@@ -243,6 +245,273 @@ private:
     std::string lastMessage_;
 };
 
+class VerdadInstallMgr : public sword::InstallMgr {
+public:
+    using sword::InstallMgr::InstallMgr;
+
+    void resetLastTransferState() {
+        lastTransferResult_ = 0;
+        lastTransferSourceCaption_.clear();
+        lastTransferSourceHost_.clear();
+        lastTransferSourceType_.clear();
+        lastTransferPath_.clear();
+        lastTransferWasDirectory_ = false;
+    }
+
+    int lastTransferResult() const {
+        return lastTransferResult_;
+    }
+
+    const std::string& lastTransferSourceCaption() const {
+        return lastTransferSourceCaption_;
+    }
+
+    const std::string& lastTransferSourceHost() const {
+        return lastTransferSourceHost_;
+    }
+
+    const std::string& lastTransferSourceType() const {
+        return lastTransferSourceType_;
+    }
+
+    const std::string& lastTransferPath() const {
+        return lastTransferPath_;
+    }
+
+    bool lastTransferWasDirectory() const {
+        return lastTransferWasDirectory_;
+    }
+
+    int remoteCopy(sword::InstallSource* is,
+                   const char* src,
+                   const char* dest,
+                   bool dirTransfer = false,
+                   const char* suffix = "") override {
+        resetLastTransferState();
+        if (is) {
+            lastTransferSourceCaption_ = safeText(is->caption.c_str());
+            lastTransferSourceHost_ = safeText(is->source.c_str());
+            lastTransferSourceType_ = safeText(is->type.c_str());
+        }
+        lastTransferPath_ = safeText(src);
+        lastTransferWasDirectory_ = dirTransfer;
+        lastTransferResult_ =
+            sword::InstallMgr::remoteCopy(is, src, dest, dirTransfer, suffix);
+        return lastTransferResult_;
+    }
+
+protected:
+    sword::RemoteTransport* createFTPTransport(
+        const char* host,
+        sword::StatusReporter* statusReporter) override {
+        sword::RemoteTransport* transport =
+            sword::InstallMgr::createFTPTransport(host, statusReporter);
+        if (transport) {
+            transport->setTimeoutMillis(getTimeoutMillis());
+        }
+        return transport;
+    }
+
+    sword::RemoteTransport* createHTTPTransport(
+        const char* host,
+        sword::StatusReporter* statusReporter) override {
+        sword::RemoteTransport* transport =
+            sword::InstallMgr::createHTTPTransport(host, statusReporter);
+        if (transport) {
+            transport->setTimeoutMillis(getTimeoutMillis());
+        }
+        return transport;
+    }
+
+private:
+    int lastTransferResult_ = 0;
+    std::string lastTransferSourceCaption_;
+    std::string lastTransferSourceHost_;
+    std::string lastTransferSourceType_;
+    std::string lastTransferPath_;
+    bool lastTransferWasDirectory_ = false;
+};
+
+VerdadInstallMgr* verdadInstallMgr(sword::InstallMgr* installMgr) {
+    return static_cast<VerdadInstallMgr*>(installMgr);
+}
+
+std::string joinMessageBlocks(const std::vector<std::string>& blocks) {
+    std::ostringstream out;
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        if (i > 0) out << "\n\n";
+        out << blocks[i];
+    }
+    return out.str();
+}
+
+std::string transferErrorSummary(int rc) {
+    switch (rc) {
+    case -1:
+        return "The requested item could not be copied from the remote source.";
+    case -2:
+        return "The connection failed or timed out while contacting the remote source.";
+    case -3:
+        return "The remote source denied access to the requested item.";
+    case -4:
+        return "The requested file was not found on the remote source.";
+    case -5:
+        return "The remote source returned a protocol error response.";
+    case -9:
+        return "The remote transfer failed for an unspecified network reason.";
+    default:
+        return "The remote transfer failed with error code " + std::to_string(rc) + ".";
+    }
+}
+
+std::string transferErrorBrief(int rc) {
+    switch (rc) {
+    case -1:
+        return "remote copy failed";
+    case -2:
+        return "connection failed or timed out";
+    case -3:
+        return "access denied";
+    case -4:
+        return "remote file not found";
+    case -5:
+        return "server returned an error";
+    case -9:
+        return "remote transfer failed";
+    default:
+        return "error " + std::to_string(rc);
+    }
+}
+
+std::string installErrorBrief(int installRc,
+                              const VerdadInstallMgr* installMgr) {
+    const int transferRc =
+        installMgr ? installMgr->lastTransferResult() : 0;
+    if (transferRc != 0) {
+        return transferErrorBrief(transferRc);
+    }
+
+    switch (installRc) {
+    case 1:
+        return "module not found in source";
+    case -9:
+        return "install aborted";
+    default:
+        return installRc < 0 ? "installer error" : "local file copy failed";
+    }
+}
+
+std::string refreshErrorBrief(int refreshRc,
+                              const VerdadInstallMgr* installMgr) {
+    const int transferRc =
+        installMgr ? installMgr->lastTransferResult() : 0;
+    if (transferRc != 0) {
+        return transferErrorBrief(transferRc);
+    }
+    return refreshRc == -1
+        ? std::string("source metadata could not be updated")
+        : "error " + std::to_string(refreshRc);
+}
+
+std::string describeInstallFailure(const std::string& moduleName,
+                                   const std::string& sourceCaption,
+                                   int installRc,
+                                   const VerdadInstallMgr* installMgr) {
+    std::ostringstream message;
+    message << "Installing " << moduleName;
+    if (!sourceCaption.empty()) {
+        message << " from " << sourceCaption;
+    }
+    message << " failed.\n\n";
+
+    const int transferRc =
+        installMgr ? installMgr->lastTransferResult() : 0;
+    if (transferRc != 0) {
+        message << transferErrorSummary(transferRc);
+        const std::string sourceName =
+            !installMgr->lastTransferSourceCaption().empty()
+                ? installMgr->lastTransferSourceCaption()
+                : installMgr->lastTransferSourceHost();
+        if (!sourceName.empty()) {
+            message << "\nSource: " << sourceName;
+        }
+        if (!installMgr->lastTransferSourceType().empty()) {
+            message << "\nProtocol: " << installMgr->lastTransferSourceType();
+        }
+        if (!installMgr->lastTransferPath().empty()) {
+            message << "\nRemote path: " << installMgr->lastTransferPath();
+        }
+        message << "\nTransfer error code: " << transferRc;
+        message << "\nInstall error code: " << installRc;
+        return message.str();
+    }
+
+    switch (installRc) {
+    case 1:
+        message << "The selected module was not found in the source metadata.";
+        break;
+    case -9:
+        message << "The install was aborted before completion.";
+        break;
+    default:
+        if (installRc < 0) {
+            message << "The installer reported an internal error.";
+        } else {
+            message << "A local file operation failed while installing the module.";
+        }
+        break;
+    }
+
+    message << "\nInstall error code: " << installRc;
+    return message.str();
+}
+
+std::string describeRefreshFailure(const std::string& caption,
+                                   int refreshRc,
+                                   const VerdadInstallMgr* installMgr) {
+    std::ostringstream message;
+    message << "Refreshing " << caption << " failed.\n\n";
+
+    const int transferRc =
+        installMgr ? installMgr->lastTransferResult() : 0;
+    if (transferRc != 0) {
+        message << transferErrorSummary(transferRc);
+        const std::string sourceName =
+            !installMgr->lastTransferSourceCaption().empty()
+                ? installMgr->lastTransferSourceCaption()
+                : installMgr->lastTransferSourceHost();
+        if (!sourceName.empty()) {
+            message << "\nSource: " << sourceName;
+        }
+        if (!installMgr->lastTransferSourceType().empty()) {
+            message << "\nProtocol: " << installMgr->lastTransferSourceType();
+        }
+        if (!installMgr->lastTransferPath().empty()) {
+            message << "\nRemote path: " << installMgr->lastTransferPath();
+        }
+        message << "\nRefresh error code: " << refreshRc;
+        return message.str();
+    }
+
+    if (refreshRc == -1) {
+        message << "The source metadata could not be updated.";
+    } else {
+        message << "The source refresh failed with error code "
+                << refreshRc << ".";
+    }
+
+    return message.str();
+}
+
+void applyInstallMgrDefaults(VerdadInstallMgr* installMgr) {
+    if (!installMgr) return;
+    if (installMgr->getTimeoutMillis() >= kDefaultInstallTimeoutMillis) {
+        return;
+    }
+
+    installMgr->setTimeoutMillis(kDefaultInstallTimeoutMillis);
+}
+
 } // namespace
 
 ModuleManagerDialog::ModuleManagerDialog(VerdadApp* app, int W, int H)
@@ -425,12 +694,13 @@ void ModuleManagerDialog::initializeInstallMgr() {
     ensureDir(installMgrPath_);
 
     installStatusReporter_ = std::make_unique<DialogInstallStatusReporter>(statusBox_);
-    installMgr_ = std::make_unique<sword::InstallMgr>(
+    installMgr_ = std::make_unique<VerdadInstallMgr>(
         installMgrPath_.c_str(), installStatusReporter_.get());
     installMgr_->setFTPPassive(true);
     // We present our own explicit warning in the UI before remote operations.
     installMgr_->setUserDisclaimerConfirmed(true);
     installMgr_->readInstallConf();
+    applyInstallMgrDefaults(verdadInstallMgr(installMgr_.get()));
 }
 
 void ModuleManagerDialog::refreshSources(bool refreshRemoteContent) {
@@ -484,11 +754,28 @@ void ModuleManagerDialog::refreshSources(bool refreshRemoteContent) {
     repopulateSourceChoice();
 
     if (refreshRemoteContent) {
+        std::vector<std::string> refreshFailures;
         for (const auto& src : sources_) {
             if (src.isLocal || !src.remoteSource) continue;
             statusBox_->copy_label(("Refreshing " + src.caption + "...").c_str());
             Fl::check();
-            installMgr_->refreshRemoteSource(src.remoteSource);
+            if (auto* manager = verdadInstallMgr(installMgr_.get())) {
+                manager->resetLastTransferState();
+            }
+            const int rc = installMgr_->refreshRemoteSource(src.remoteSource);
+            if (rc != 0) {
+                refreshFailures.push_back(
+                    describeRefreshFailure(
+                        src.caption,
+                        rc,
+                        verdadInstallMgr(installMgr_.get())));
+            }
+        }
+        if (!refreshFailures.empty()) {
+            fl_alert("%s", joinMessageBlocks(refreshFailures).c_str());
+            statusBox_->copy_label("One or more sources failed to refresh.");
+        } else {
+            statusBox_->copy_label("Sources refreshed.");
         }
     }
 }
@@ -1115,7 +1402,21 @@ void ModuleManagerDialog::refreshSelectedSource() {
         if (!confirmRemoteNetworkUse()) return;
         statusBox_->copy_label(("Refreshing " + srcIt->caption + "...").c_str());
         Fl::check();
-        installMgr_->refreshRemoteSource(srcIt->remoteSource);
+        if (auto* manager = verdadInstallMgr(installMgr_.get())) {
+            manager->resetLastTransferState();
+        }
+        const int rc = installMgr_->refreshRemoteSource(srcIt->remoteSource);
+        if (rc != 0) {
+            const std::string message =
+                describeRefreshFailure(
+                    srcIt->caption,
+                    rc,
+                    verdadInstallMgr(installMgr_.get()));
+            fl_alert("%s", message.c_str());
+            statusBox_->copy_label(
+                ("Refresh failed: " +
+                 refreshErrorBrief(rc, verdadInstallMgr(installMgr_.get()))).c_str());
+        }
     }
 
     refreshSources(false);
@@ -1161,6 +1462,10 @@ void ModuleManagerDialog::installOrUpdateSelectedModule() {
     statusBox_->copy_label(("Installing " + row.moduleName + "...").c_str());
     Fl::check();
 
+    if (auto* manager = verdadInstallMgr(installMgr_.get())) {
+        manager->resetLastTransferState();
+    }
+
     sword::SWMgr destMgr(new sword::MarkupFilterMgr(sword::FMT_XHTML));
     int rc = 0;
     if (row.sourceType == "DIR") {
@@ -1179,9 +1484,15 @@ void ModuleManagerDialog::installOrUpdateSelectedModule() {
 
     if (rc != 0) {
         const std::string message =
-            "Module install failed (" + std::to_string(rc) + ").";
+            describeInstallFailure(
+                row.moduleName,
+                row.sourceCaption,
+                rc,
+                verdadInstallMgr(installMgr_.get()));
         fl_alert("%s", message.c_str());
-        statusBox_->copy_label("Install failed.");
+        statusBox_->copy_label(
+            ("Install failed: " +
+             installErrorBrief(rc, verdadInstallMgr(installMgr_.get()))).c_str());
         return;
     }
 
@@ -1239,7 +1550,26 @@ void ModuleManagerDialog::onRefreshAll(Fl_Widget* /*widget*/, void* data) {
     if (!self) return;
     if (!self->confirmRemoteNetworkUse()) return;
     if (self->installMgr_) {
-        self->installMgr_->refreshRemoteSourceConfiguration();
+        if (auto* manager = verdadInstallMgr(self->installMgr_.get())) {
+            manager->resetLastTransferState();
+        }
+        const int rc = self->installMgr_->refreshRemoteSourceConfiguration();
+        if (rc != 0) {
+            const std::string message =
+                describeRefreshFailure(
+                    "the remote source list",
+                    rc,
+                    verdadInstallMgr(self->installMgr_.get()));
+            fl_alert("%s", message.c_str());
+            self->statusBox_->copy_label(
+                ("Refresh failed: " +
+                 refreshErrorBrief(
+                     rc,
+                     verdadInstallMgr(self->installMgr_.get()))).c_str());
+            self->refreshSources(false);
+            self->refreshModules();
+            return;
+        }
     }
     self->refreshSources(true);
     self->refreshModules();
