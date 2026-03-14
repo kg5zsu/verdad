@@ -84,6 +84,7 @@ public:
 namespace {
 
 constexpr double kPreviewUpdateDelaySec = 0.08;
+constexpr double kStatusPollDelaySec = 0.1;
 
 std::string trimCopy(const std::string& text) {
     size_t start = 0;
@@ -732,6 +733,7 @@ SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
     , moduleChoice_(nullptr)
     , searchType_(nullptr)
     , resultStatus_(nullptr)
+    , searchProgress_(nullptr)
     , resultBrowser_(nullptr) {
 
     begin();
@@ -760,6 +762,14 @@ SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
     resultStatus_->box(FL_THIN_DOWN_BOX);
     resultStatus_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
 
+    searchProgress_ = new Fl_Progress(X + padding, cy, W - 2 * padding, 20);
+    searchProgress_->box(FL_THIN_DOWN_BOX);
+    searchProgress_->color(FL_BACKGROUND2_COLOR, FL_DARK_GREEN);
+    searchProgress_->minimum(0.0f);
+    searchProgress_->maximum(1.0f);
+    searchProgress_->value(0.0f);
+    searchProgress_->hide();
+
     cy += 20 + padding;
 
     // Result list (occupies full area below selectors).
@@ -781,12 +791,13 @@ SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
 
     if (app_ && app_->searchIndexer()) {
         indexingIndicatorActive_ = true;
-        Fl::add_timeout(0.2, onIndexingPoll, this);
+        Fl::add_timeout(kStatusPollDelaySec, onIndexingPoll, this);
         updateIndexingIndicator();
     }
 }
 
 SearchPanel::~SearchPanel() {
+    cancelActiveSearch();
     cancelPendingPreviewUpdate();
     if (indexingIndicatorActive_) {
         Fl::remove_timeout(onIndexingPoll, this);
@@ -802,9 +813,7 @@ void SearchPanel::setResultLineSpacing(int pixels) {
     rebuildResultBrowserItems();
 }
 
-void SearchPanel::search(const std::string& query,
-                         const std::string& moduleOverride) {
-    cancelPendingPreviewUpdate();
+void SearchPanel::resetResultView() {
     pendingPreviewModule_.clear();
     pendingPreviewKey_.clear();
     lastPreviewModule_.clear();
@@ -812,10 +821,210 @@ void SearchPanel::search(const std::string& query,
     resultDisplayKeys_.clear();
     resultLineWidths_.clear();
     resultRefColumnWidth_ = kResultRefColumnWidth;
-    resetHighlightState();
     results_.clear();
-    resultBrowser_->clear();
-    resultBrowser_->value(0);
+    if (resultBrowser_) {
+        resultBrowser_->clear();
+        resultBrowser_->value(0);
+    }
+    statusResultCountOverride_ = -1;
+    if (searchProgress_) {
+        searchProgress_->value(searchProgress_->minimum());
+        searchProgress_->copy_label("");
+        searchProgress_->hide();
+    }
+    setResultCountLabel();
+}
+
+void SearchPanel::finalizeSearchResults(const std::string& moduleName,
+                                        bool usedIndexer,
+                                        bool indexingPending,
+                                        bool fallbackDeferred) {
+    statusResultCountOverride_ = -1;
+
+    verse_reference_sort::sortSearchResultsCanonical(
+        app_->swordManager(), moduleName, results_);
+
+    resultDisplayKeys_.clear();
+    for (const auto& r : results_) {
+        const std::string& resultModule = r.module.empty() ? moduleName : r.module;
+        std::string shortKey = app_->swordManager().getShortReference(resultModule, r.key);
+        resultDisplayKeys_.push_back(shortKey.empty() ? r.key : shortKey);
+    }
+    rebuildResultBrowserItems();
+
+    std::string labelSuffix;
+    if (usedIndexer && indexingPending) {
+        labelSuffix += "(indexing...)";
+    }
+    if (fallbackDeferred) {
+        if (!labelSuffix.empty()) labelSuffix += " ";
+        labelSuffix += "(regex requires module index)";
+    }
+    setResultCountLabel(labelSuffix);
+
+    SearchIndexer* indexer = app_ ? app_->searchIndexer() : nullptr;
+    if (indexer && indexingPending) {
+        startIndexingIndicator(moduleName);
+    } else {
+        stopIndexingIndicator();
+    }
+
+    if (app_ && app_->mainWindow()) {
+        std::string mod = trimCopy(moduleName);
+        if (mod.empty()) mod = "module";
+        app_->mainWindow()->showTransientStatus(
+            "Search (" + mod + "): " + std::to_string(results_.size()) + " result(s)",
+            2.6);
+    }
+
+    redraw();
+}
+
+void SearchPanel::cancelActiveSearch() {
+    cancelAsyncSearch_.store(true);
+    if (searchThread_.joinable()) {
+        searchThread_.join();
+    }
+    cancelAsyncSearch_.store(false);
+
+    std::lock_guard<std::mutex> lock(asyncSearchMutex_);
+    asyncSearchState_ = AsyncSearchState{};
+}
+
+void SearchPanel::startAsyncRegexSearch(const std::string& moduleName,
+                                        const std::string& query,
+                                        bool indexingPending,
+                                        SearchIndexer* indexer) {
+    if (!indexer) return;
+
+    {
+        std::lock_guard<std::mutex> lock(asyncSearchMutex_);
+        asyncSearchState_ = AsyncSearchState{};
+        asyncSearchState_.active = true;
+        asyncSearchState_.usedIndexer = true;
+        asyncSearchState_.indexingPending = indexingPending;
+        asyncSearchState_.moduleName = moduleName;
+    }
+
+    statusResultCountOverride_ = 0;
+    setResultCountLabel("(searching 0%)");
+    if (searchProgress_) {
+        searchProgress_->minimum(0.0f);
+        searchProgress_->maximum(1.0f);
+        searchProgress_->value(0.0f);
+        searchProgress_->show();
+    }
+
+    cancelAsyncSearch_.store(false);
+    searchThread_ = std::thread([this, moduleName, query, indexingPending, indexer]() {
+        std::vector<SearchResult> results = indexer->searchRegex(
+            moduleName, query, false, 0,
+            [this](const SearchIndexer::RegexSearchProgress& progress) {
+                if (cancelAsyncSearch_.load()) return false;
+
+                std::lock_guard<std::mutex> lock(asyncSearchMutex_);
+                if (!asyncSearchState_.active) return false;
+                asyncSearchState_.scanned = progress.scanned;
+                asyncSearchState_.total = progress.total;
+                asyncSearchState_.matches = progress.matches;
+                return !cancelAsyncSearch_.load();
+            });
+
+        std::lock_guard<std::mutex> lock(asyncSearchMutex_);
+        asyncSearchState_.active = false;
+        asyncSearchState_.completed = true;
+        asyncSearchState_.cancelled = cancelAsyncSearch_.load();
+        asyncSearchState_.usedIndexer = true;
+        asyncSearchState_.indexingPending = indexingPending;
+        asyncSearchState_.fallbackDeferred = false;
+        asyncSearchState_.moduleName = moduleName;
+        asyncSearchState_.results = std::move(results);
+        asyncSearchState_.matches = static_cast<int>(asyncSearchState_.results.size());
+        if (asyncSearchState_.total < asyncSearchState_.scanned) {
+            asyncSearchState_.total = asyncSearchState_.scanned;
+        }
+    });
+}
+
+bool SearchPanel::updateSearchProgressUi() {
+    bool active = false;
+    bool completed = false;
+    int scanned = 0;
+    int total = 0;
+    int matches = 0;
+
+    {
+        std::lock_guard<std::mutex> lock(asyncSearchMutex_);
+        active = asyncSearchState_.active;
+        completed = asyncSearchState_.completed;
+        scanned = asyncSearchState_.scanned;
+        total = asyncSearchState_.total;
+        matches = asyncSearchState_.matches;
+    }
+
+    if (completed) {
+        applyCompletedAsyncSearch();
+        return false;
+    }
+
+    if (!active) return false;
+
+    statusResultCountOverride_ = matches;
+    const int safeTotal = std::max(1, std::max(total, scanned));
+    const int safeScanned = std::clamp(scanned, 0, safeTotal);
+    const int percent = (safeScanned * 100) / safeTotal;
+    setResultCountLabel("(searching " + std::to_string(percent) + "%)");
+
+    if (searchProgress_) {
+        searchProgress_->minimum(0.0f);
+        searchProgress_->maximum(static_cast<float>(safeTotal));
+        searchProgress_->value(static_cast<float>(safeScanned));
+        if (!searchProgress_->visible()) searchProgress_->show();
+    }
+
+    return true;
+}
+
+void SearchPanel::applyCompletedAsyncSearch() {
+    AsyncSearchState completed;
+    {
+        std::lock_guard<std::mutex> lock(asyncSearchMutex_);
+        if (!asyncSearchState_.completed) return;
+        completed = std::move(asyncSearchState_);
+        asyncSearchState_ = AsyncSearchState{};
+    }
+
+    if (searchThread_.joinable()) {
+        searchThread_.join();
+    }
+    cancelAsyncSearch_.store(false);
+
+    statusResultCountOverride_ = -1;
+    if (searchProgress_) {
+        searchProgress_->value(searchProgress_->minimum());
+        searchProgress_->copy_label("");
+        searchProgress_->hide();
+    }
+
+    if (completed.cancelled) {
+        setResultCountLabel();
+        redraw();
+        return;
+    }
+
+    results_ = std::move(completed.results);
+    finalizeSearchResults(completed.moduleName,
+                          completed.usedIndexer,
+                          completed.indexingPending,
+                          completed.fallbackDeferred);
+}
+
+void SearchPanel::search(const std::string& query,
+                         const std::string& moduleOverride) {
+    cancelActiveSearch();
+    cancelPendingPreviewUpdate();
+    resetHighlightState();
+    resetResultView();
 
     std::string trimmedQuery = trimCopy(query);
     if (trimmedQuery.empty()) return;
@@ -887,17 +1096,20 @@ void SearchPanel::search(const std::string& query,
         indexingPending = !moduleIndexed;
     }
 
+    if (indexer && regexSearch && moduleIndexed && !isStrongs) {
+        stopIndexingIndicator();
+        startAsyncRegexSearch(moduleName, trimmedQuery, indexingPending, indexer);
+        redraw();
+        return;
+    }
+
     // Prefer indexed searches when the index exists.
     if (indexer) {
         usedIndexer = true;
         if (isStrongs) {
             results_ = indexer->searchStrongs(moduleName, strongsQuery);
         } else if (regexSearch) {
-            if (moduleIndexed) {
-                results_ = indexer->searchRegex(moduleName, trimmedQuery, false);
-            } else {
-                fallbackDeferred = true;
-            }
+            fallbackDeferred = true;
         } else {
             results_ = indexer->searchWord(moduleName, trimmedQuery, exactPhrase);
         }
@@ -957,60 +1169,16 @@ void SearchPanel::search(const std::string& query,
                 regexPattern, phraseMode);
         }
     }
-
-    verse_reference_sort::sortSearchResultsCanonical(
-        app_->swordManager(), moduleName, results_);
-
-    // Populate result browser
-    for (const auto& r : results_) {
-        const std::string& resultModule = r.module.empty() ? moduleName : r.module;
-        std::string shortKey = app_->swordManager().getShortReference(resultModule, r.key);
-        resultDisplayKeys_.push_back(shortKey.empty() ? r.key : shortKey);
-    }
-    rebuildResultBrowserItems();
-
-    std::string labelSuffix;
-    if (usedIndexer && indexingPending) {
-        labelSuffix += "(indexing...)";
-    }
-    if (fallbackDeferred) {
-        if (!labelSuffix.empty()) labelSuffix += " ";
-        labelSuffix += "(regex requires module index)";
-    }
-    setResultCountLabel(labelSuffix);
-
-    if (indexer && indexingPending) {
-        startIndexingIndicator(moduleName);
-    } else {
-        stopIndexingIndicator();
-    }
-
-    if (app_ && app_->mainWindow()) {
-        std::string mod = trimCopy(moduleName);
-        if (mod.empty()) mod = "module";
-        app_->mainWindow()->showTransientStatus(
-            "Search (" + mod + "): " + std::to_string(results_.size()) + " result(s)",
-            2.6);
-    }
-
-    redraw();
+    finalizeSearchResults(moduleName, usedIndexer, indexingPending, fallbackDeferred);
 }
 
 void SearchPanel::showReferenceResults(const std::string& moduleName,
                                        const std::vector<std::string>& references,
                                        const std::string& statusSuffix) {
+    cancelActiveSearch();
     cancelPendingPreviewUpdate();
-    pendingPreviewModule_.clear();
-    pendingPreviewKey_.clear();
-    lastPreviewModule_.clear();
-    lastPreviewKey_.clear();
-    resultDisplayKeys_.clear();
-    resultLineWidths_.clear();
-    resultRefColumnWidth_ = kResultRefColumnWidth;
     resetHighlightState();
-    results_.clear();
-    resultBrowser_->clear();
-    resultBrowser_->value(0);
+    resetResultView();
     stopIndexingIndicator();
 
     std::string module = trimCopy(moduleName);
@@ -1055,20 +1223,11 @@ void SearchPanel::showReferenceResults(const std::string& moduleName,
 }
 
 void SearchPanel::clear() {
+    cancelActiveSearch();
     cancelPendingPreviewUpdate();
-    pendingPreviewModule_.clear();
-    pendingPreviewKey_.clear();
-    lastPreviewModule_.clear();
-    lastPreviewKey_.clear();
-    resultDisplayKeys_.clear();
-    resultLineWidths_.clear();
-    resultRefColumnWidth_ = kResultRefColumnWidth;
     resetHighlightState();
-    results_.clear();
-    resultBrowser_->clear();
-    resultBrowser_->value(0);
+    resetResultView();
     stopIndexingIndicator();
-    setResultCountLabel();
     updateIndexingIndicator();
 }
 
@@ -1251,13 +1410,19 @@ void SearchPanel::setResultCountLabel(const std::string& suffix) {
     } else {
         statusSuffix_.clear();
     }
-    std::string label = "Results: " + std::to_string(results_.size());
+    const int resultCount = (statusResultCountOverride_ >= 0)
+                                ? statusResultCountOverride_
+                                : static_cast<int>(results_.size());
+    std::string label = "Results: " + std::to_string(resultCount);
     if (!statusSuffix_.empty()) {
         label += " " + statusSuffix_;
     }
     if (label == currentResultLabel_) return;
     currentResultLabel_ = label;
     resultStatus_->copy_label(label.c_str());
+    if (searchProgress_) {
+        searchProgress_->copy_label(label.c_str());
+    }
 }
 
 void SearchPanel::startIndexingIndicator(const std::string& moduleName) {
@@ -1404,8 +1569,11 @@ void SearchPanel::onIndexingPoll(void* data) {
     auto* self = static_cast<SearchPanel*>(data);
     if (!self || !self->indexingIndicatorActive_) return;
 
-    self->updateIndexingIndicator();
-    Fl::repeat_timeout(0.2, onIndexingPoll, self);
+    const bool searchActive = self->updateSearchProgressUi();
+    if (!searchActive) {
+        self->updateIndexingIndicator();
+    }
+    Fl::repeat_timeout(kStatusPollDelaySec, onIndexingPoll, self);
 }
 
 void SearchPanel::onDeferredPreviewUpdate(void* data) {

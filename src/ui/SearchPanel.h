@@ -6,14 +6,19 @@
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Choice.H>
 #include <FL/Fl_Check_Button.H>
+#include <FL/Fl_Progress.H>
+#include <atomic>
+#include <mutex>
 #include <regex>
 #include <string>
+#include <thread>
 #include <vector>
 #include "sword/SwordManager.h"
 
 namespace verdad {
 
 class VerdadApp;
+class SearchIndexer;
 class SearchResultBrowser;
 
 /// Panel for displaying search results within the left pane tabs
@@ -59,6 +64,20 @@ private:
 
     VerdadApp* app_;
 
+    struct AsyncSearchState {
+        bool active = false;
+        bool completed = false;
+        bool cancelled = false;
+        bool usedIndexer = false;
+        bool indexingPending = false;
+        bool fallbackDeferred = false;
+        std::string moduleName;
+        int scanned = 0;
+        int total = 0;
+        int matches = 0;
+        std::vector<SearchResult> results;
+    };
+
     // Module to search in
     Fl_Choice* moduleChoice_;
     std::vector<std::string> moduleChoiceModules_;
@@ -69,6 +88,7 @@ private:
 
     // Result status line
     Fl_Box* resultStatus_;
+    Fl_Progress* searchProgress_;
 
     // Result list
     Fl_Browser* resultBrowser_;
@@ -96,10 +116,27 @@ private:
     std::string highlightPhrase_;
     std::regex highlightRegex_;
     bool highlightRegexValid_ = false;
+    std::thread searchThread_;
+    std::mutex asyncSearchMutex_;
+    std::atomic<bool> cancelAsyncSearch_{false};
+    AsyncSearchState asyncSearchState_;
+    int statusResultCountOverride_ = -1;
 
     /// Populate module choices
     void populateModules();
     void setResultCountLabel(const std::string& suffix = "");
+    void resetResultView();
+    void finalizeSearchResults(const std::string& moduleName,
+                               bool usedIndexer,
+                               bool indexingPending,
+                               bool fallbackDeferred);
+    void cancelActiveSearch();
+    void startAsyncRegexSearch(const std::string& moduleName,
+                               const std::string& query,
+                               bool indexingPending,
+                               SearchIndexer* indexer);
+    bool updateSearchProgressUi();
+    void applyCompletedAsyncSearch();
     void startIndexingIndicator(const std::string& moduleName);
     void stopIndexingIndicator();
     void updateIndexingIndicator();

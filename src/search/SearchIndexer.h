@@ -4,6 +4,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -20,6 +21,14 @@ namespace verdad {
 /// The database only stores module index data (no tags/settings data).
 class SearchIndexer {
 public:
+    struct RegexSearchProgress {
+        int scanned = 0;
+        int total = 0;
+        int matches = 0;
+    };
+
+    using RegexProgressCallback = std::function<bool(const RegexSearchProgress&)>;
+
     explicit SearchIndexer(const std::string& dbPath);
     ~SearchIndexer();
 
@@ -64,7 +73,8 @@ public:
     std::vector<SearchResult> searchRegex(const std::string& moduleName,
                                           const std::string& pattern,
                                           bool caseSensitive = false,
-                                          int maxResults = 0) const;
+                                          int maxResults = 0,
+                                          RegexProgressCallback progressCallback = {}) const;
 
 private:
     void workerLoop();

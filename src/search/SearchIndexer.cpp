@@ -14,6 +14,7 @@
 #include <iostream>
 #include <regex>
 #include <sstream>
+#include <string_view>
 #include <unordered_set>
 
 namespace verdad {
@@ -39,6 +40,123 @@ std::string lowerCopy(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return text;
+}
+
+bool isAsciiText(std::string_view text) {
+    return std::all_of(text.begin(), text.end(),
+                       [](unsigned char c) { return c < 0x80; });
+}
+
+bool containsCaseInsensitiveAscii(std::string_view haystack,
+                                  std::string_view needle) {
+    if (needle.empty()) return true;
+
+    auto it = std::search(
+        haystack.begin(), haystack.end(),
+        needle.begin(), needle.end(),
+        [](char lhs, char rhs) {
+            return std::tolower(static_cast<unsigned char>(lhs)) ==
+                   std::tolower(static_cast<unsigned char>(rhs));
+        });
+    return it != haystack.end();
+}
+
+bool hasUnsupportedRegexLiteralPrefilterSyntax(const std::string& pattern) {
+    bool escaped = false;
+    for (char c : pattern) {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (c == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (c == '[' || c == ']' || c == '(' || c == ')' || c == '|') {
+            return true;
+        }
+    }
+    return escaped;
+}
+
+std::string extractRegexLiteralPrefilter(const std::string& pattern) {
+    if (pattern.empty() ||
+        hasUnsupportedRegexLiteralPrefilterSyntax(pattern)) {
+        return "";
+    }
+
+    std::string best;
+    std::string current;
+    bool escaped = false;
+
+    auto commitCurrent = [&]() {
+        std::string candidate = trimCopy(current);
+        if (candidate.size() > best.size()) best = std::move(candidate);
+        current.clear();
+    };
+
+    for (size_t i = 0; i < pattern.size(); ++i) {
+        char c = pattern[i];
+        if (escaped) {
+            escaped = false;
+            // Regex character classes/assertions such as \b or \d are not
+            // reliable literal filters, but escaped punctuation remains literal.
+            if (std::isalnum(static_cast<unsigned char>(c)) || c == '_') {
+                commitCurrent();
+            } else {
+                current.push_back(c);
+            }
+            continue;
+        }
+
+        if (c == '\\') {
+            escaped = true;
+            continue;
+        }
+
+        if (c == '.' || c == '^' || c == '$') {
+            commitCurrent();
+            continue;
+        }
+
+        if (c == '*' || c == '?') {
+            if (!current.empty()) current.pop_back();
+            commitCurrent();
+            continue;
+        }
+
+        if (c == '+') {
+            commitCurrent();
+            continue;
+        }
+
+        if (c == '{') {
+            size_t close = pattern.find('}', i + 1);
+            if (close == std::string::npos) {
+                current.push_back(c);
+                continue;
+            }
+
+            std::string body = pattern.substr(i + 1, close - i - 1);
+            size_t comma = body.find(',');
+            std::string minText = trimCopy(
+                comma == std::string::npos ? body : body.substr(0, comma));
+            if (minText == "0" && !current.empty()) {
+                current.pop_back();
+            }
+            commitCurrent();
+            i = close;
+            continue;
+        }
+
+        current.push_back(c);
+    }
+
+    if (escaped) return "";
+
+    commitCurrent();
+    if (best.size() < 3) return "";
+    return best;
 }
 
 std::string quoteFtsToken(const std::string& token) {
@@ -969,7 +1087,8 @@ std::vector<SearchResult> SearchIndexer::searchRegex(
     const std::string& moduleName,
     const std::string& pattern,
     bool caseSensitive,
-    int maxResults) const {
+    int maxResults,
+    RegexProgressCallback progressCallback) const {
 
     std::vector<SearchResult> results;
     if (!db_ || moduleName.empty() || pattern.empty()) return results;
@@ -983,7 +1102,48 @@ std::vector<SearchResult> SearchIndexer::searchRegex(
         return results;
     }
 
-    std::lock_guard<std::mutex> lock(dbMutex_);
+    std::string literalPrefilter = extractRegexLiteralPrefilter(pattern);
+    if (!caseSensitive && !isAsciiText(literalPrefilter)) {
+        literalPrefilter.clear();
+    }
+
+    sqlite3* readDb = nullptr;
+    int rc = sqlite3_open_v2(
+        dbPath_.c_str(), &readDb,
+        SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX,
+        nullptr);
+    if (rc != SQLITE_OK || !readDb) {
+        if (readDb) sqlite3_close(readDb);
+        return results;
+    }
+    sqlite3_busy_timeout(readDb, 5000);
+
+    int total = 0;
+    sqlite3_stmt* countStmt = nullptr;
+    if (sqlite3_prepare_v2(
+            readDb,
+            "SELECT count(*) FROM verse_index WHERE module_name = ?",
+            -1, &countStmt, nullptr) == SQLITE_OK) {
+        bindText(countStmt, 1, moduleName);
+        if (sqlite3_step(countStmt) == SQLITE_ROW) {
+            total = sqlite3_column_int(countStmt, 0);
+        }
+    }
+    if (countStmt) sqlite3_finalize(countStmt);
+
+    auto reportProgress = [&](int scanned, int matches) -> bool {
+        if (!progressCallback) return true;
+        RegexSearchProgress progress;
+        progress.scanned = scanned;
+        progress.total = total;
+        progress.matches = matches;
+        return progressCallback(progress);
+    };
+
+    if (!reportProgress(0, 0)) {
+        sqlite3_close(readDb);
+        return results;
+    }
 
     const char* sql =
         "SELECT module_name, key_text, plain_text "
@@ -992,20 +1152,44 @@ std::vector<SearchResult> SearchIndexer::searchRegex(
         "ORDER BY rowid";
 
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(readDb, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        sqlite3_close(readDb);
         return results;
     }
 
     bindText(stmt, 1, moduleName);
 
+    int scanned = 0;
+    int matches = 0;
+    bool cancelled = false;
+
     while (sqlite3_step(stmt) == SQLITE_ROW) {
+        ++scanned;
+
         const char* module = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
         const char* key = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
         const char* plain = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
         std::string plainText = plain ? plain : "";
 
+        if (!literalPrefilter.empty()) {
+            const bool literalMatch = caseSensitive
+                                          ? (plainText.find(literalPrefilter) != std::string::npos)
+                                          : containsCaseInsensitiveAscii(plainText, literalPrefilter);
+            if (!literalMatch) {
+                if ((scanned % 128) == 0 && !reportProgress(scanned, matches)) {
+                    cancelled = true;
+                    break;
+                }
+                continue;
+            }
+        }
+
         std::smatch match;
         if (plainText.empty() || !std::regex_search(plainText, match, re)) {
+            if ((scanned % 128) == 0 && !reportProgress(scanned, matches)) {
+                cancelled = true;
+                break;
+            }
             continue;
         }
 
@@ -1014,6 +1198,12 @@ std::vector<SearchResult> SearchIndexer::searchRegex(
         result.key = key ? key : "";
         result.text = buildRegexSnippet(plainText, match, re);
         results.push_back(std::move(result));
+        matches = static_cast<int>(results.size());
+
+        if (!reportProgress(scanned, matches)) {
+            cancelled = true;
+            break;
+        }
 
         if (maxResults > 0 && static_cast<int>(results.size()) >= maxResults) {
             break;
@@ -1021,6 +1211,10 @@ std::vector<SearchResult> SearchIndexer::searchRegex(
     }
 
     sqlite3_finalize(stmt);
+    if (!cancelled) {
+        reportProgress(scanned, matches);
+    }
+    sqlite3_close(readDb);
     return results;
 }
 
