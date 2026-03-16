@@ -78,6 +78,7 @@ jobs:
         run: |
           cmake -S sword-src -B sword-build \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DLIBSWORD_LIBRARY_TYPE=Static \
             -DSWORD_BUILD_UTILS=No \
             -DSWORD_BUILD_EXAMPLES=No \
@@ -126,7 +127,7 @@ jobs:
   # macOS (Intel x86_64)
   # ===========================================================================
   build-macos-intel:
-    runs-on: macos-13
+    runs-on: macos-15-intel
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -160,6 +161,7 @@ jobs:
         run: |
           cmake -S sword-src -B sword-build \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DLIBSWORD_LIBRARY_TYPE=Static \
             -DSWORD_BUILD_UTILS=No \
             -DSWORD_BUILD_EXAMPLES=No \
@@ -252,6 +254,7 @@ jobs:
         run: |
           cmake -S sword-src -B sword-build ^
             -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ^
             -DLIBSWORD_LIBRARY_TYPE=Static ^
             -DSWORD_BUILD_UTILS=No ^
             -DSWORD_BUILD_EXAMPLES=No ^
