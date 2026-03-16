@@ -3,15 +3,12 @@ name: Build
 on:
   workflow_dispatch:
 
-env:
-  SWORD_SVN_URL: https://crosswire.org/svn/sword/trunk
-
 jobs:
   # ===========================================================================
   # Linux
   # ===========================================================================
   build-linux:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,7 +43,7 @@ jobs:
   # ===========================================================================
   # macOS (ARM64)
   # ===========================================================================
-  build-macos:
+  build-macos-arm64:
     runs-on: macos-14
     steps:
       - name: Checkout
@@ -55,13 +52,25 @@ jobs:
           submodules: recursive
 
       - name: Install system dependencies
-        run: |
-          brew install pkg-config subversion
+        run: brew install pkg-config
 
-      - name: Checkout SWORD source
-        run: svn export "$SWORD_SVN_URL" sword-src --quiet
+      - name: Get SWORD mirror commit SHA
+        id: sword-sha
+        run: echo "sha=$(git ls-remote https://github.com/bibletime/crosswire-sword-mirror HEAD | cut -f1)" >> $GITHUB_OUTPUT
+
+      - name: Cache SWORD install
+        id: cache-sword
+        uses: actions/cache@v4
+        with:
+          path: deps/sword
+          key: sword-macos-arm64-${{ steps.sword-sha.outputs.sha }}
+
+      - name: Clone SWORD mirror
+        if: steps.cache-sword.outputs.cache-hit != 'true'
+        run: git clone --depth=1 https://github.com/bibletime/crosswire-sword-mirror sword-src
 
       - name: Build SWORD from source
+        if: steps.cache-sword.outputs.cache-hit != 'true'
         run: |
           cmake -S sword-src -B sword-build \
             -DCMAKE_BUILD_TYPE=Release \
@@ -110,6 +119,84 @@ jobs:
           path: build/verdad-*.dmg
 
   # ===========================================================================
+  # macOS (Intel x86_64)
+  # ===========================================================================
+  build-macos-intel:
+    runs-on: macos-13
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: brew install pkg-config
+
+      - name: Get SWORD mirror commit SHA
+        id: sword-sha
+        run: echo "sha=$(git ls-remote https://github.com/bibletime/crosswire-sword-mirror HEAD | cut -f1)" >> $GITHUB_OUTPUT
+
+      - name: Cache SWORD install
+        id: cache-sword
+        uses: actions/cache@v4
+        with:
+          path: deps/sword
+          key: sword-macos-x86_64-${{ steps.sword-sha.outputs.sha }}
+
+      - name: Clone SWORD mirror
+        if: steps.cache-sword.outputs.cache-hit != 'true'
+        run: git clone --depth=1 https://github.com/bibletime/crosswire-sword-mirror sword-src
+
+      - name: Build SWORD from source
+        if: steps.cache-sword.outputs.cache-hit != 'true'
+        run: |
+          cmake -S sword-src -B sword-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLIBSWORD_LIBRARY_TYPE=Static \
+            -DSWORD_BUILD_UTILS=No \
+            -DSWORD_BUILD_EXAMPLES=No \
+            -DSWORD_BUILD_TESTS=OFF \
+            -DSWORD_NO_CLUCENE=Yes \
+            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/deps/sword" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15
+          cmake --build sword-build -j$(sysctl -n hw.logicalcpu)
+          cmake --install sword-build
+
+      - name: Configure Verdad
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${{ github.workspace }}/deps/sword" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15
+
+      - name: Build Verdad
+        run: cmake --build build -j$(sysctl -n hw.logicalcpu)
+
+      - name: Package (.app bundle)
+        run: cmake --build build --target app
+
+      - name: Copy SWORD data into bundle
+        run: |
+          SWORD_SHARE="${{ github.workspace }}/deps/sword/share/sword"
+          RESOURCES="build/Verdad.app/Contents/Resources/sword"
+          if [ -d "$SWORD_SHARE" ]; then
+            mkdir -p "$RESOURCES"
+            cp -R "$SWORD_SHARE/locales.d" "$RESOURCES/"
+            if [ -d "$SWORD_SHARE/mods.d" ]; then
+              cp -R "$SWORD_SHARE/mods.d" "$RESOURCES/"
+            fi
+          fi
+
+      - name: Create DMG
+        run: cmake --build build --target dmg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: verdad-macos-x86_64
+          path: build/verdad-*.dmg
+
+  # ===========================================================================
   # Windows (x64, MSVC)
   # ===========================================================================
   build-windows:
@@ -126,14 +213,26 @@ jobs:
         run: |
           vcpkg install sqlite3:x64-windows curl:x64-windows zlib:x64-windows
 
-      - name: Install Subversion
-        run: choco install svn -y --no-progress
+      - name: Get SWORD mirror commit SHA
+        id: sword-sha
+        shell: pwsh
+        run: |
+          $sha = (git ls-remote https://github.com/bibletime/crosswire-sword-mirror HEAD) -split '\s+' | Select-Object -First 1
+          echo "sha=$sha" >> $env:GITHUB_OUTPUT
 
-      - name: Checkout SWORD source
-        shell: cmd
-        run: svn export "%SWORD_SVN_URL%" sword-src --quiet
+      - name: Cache SWORD install
+        id: cache-sword
+        uses: actions/cache@v4
+        with:
+          path: deps/sword
+          key: sword-windows-x64-${{ steps.sword-sha.outputs.sha }}
+
+      - name: Clone SWORD mirror
+        if: steps.cache-sword.outputs.cache-hit != 'true'
+        run: git clone --depth=1 https://github.com/bibletime/crosswire-sword-mirror sword-src
 
       - name: Build SWORD from source
+        if: steps.cache-sword.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           cmake -S sword-src -B sword-build ^
