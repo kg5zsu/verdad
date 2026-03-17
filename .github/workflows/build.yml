@@ -225,7 +225,7 @@ jobs:
 
       - name: Install vcpkg dependencies
         run: |
-          vcpkg install sqlite3:x64-windows-static curl:x64-windows-static zlib:x64-windows-static
+          vcpkg install sqlite3:x64-windows-static curl:x64-windows-static zlib:x64-windows-static bzip2:x64-windows-static
 
       - name: Get SWORD mirror commit SHA
         id: sword-sha
@@ -266,7 +266,9 @@ jobs:
             -DSWORD_BUILD_TESTS=OFF ^
             -DSWORD_NO_CLUCENE=Yes ^
             -DSWORD_NO_XZ=Yes ^
-            -DSWORD_NO_BZIP2=Yes ^
+            -DZLIB_ROOT=C:/vcpkg/installed/x64-windows-static ^
+            -DCURL_ROOT=C:/vcpkg/installed/x64-windows-static ^
+            -DBZip2_ROOT=C:/vcpkg/installed/x64-windows-static ^
             -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake ^
             -DCMAKE_INSTALL_PREFIX=%GITHUB_WORKSPACE%\deps\sword
           cmake --build sword-build --config Release

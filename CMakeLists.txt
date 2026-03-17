@@ -136,11 +136,12 @@ if(WIN32)
     set_target_properties(verdad PROPERTIES WIN32_EXECUTABLE TRUE)
     # Prevent windows.h from defining min/max macros that conflict with std::min/std::max
     target_compile_definitions(verdad PRIVATE NOMINMAX)
-    # Static SWORD on Windows has unresolved refs to curl and zlib; link them
-    # explicitly via the vcpkg-provided static packages.
+    # Static SWORD on Windows has unresolved refs to curl, zlib, and bzip2;
+    # link them explicitly via the vcpkg-provided static packages.
     find_package(CURL REQUIRED)
     find_package(ZLIB REQUIRED)
-    target_link_libraries(verdad PRIVATE CURL::libcurl ZLIB::ZLIB)
+    find_package(BZip2 REQUIRED)
+    target_link_libraries(verdad PRIVATE CURL::libcurl ZLIB::ZLIB BZip2::BZip2)
 endif()
 
 target_include_directories(verdad PRIVATE
@@ -163,6 +164,8 @@ if(APPLE)
         "-framework Cocoa"
         "-framework Carbon"
         "-framework ApplicationServices"
+        # SWORD static library has external references to these macOS system libraries.
+        z bz2 curl
     )
 elseif(WIN32)
     target_link_libraries(verdad PRIVATE shell32)
