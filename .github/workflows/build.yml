@@ -79,11 +79,13 @@ jobs:
           cmake -S sword-src -B sword-build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_CXX_STANDARD=11 \
             -DLIBSWORD_LIBRARY_TYPE=Static \
             -DSWORD_BUILD_UTILS=No \
             -DSWORD_BUILD_EXAMPLES=No \
             -DSWORD_BUILD_TESTS=OFF \
             -DSWORD_NO_CLUCENE=Yes \
+            -DSWORD_NO_XZ=Yes \
             -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/deps/sword" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
           cmake --build sword-build -j$(sysctl -n hw.logicalcpu)
@@ -162,11 +164,13 @@ jobs:
           cmake -S sword-src -B sword-build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_CXX_STANDARD=11 \
             -DLIBSWORD_LIBRARY_TYPE=Static \
             -DSWORD_BUILD_UTILS=No \
             -DSWORD_BUILD_EXAMPLES=No \
             -DSWORD_BUILD_TESTS=OFF \
             -DSWORD_NO_CLUCENE=Yes \
+            -DSWORD_NO_XZ=Yes \
             -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/deps/sword" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15
           cmake --build sword-build -j$(sysctl -n hw.logicalcpu)
@@ -212,7 +216,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     env:
-      VCPKG_DEFAULT_TRIPLET: x64-windows
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -221,7 +225,7 @@ jobs:
 
       - name: Install vcpkg dependencies
         run: |
-          vcpkg install sqlite3:x64-windows curl:x64-windows zlib:x64-windows
+          vcpkg install sqlite3:x64-windows-static curl:x64-windows-static zlib:x64-windows-static
 
       - name: Get SWORD mirror commit SHA
         id: sword-sha
@@ -235,7 +239,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: deps/sword
-          key: sword-windows-x64-${{ steps.sword-sha.outputs.sha }}
+          key: sword-windows-x64-static-${{ steps.sword-sha.outputs.sha }}
 
       - name: Clone SWORD mirror
         if: steps.cache-sword.outputs.cache-hit != 'true'
@@ -255,11 +259,14 @@ jobs:
           cmake -S sword-src -B sword-build ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ^
+            -DCMAKE_CXX_STANDARD=11 ^
             -DLIBSWORD_LIBRARY_TYPE=Static ^
             -DSWORD_BUILD_UTILS=No ^
             -DSWORD_BUILD_EXAMPLES=No ^
             -DSWORD_BUILD_TESTS=OFF ^
             -DSWORD_NO_CLUCENE=Yes ^
+            -DSWORD_NO_XZ=Yes ^
+            -DSWORD_NO_BZIP2=Yes ^
             -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake ^
             -DCMAKE_INSTALL_PREFIX=%GITHUB_WORKSPACE%\deps\sword
           cmake --build sword-build --config Release

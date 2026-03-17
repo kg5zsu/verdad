@@ -136,6 +136,11 @@ if(WIN32)
     set_target_properties(verdad PROPERTIES WIN32_EXECUTABLE TRUE)
     # Prevent windows.h from defining min/max macros that conflict with std::min/std::max
     target_compile_definitions(verdad PRIVATE NOMINMAX)
+    # Static SWORD on Windows has unresolved refs to curl and zlib; link them
+    # explicitly via the vcpkg-provided static packages.
+    find_package(CURL REQUIRED)
+    find_package(ZLIB REQUIRED)
+    target_link_libraries(verdad PRIVATE CURL::libcurl ZLIB::ZLIB)
 endif()
 
 target_include_directories(verdad PRIVATE
