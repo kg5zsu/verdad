@@ -592,7 +592,6 @@ MainWindow::MainWindow(VerdadApp* app, int W, int H, const char* title)
 
     layoutStudyTabHeader();
 
-    lastUserInteraction_ = std::chrono::steady_clock::now();
     updateStatusBar();
     Fl::add_timeout(0.25, onStatusPoll, this);
     statusPollScheduled_ = true;
@@ -606,10 +605,6 @@ MainWindow::~MainWindow() {
     if (documentRestoreScheduled_) {
         Fl::remove_timeout(onDeferredDocumentRestore, this);
         documentRestoreScheduled_ = false;
-    }
-    if (prewarmScheduled_) {
-        Fl::remove_timeout(onDeferredPrewarm, this);
-        prewarmScheduled_ = false;
     }
     if (statusPollScheduled_) {
         Fl::remove_timeout(onStatusPoll, this);
@@ -858,10 +853,6 @@ void MainWindow::activateStudyTab(int index) {
     perf::logf("activateStudyTab from=%d to=%d layoutStudyTabHeader: %.3f ms",
                from, index, step.elapsedMs());
     updateStatusBar();
-
-    if (from >= 0) {
-        scheduleBackgroundPrewarm(0.2);
-    }
 }
 
 void MainWindow::ensureDefaultStudyTab() {
@@ -1256,6 +1247,7 @@ void MainWindow::applyTabState(int index) {
     StudyContext& ctx = studyTabs_[index];
     applyingTabState_ = true;
     perf::StepTimer step;
+    bool restoredBible = false;
 
     biblePane_->setStudyState(
         ctx.state.module,
@@ -1269,6 +1261,7 @@ void MainWindow::applyTabState(int index) {
                index, step.elapsedMs());
     step.reset();
     if (ctx.hasBibleBuffer) {
+        restoredBible = true;
         BiblePane::DisplayBuffer b;
         b.doc = std::move(ctx.bibleBuffer.doc);
         b.html = std::move(ctx.bibleBuffer.html);
@@ -1338,13 +1331,13 @@ void MainWindow::applyTabState(int index) {
                    index, step.elapsedMs());
         step.reset();
     }
-    if (ctx.state.bibleScrollY >= 0) {
+    if (!restoredBible && ctx.state.bibleScrollY >= 0) {
         biblePane_->setScrollY(ctx.state.bibleScrollY);
         perf::logf("applyTabState tab=%d biblePane_->setScrollY: %.3f ms",
                    index, step.elapsedMs());
         step.reset();
     }
-    if (ctx.state.commentaryScrollY >= 0) {
+    if (!restoredRight && ctx.state.commentaryScrollY >= 0) {
         rightPane_->setCommentaryScrollY(ctx.state.commentaryScrollY);
         perf::logf("applyTabState tab=%d rightPane_->setCommentaryScrollY: %.3f ms",
                    index, step.elapsedMs());
@@ -1365,161 +1358,6 @@ void MainWindow::applyTabState(int index) {
 
     appliedStudyTabGroup_ = ctx.tabGroup;
     applyingTabState_ = false;
-}
-
-void MainWindow::prewarmInactiveTabs() {
-    if (!biblePane_ || !rightPane_) return;
-    if (studyTabs_.size() <= 1) return;
-    if (activeStudyTab_ < 0 || activeStudyTab_ >= static_cast<int>(studyTabs_.size())) {
-        return;
-    }
-
-    perf::ScopeTimer timer("MainWindow::prewarmInactiveTabs");
-
-    const int original = activeStudyTab_;
-    captureActiveTabState();
-    captureActiveTabDisplayBuffers();
-
-    for (int i = 0; i < static_cast<int>(studyTabs_.size()); ++i) {
-        if (i == original) continue;
-        StudyContext& ctx = studyTabs_[i];
-        if (ctx.hasBibleBuffer && ctx.hasRightBuffer) continue;
-
-        perf::logf("prewarmInactiveTabs warm tab=%d (hasBible=%d hasRight=%d)",
-                   i, ctx.hasBibleBuffer ? 1 : 0, ctx.hasRightBuffer ? 1 : 0);
-
-        activeStudyTab_ = i;
-        applyTabState(i);
-        captureActiveTabState();
-        captureActiveTabDisplayBuffers();
-    }
-
-    activeStudyTab_ = original;
-    applyTabState(original);
-    if (studyTabsWidget_ &&
-        original >= 0 &&
-        original < static_cast<int>(studyTabs_.size()) &&
-        studyTabs_[original].tabGroup) {
-        studyTabsWidget_->value(studyTabs_[original].tabGroup);
-    }
-    updateActiveStudyTabLabel();
-    layoutStudyTabHeader();
-}
-
-void MainWindow::scheduleBackgroundPrewarm(double delaySec) {
-    if (studyTabs_.size() <= 1) return;
-    if (activeStudyTab_ < 0 || activeStudyTab_ >= static_cast<int>(studyTabs_.size())) {
-        return;
-    }
-
-    prewarmAnchorTab_ = activeStudyTab_;
-    prewarmCursor_ = 0;
-
-    if (prewarmScheduled_) {
-        Fl::remove_timeout(onDeferredPrewarm, this);
-        prewarmScheduled_ = false;
-    }
-
-    Fl::add_timeout(std::max(0.0, delaySec), onDeferredPrewarm, this);
-    prewarmScheduled_ = true;
-}
-
-bool MainWindow::runOneBackgroundPrewarmStep() {
-    if (!biblePane_ || !rightPane_) return false;
-    if (studyTabs_.size() <= 1) return false;
-    if (activeStudyTab_ < 0 || activeStudyTab_ >= static_cast<int>(studyTabs_.size())) {
-        return false;
-    }
-
-    const int original = activeStudyTab_;
-    const int tabCount = static_cast<int>(studyTabs_.size());
-
-    int target = -1;
-    for (int n = 0; n < tabCount; ++n) {
-        const int idx = (prewarmCursor_ + n) % tabCount;
-        if (idx == original) continue;
-
-        const StudyContext& ctx = studyTabs_[idx];
-        if (ctx.hasBibleBuffer && ctx.hasRightBuffer) continue;
-
-        target = idx;
-        prewarmCursor_ = (idx + 1) % tabCount;
-        break;
-    }
-
-    if (target < 0) return false;
-
-    perf::logf("backgroundPrewarm warm tab=%d (hasBible=%d hasRight=%d)",
-               target,
-               studyTabs_[target].hasBibleBuffer ? 1 : 0,
-               studyTabs_[target].hasRightBuffer ? 1 : 0);
-
-    captureActiveTabState();
-    captureActiveTabDisplayBuffers();
-
-    activeStudyTab_ = target;
-    applyTabState(target);
-    captureActiveTabState();
-    captureActiveTabDisplayBuffers();
-
-    activeStudyTab_ = original;
-    applyTabState(original);
-    if (studyTabsWidget_ &&
-        original >= 0 &&
-        original < static_cast<int>(studyTabs_.size()) &&
-        studyTabs_[original].tabGroup) {
-        studyTabsWidget_->value(studyTabs_[original].tabGroup);
-    }
-    updateActiveStudyTabLabel();
-    layoutStudyTabHeader();
-
-    for (int i = 0; i < tabCount; ++i) {
-        if (i == original) continue;
-        if (!(studyTabs_[i].hasBibleBuffer && studyTabs_[i].hasRightBuffer)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-void MainWindow::onDeferredPrewarm(void* data) {
-    auto* self = static_cast<MainWindow*>(data);
-    if (!self) return;
-    self->prewarmScheduled_ = false;
-
-    if (!self->shown()) {
-        self->scheduleBackgroundPrewarm(0.15);
-        return;
-    }
-    if (self->applyingTabState_) {
-        self->scheduleBackgroundPrewarm(0.08);
-        return;
-    }
-    if (self->studyTabs_.size() <= 1) return;
-    if (self->activeStudyTab_ < 0 ||
-        self->activeStudyTab_ >= static_cast<int>(self->studyTabs_.size())) {
-        return;
-    }
-
-    const auto now = std::chrono::steady_clock::now();
-    const auto sinceInput = now - self->lastUserInteraction_;
-    if (sinceInput < std::chrono::milliseconds(350)) {
-        self->scheduleBackgroundPrewarm(0.2);
-        return;
-    }
-
-    if (self->activeStudyTab_ != self->prewarmAnchorTab_) {
-        self->prewarmAnchorTab_ = self->activeStudyTab_;
-        self->prewarmCursor_ = 0;
-    }
-
-    if (self->runOneBackgroundPrewarmStep()) {
-        self->scheduleBackgroundPrewarm(0.03);
-    }
-}
-
-void MainWindow::noteUserInteraction() {
-    lastUserInteraction_ = std::chrono::steady_clock::now();
 }
 
 void MainWindow::navigateTo(const std::string& reference) {
@@ -2107,20 +1945,6 @@ void MainWindow::onStatusPoll(void* data) {
 }
 
 int MainWindow::handle(int event) {
-    switch (event) {
-    case FL_PUSH:
-    case FL_RELEASE:
-    case FL_DRAG:
-    case FL_MOUSEWHEEL:
-    case FL_SHORTCUT:
-    case FL_KEYDOWN:
-    case FL_KEYUP:
-        noteUserInteraction();
-        break;
-    default:
-        break;
-    }
-
     if (event == FL_DRAG || event == FL_RELEASE) {
         if (newStudyTabButton_) newStudyTabButton_->redraw();
         if (studyTabsWidget_) {

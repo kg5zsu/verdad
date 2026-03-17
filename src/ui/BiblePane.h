@@ -157,6 +157,8 @@ private:
     Fl_Group* parallelHeader_;
     std::vector<std::string> bibleChoiceModules_;
     std::vector<std::string> bibleChoiceLabels_;
+    std::string populatedBookModule_;
+    int populatedChapterCount_ = 0;
 
     // Content
     HtmlWidget* htmlWidget_;
@@ -197,10 +199,10 @@ private:
     void setParallelModuleAt(int index, const std::string& module);
 
     /// Populate book choices for current module
-    void populateBooks();
+    void populateBooks(bool force = false);
 
     /// Populate chapter choices for current book
-    void populateChapters();
+    void populateChapters(bool force = false);
 
     /// Keep the reference entry field aligned with the current book/chapter/verse.
     void syncReferenceInput();

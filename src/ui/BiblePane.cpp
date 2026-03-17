@@ -98,6 +98,20 @@ HistoryInputChoice* historyInputChoice(Fl_Input_Choice* choice) {
     return static_cast<HistoryInputChoice*>(choice);
 }
 
+int findChoiceIndexByLabel(const Fl_Choice* choice, const std::string& label) {
+    if (!choice || label.empty()) return -1;
+    const Fl_Menu_Item* menu = choice->menu();
+    if (!menu) return -1;
+
+    for (int i = 0; i < choice->size(); ++i) {
+        const Fl_Menu_Item& item = menu[i];
+        if (item.label() && label == item.label()) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 std::string htmlEscape(const std::string& text) {
     std::string out;
     out.reserve(text.size());
@@ -478,7 +492,6 @@ void BiblePane::nextChapter() {
         for (size_t i = 0; i + 1 < books.size(); i++) {
             if (books[i] == currentBook_) {
                 navigateTo(books[i + 1], 1);
-                populateBooks();
                 break;
             }
         }
@@ -496,7 +509,6 @@ void BiblePane::prevChapter() {
             if (books[i] == currentBook_) {
                 int lastCh = app_->swordManager().getChapterCount(moduleName_, books[i - 1]);
                 navigateTo(books[i - 1], lastCh);
-                populateBooks();
                 break;
             }
         }
@@ -657,7 +669,6 @@ void BiblePane::setStudyState(const std::string& module,
     }
 
     populateBooks();
-    populateChapters();
 
     int maxVerse = app_->swordManager().getVerseCount(moduleName_, currentBook_, currentChapter_);
     if (maxVerse <= 0) maxVerse = 1;
@@ -889,20 +900,7 @@ void BiblePane::updateDisplay() {
     }
 
     if (currentBook_.empty()) {
-        auto books = app_->swordManager().getBookNames(moduleName_);
-        if (!books.empty()) {
-            currentBook_ = books.front();
-            if (bookChoice_) {
-                for (int i = 0; i < bookChoice_->size(); ++i) {
-                    const Fl_Menu_Item& item = bookChoice_->menu()[i];
-                    if (item.label() && currentBook_ == item.label()) {
-                        bookChoice_->value(i);
-                        break;
-                    }
-                }
-            }
-            populateChapters();
-        }
+        populateBooks();
     }
     if (currentBook_.empty()) {
         htmlWidget_->setHtml("<div class=\"chapter\"><p><i>No books available in selected module.</i></p></div>");
@@ -928,7 +926,6 @@ void BiblePane::updateDisplay() {
             int maxVerse = app_->swordManager().getVerseCount(moduleName_, currentBook_, currentChapter_);
             if (maxVerse <= 0) maxVerse = 1;
             currentVerse_ = std::max(1, std::min(currentVerse_, maxVerse));
-            populateChapters();
         }
 
         syncParallelHeader();
@@ -1187,7 +1184,6 @@ void BiblePane::removeParallelModuleAt(int index) {
             int maxVerse = app_->swordManager().getVerseCount(moduleName_, currentBook_, currentChapter_);
             if (maxVerse <= 0) maxVerse = 1;
             currentVerse_ = std::max(1, std::min(currentVerse_, maxVerse));
-            populateChapters();
         }
         parallelMode_ = false;
         if (parallelButton_) parallelButton_->value(0);
@@ -1198,7 +1194,6 @@ void BiblePane::removeParallelModuleAt(int index) {
         int maxVerse = app_->swordManager().getVerseCount(moduleName_, currentBook_, currentChapter_);
         if (maxVerse <= 0) maxVerse = 1;
         currentVerse_ = std::max(1, std::min(currentVerse_, maxVerse));
-        populateChapters();
     }
 
     updateDisplay();
@@ -1217,53 +1212,75 @@ void BiblePane::setParallelModuleAt(int index, const std::string& module) {
         int maxVerse = app_->swordManager().getVerseCount(moduleName_, currentBook_, currentChapter_);
         if (maxVerse <= 0) maxVerse = 1;
         currentVerse_ = std::max(1, std::min(currentVerse_, maxVerse));
-        populateChapters();
     }
 
     updateDisplay();
     notifyContextChanged();
 }
 
-void BiblePane::populateBooks() {
+void BiblePane::populateBooks(bool force) {
     if (!bookChoice_ || moduleName_.empty()) return;
 
-    bookChoice_->clear();
-    auto books = app_->swordManager().getBookNames(moduleName_);
-    for (const auto& book : books) {
-        bookChoice_->add(book.c_str());
-    }
-
-    if (books.empty()) return;
-
-    bool foundCurrent = false;
-    for (int i = 0; i < bookChoice_->size(); i++) {
-        const Fl_Menu_Item& item = bookChoice_->menu()[i];
-        if (item.label() && currentBook_ == item.label()) {
-            bookChoice_->value(i);
-            foundCurrent = true;
-            break;
+    bool needRebuild = force || populatedBookModule_ != moduleName_ || bookChoice_->size() <= 0;
+    if (!needRebuild) {
+        int selectedIndex = findChoiceIndexByLabel(bookChoice_, currentBook_);
+        if (selectedIndex >= 0) {
+            bookChoice_->value(selectedIndex);
+            populateChapters(false);
+            return;
         }
+        needRebuild = true;
     }
 
-    if (!foundCurrent) {
-        currentBook_ = books.front();
-        bookChoice_->value(0);
-    }
+    if (needRebuild) {
+        bookChoice_->clear();
+        auto books = app_->swordManager().getBookNames(moduleName_);
+        for (const auto& book : books) {
+            bookChoice_->add(book.c_str());
+        }
+        populatedBookModule_ = moduleName_;
 
-    populateChapters();
+        if (books.empty()) {
+            currentBook_.clear();
+            populatedChapterCount_ = 0;
+            if (chapterChoice_) chapterChoice_->clear();
+            return;
+        }
+
+        int selectedIndex = findChoiceIndexByLabel(bookChoice_, currentBook_);
+        if (selectedIndex >= 0) {
+            bookChoice_->value(selectedIndex);
+        } else {
+            currentBook_ = books.front();
+            bookChoice_->value(0);
+        }
+
+        populateChapters(true);
+    }
 }
 
-void BiblePane::populateChapters() {
+void BiblePane::populateChapters(bool force) {
     if (!chapterChoice_ || moduleName_.empty() || currentBook_.empty()) return;
 
-    chapterChoice_->clear();
     int count = app_->swordManager().getChapterCount(moduleName_, currentBook_);
-
-    for (int i = 1; i <= count; i++) {
-        chapterChoice_->add(std::to_string(i).c_str());
+    if (count <= 0) {
+        currentChapter_ = 1;
+        populatedChapterCount_ = 0;
+        if (chapterChoice_->size() > 0) {
+            chapterChoice_->clear();
+        }
+        return;
     }
 
-    if (count <= 0) return;
+    bool needRebuild = force || populatedChapterCount_ != count || chapterChoice_->size() != count;
+    if (needRebuild) {
+        chapterChoice_->clear();
+        for (int i = 1; i <= count; i++) {
+            chapterChoice_->add(std::to_string(i).c_str());
+        }
+        populatedChapterCount_ = count;
+    }
+
     if (currentChapter_ < 1) currentChapter_ = 1;
     if (currentChapter_ > count) currentChapter_ = count;
     chapterChoice_->value(currentChapter_ - 1);

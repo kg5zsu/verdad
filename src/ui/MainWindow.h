@@ -234,11 +234,6 @@ private:
     PendingWordInfo pendingWordInfo_;
     bool hoverDelayScheduled_ = false;
 
-    // Deferred startup prewarm state.
-    bool prewarmScheduled_ = false;
-    int prewarmCursor_ = 0;
-    int prewarmAnchorTab_ = -1;
-    std::chrono::steady_clock::time_point lastUserInteraction_;
     bool statusPollScheduled_ = false;
     std::string lastStatusBarText_;
     std::string transientStatusText_;
@@ -287,21 +282,6 @@ private:
 
     /// Apply a tab context into the shared Bible/Right panes.
     void applyTabState(int index);
-
-    /// Pre-render inactive tabs once (used during startup restore to avoid cold switch spikes).
-    void prewarmInactiveTabs();
-
-    /// Schedule non-blocking incremental prewarm while keeping the active tab visible.
-    void scheduleBackgroundPrewarm(double delaySec = 0.05);
-
-    /// Run a single background prewarm step. Returns true when more work remains.
-    bool runOneBackgroundPrewarmStep();
-
-    /// FLTK timeout callback for deferred incremental prewarm.
-    static void onDeferredPrewarm(void* data);
-
-    /// Mark user interaction to throttle background prewarm while UI is active.
-    void noteUserInteraction();
 
     /// Update bottom status bar text.
     void updateStatusBar();

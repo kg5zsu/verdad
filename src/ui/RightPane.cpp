@@ -1403,9 +1403,11 @@ void RightPane::showGeneralBookEntry(const std::string& moduleName,
 
 void RightPane::setCommentaryModule(const std::string& moduleName,
                                     bool activateCurrentVerse) {
+    if (moduleName != currentCommentary_) {
+        loadedCommentaryModule_.clear();
+        loadedCommentaryChapterKey_.clear();
+    }
     currentCommentary_ = moduleName;
-    loadedCommentaryModule_.clear();
-    loadedCommentaryChapterKey_.clear();
 
     module_choice::applyChoiceValue(commentaryChoice_,
                                     commentaryChoiceModules_,
