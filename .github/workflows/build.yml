@@ -279,6 +279,7 @@ jobs:
         run: |
           cmake -S . -B build ^
             -DCMAKE_BUILD_TYPE=Release ^
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static ^
             -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake ^
             -DCMAKE_PREFIX_PATH=%GITHUB_WORKSPACE%\deps\sword
 
