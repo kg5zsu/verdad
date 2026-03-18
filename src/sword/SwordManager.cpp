@@ -2488,6 +2488,49 @@ std::string sanitizeParallelVerseHtml(const std::string& html) {
     return collapseSpacesOutsideTags(out);
 }
 
+std::string closeDanglingInlineTags(const std::string& html) {
+    if (html.empty()) return html;
+
+    std::vector<std::string> openTags;
+    size_t pos = 0;
+    while (pos < html.size()) {
+        if (html[pos] != '<') {
+            ++pos;
+            continue;
+        }
+
+        size_t tagEnd = std::string::npos;
+        std::string tagName;
+        bool isClosing = false;
+        bool isSelfClosing = false;
+        if (!parseTag(html, pos, tagEnd, tagName, isClosing, isSelfClosing)) {
+            ++pos;
+            continue;
+        }
+
+        if (isParallelInlineTag(tagName)) {
+            if (isClosing) {
+                eraseLastOpenTag(openTags, tagName);
+            } else if (!isSelfClosing) {
+                openTags.push_back(tagName);
+            }
+        }
+
+        pos = tagEnd + 1;
+    }
+
+    if (openTags.empty()) return html;
+
+    std::string out = html;
+    while (!openTags.empty()) {
+        out += "</";
+        out += openTags.back();
+        out += ">";
+        openTags.pop_back();
+    }
+    return out;
+}
+
 bool looksLikeHtmlMarkup(const std::string& text) {
     static const std::regex tagRe(
         R"(<\s*/?\s*(?:p|div|br|hr|ul|ol|li|strong|b|em|i|small|span|a)\b)",
@@ -2569,12 +2612,14 @@ std::string commentaryEntryHtml(sword::SWModule* mod) {
         const char* rawEntry = mod->getRawEntry();
         raw = rawEntry ? rawEntry : "";
         if (looksLikeHtmlMarkup(raw)) {
-            return normalizeCommentaryMarkup(raw);
+            return closeDanglingInlineTags(normalizeCommentaryMarkup(raw));
         }
     }
 
     std::string rendered = std::string(mod->renderText().c_str());
-    if (!trimCopy(rendered).empty()) return normalizeCommentaryMarkup(rendered);
+    if (!trimCopy(rendered).empty()) {
+        return closeDanglingInlineTags(normalizeCommentaryMarkup(rendered));
+    }
     if (!trimCopy(raw).empty()) return plainTextToHtml(raw);
     return "";
 }
