@@ -78,13 +78,13 @@ inline void logf(const char* fmt, ...) {
 class ScopeTimer {
 public:
     explicit ScopeTimer(const char* label)
-        : label_(label ? label : "unnamed")
+        : label_(enabled() ? (label ? label : "unnamed") : "")
         , start_(std::chrono::steady_clock::now()) {
-        if (enabled()) logf("BEGIN %s", label_.c_str());
+        if (!label_.empty()) logf("BEGIN %s", label_.c_str());
     }
 
     ~ScopeTimer() {
-        if (!enabled()) return;
+        if (label_.empty()) return;
         using namespace std::chrono;
         auto elapsed = duration_cast<microseconds>(
                            steady_clock::now() - start_)

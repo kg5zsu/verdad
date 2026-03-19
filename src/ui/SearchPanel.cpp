@@ -305,8 +305,18 @@ void replaceAll(std::string& text,
 }
 
 std::string htmlToSnippetText(std::string html) {
-    static const std::regex kTagRe(R"(<[^>]+>)");
-    html = std::regex_replace(html, kTagRe, " ");
+    // Strip HTML tags without regex for performance
+    {
+        std::string stripped;
+        stripped.reserve(html.size());
+        bool inTag = false;
+        for (char c : html) {
+            if (c == '<') { inTag = true; stripped.push_back(' '); continue; }
+            if (c == '>') { inTag = false; continue; }
+            if (!inTag) stripped.push_back(c);
+        }
+        html = std::move(stripped);
+    }
     replaceAll(html, "&nbsp;", " ");
     replaceAll(html, "&amp;", "&");
     replaceAll(html, "&quot;", "\"");

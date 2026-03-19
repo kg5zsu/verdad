@@ -510,6 +510,7 @@ std::string TagPanel::activeBibleModule() const {
         if (!module.empty()) return module;
     }
 
+    if (!app_) return "";
     auto bibles = app_->swordManager().getBibleModules();
     if (!bibles.empty()) return bibles.front().name;
     return "";

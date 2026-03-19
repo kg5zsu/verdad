@@ -497,7 +497,6 @@ std::string aboutTextOfModule(sword::SWModule* mod) {
 
     std::string about = safeText(mod->getConfigEntry("About"));
     if (about.empty()) return "";
-    std::replace(about.begin(), about.end(), '&', '+');
 
     std::string text;
     text.reserve(about.size());
@@ -533,6 +532,23 @@ std::string aboutTextOfModule(sword::SWModule* mod) {
         }
         text.push_back(about[i]);
     }
+
+    // Decode common HTML entities that may appear in SWORD config
+    auto decodeEntities = [](std::string& s) {
+        auto replaceAll = [&s](const std::string& from, const std::string& to) {
+            size_t pos = 0;
+            while ((pos = s.find(from, pos)) != std::string::npos) {
+                s.replace(pos, from.size(), to);
+                pos += to.size();
+            }
+        };
+        replaceAll("&amp;", "&");
+        replaceAll("&lt;", "<");
+        replaceAll("&gt;", ">");
+        replaceAll("&quot;", "\"");
+        replaceAll("&#39;", "'");
+    };
+    decodeEntities(text);
 
     return trimCopy(text);
 }
@@ -2648,6 +2664,7 @@ void ModuleManagerDialog::installOrUpdateSelectedModules() {
 void ModuleManagerDialog::onSourceChanged(Fl_Widget* /*widget*/, void* data) {
     auto* self = static_cast<ModuleManagerDialog*>(data);
     if (!self) return;
+    // TODO: implement source change handling if needed
 }
 
 void ModuleManagerDialog::onChooseSources(Fl_Widget* /*widget*/, void* data) {

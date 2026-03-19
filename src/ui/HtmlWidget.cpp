@@ -117,7 +117,9 @@ Fl_Font findFontVariant(Fl_Font baseFont, int targetAttrs) {
         return kInvalidFont;
     }
 
-    Fl_Font count = Fl::set_fonts("-*");
+    static Fl_Font cachedFontCount = 0;
+    if (cachedFontCount == 0) cachedFontCount = Fl::set_fonts("-*");
+    Fl_Font count = cachedFontCount;
     for (bool stripRegularSuffixes : {false, true}) {
         std::string familyKey = normalizeFontVariantFamily(baseName, stripRegularSuffixes);
         for (Fl_Font f = 0; f < count; ++f) {
@@ -602,7 +604,7 @@ void HtmlWidget::setScrollX(int x) {
 }
 
 bool HtmlWidget::isParallelDocument() const {
-    return currentHtml_.find("class=\"parallel\"") != std::string::npos;
+    return isParallel_;
 }
 
 bool HtmlWidget::selectionPointLess(const SelectionPoint& lhs,
@@ -1125,6 +1127,9 @@ void HtmlWidget::setHtml(const std::string& html, const std::string& baseUrl) {
     }
 
     currentHtml_ = html;
+    isParallel_ = html.find("class=\"parallel\"") != std::string::npos;
+    cachedParallelColX_ = -1;
+    cachedParallelColResult_ = -1;
     baseUrl_ = baseUrl;
     scrollX_ = 0;
     scrollY_ = 0;
@@ -1361,6 +1366,7 @@ void HtmlWidget::restoreSnapshot(const Snapshot& snapshot) {
 
     doc_ = std::static_pointer_cast<litehtml::document>(snapshot.doc);
     currentHtml_ = snapshot.html;
+    isParallel_ = currentHtml_.find("class=\"parallel\"") != std::string::npos;
     baseUrl_ = snapshot.baseUrl;
     scrollX_ = snapshot.scrollX;
     scrollY_ = snapshot.scrollY;
@@ -1424,6 +1430,7 @@ void HtmlWidget::restoreSnapshot(Snapshot&& snapshot) {
 
     doc_ = std::static_pointer_cast<litehtml::document>(snapshot.doc);
     currentHtml_ = std::move(snapshot.html);
+    isParallel_ = currentHtml_.find("class=\"parallel\"") != std::string::npos;
     baseUrl_ = std::move(snapshot.baseUrl);
     scrollX_ = snapshot.scrollX;
     scrollY_ = snapshot.scrollY;
@@ -2117,17 +2124,25 @@ void HtmlWidget::draw_text(litehtml::uint_ptr hdc, const char* text,
     }
 
     if (isParallelDocument() && doc_ && doc_->root_render()) {
-        int screenX = static_cast<int>(pos.x) + std::max(0, cursorX / 2);
-        int screenY = static_cast<int>(pos.y + pos.height / 2);
-        int docX = screenX - x() + scrollX_;
-        int docY = screenY - y() + scrollY_;
-        auto el = doc_->root_render()->get_element_by_point(
-            docX, docY, docX, docY,
-            [](const std::shared_ptr<litehtml::render_item>&) { return true; });
-        if (el) {
-            HitElement hit = findDeepestElementAtPoint(el, docX, docY);
-            if (hit.element) el = hit.element;
-            fragment.parallelColumn = parallelColumnForElement(el);
+        // Use cached result when x position matches (fragments in same column)
+        int docX = static_cast<int>(pos.x);
+        if (docX == cachedParallelColX_) {
+            fragment.parallelColumn = cachedParallelColResult_;
+        } else {
+            int screenX = static_cast<int>(pos.x) + std::max(0, cursorX / 2);
+            int screenY = static_cast<int>(pos.y + pos.height / 2);
+            int hitX = screenX - x() + scrollX_;
+            int hitY = screenY - y() + scrollY_;
+            auto el = doc_->root_render()->get_element_by_point(
+                hitX, hitY, hitX, hitY,
+                [](const std::shared_ptr<litehtml::render_item>&) { return true; });
+            if (el) {
+                HitElement hit = findDeepestElementAtPoint(el, hitX, hitY);
+                if (hit.element) el = hit.element;
+                fragment.parallelColumn = parallelColumnForElement(el);
+            }
+            cachedParallelColX_ = docX;
+            cachedParallelColResult_ = fragment.parallelColumn;
         }
     }
 

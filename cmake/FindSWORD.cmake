@@ -42,7 +42,7 @@ find_library(SWORD_LIBRARIES
     PATHS
         /usr/lib
         /usr/local/lib
-        /usr/lib/x86_64-linux-gnu
+        /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}
         /opt/homebrew/lib
 )
 

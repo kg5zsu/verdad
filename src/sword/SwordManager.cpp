@@ -1448,9 +1448,13 @@ void addStrongToken(HoverMeta& meta, const std::string& token) {
 
 std::string normalizeMorph(const std::string& morphRaw) {
     std::string morph = trimCopy(decodeHtmlEntities(morphRaw));
-    while (!morph.empty() &&
-           (morph.front() == '/' || morph.front() == '\\')) {
-        morph.erase(morph.begin());
+    {
+        size_t start = 0;
+        while (start < morph.size() &&
+               (morph[start] == '/' || morph[start] == '\\')) {
+            ++start;
+        }
+        if (start > 0) morph.erase(0, start);
     }
 
     size_t colonPos = morph.find(':');
@@ -1603,9 +1607,13 @@ bool looksLikeStrongsDisplay(const std::string& text) {
     std::string t = trimCopy(decodeHtmlEntities(text));
     if (t.empty()) return true;
 
-    while (!t.empty() && (t.front() == '<' || t.front() == '(' ||
-           t.front() == '[' || std::isspace(static_cast<unsigned char>(t.front())))) {
-        t.erase(t.begin());
+    {
+        size_t start = 0;
+        while (start < t.size() && (t[start] == '<' || t[start] == '(' ||
+               t[start] == '[' || std::isspace(static_cast<unsigned char>(t[start])))) {
+            ++start;
+        }
+        if (start > 0) t.erase(0, start);
     }
     while (!t.empty() && (t.back() == '>' || t.back() == ')' ||
            t.back() == ']' || std::isspace(static_cast<unsigned char>(t.back())))) {
@@ -1903,9 +1911,15 @@ SearchSnippetData collapseSnippetWhitespace(const std::string& text,
         collapsed.text.pop_back();
         if (!collapsed.mask.empty()) collapsed.mask.pop_back();
     }
-    while (!collapsed.text.empty() && collapsed.text.front() == ' ') {
-        collapsed.text.erase(collapsed.text.begin());
-        if (!collapsed.mask.empty()) collapsed.mask.erase(collapsed.mask.begin());
+    {
+        size_t start = 0;
+        while (start < collapsed.text.size() && collapsed.text[start] == ' ') ++start;
+        if (start > 0) {
+            collapsed.text.erase(0, start);
+            if (collapsed.mask.size() >= start)
+                collapsed.mask.erase(collapsed.mask.begin(),
+                                     collapsed.mask.begin() + static_cast<ptrdiff_t>(start));
+        }
     }
 
     return collapsed;
@@ -2575,32 +2589,151 @@ std::string plainTextToHtml(const std::string& text) {
     return html.str();
 }
 
+namespace {
+
+// Case-insensitive search for a tag pattern starting at pos.
+// Returns position or std::string::npos.
+size_t findTagCI(const std::string& s, const std::string& tagLower, size_t pos = 0) {
+    for (; pos + tagLower.size() <= s.size(); ++pos) {
+        bool match = true;
+        for (size_t j = 0; j < tagLower.size() && match; ++j) {
+            match = (std::tolower(static_cast<unsigned char>(s[pos + j])) ==
+                     static_cast<unsigned char>(tagLower[j]));
+        }
+        if (match) return pos;
+    }
+    return std::string::npos;
+}
+
+// Replace self-closing <p /> and empty <p></p> tags with gap div
+std::string replaceSelfClosingAndEmptyParagraphs(const std::string& input) {
+    static const std::string gap = "<div class=\"commentary-gap\">&nbsp;</div>";
+    std::string result;
+    result.reserve(input.size());
+    size_t i = 0;
+    while (i < input.size()) {
+        if (input[i] == '<' &&
+            (i + 1 < input.size()) &&
+            (std::tolower(static_cast<unsigned char>(input[i + 1])) == 'p')) {
+            // Check for <p ... /> (self-closing)
+            size_t close = input.find('>', i);
+            if (close != std::string::npos && close > i + 1) {
+                if (input[close - 1] == '/' ||
+                    (close >= 2 && input[close - 1] == ' ' && input[close - 2] == '/')) {
+                    result += gap;
+                    i = close + 1;
+                    continue;
+                }
+                // Check for <p...> followed by only whitespace then </p>
+                size_t afterOpen = close + 1;
+                size_t endTag = findTagCI(input, "</p>", afterOpen);
+                if (endTag != std::string::npos) {
+                    bool onlyWhitespace = true;
+                    for (size_t k = afterOpen; k < endTag && onlyWhitespace; ++k) {
+                        if (!std::isspace(static_cast<unsigned char>(input[k])))
+                            onlyWhitespace = false;
+                    }
+                    if (onlyWhitespace) {
+                        result += gap;
+                        i = endTag + 4; // skip </p>
+                        continue;
+                    }
+                }
+            }
+        }
+        result.push_back(input[i]);
+        ++i;
+    }
+    return result;
+}
+
+// Collapse runs of 2+ <br> tags into a single gap div
+std::string collapseMultipleBreaks(const std::string& input) {
+    static const std::string gap = "<div class=\"commentary-gap\">&nbsp;</div>";
+    std::string result;
+    result.reserve(input.size());
+    size_t i = 0;
+    while (i < input.size()) {
+        // Try to match <br .../> or <br>
+        size_t brStart = findTagCI(input, "<br", i);
+        if (brStart != i || brStart == std::string::npos) {
+            result.push_back(input[i]);
+            ++i;
+            continue;
+        }
+        // Count consecutive <br> tags
+        int brCount = 0;
+        size_t pos = i;
+        while (pos < input.size()) {
+            size_t nextBr = findTagCI(input, "<br", pos);
+            if (nextBr != pos) {
+                // Check if only whitespace between
+                bool onlySpace = true;
+                for (size_t k = pos; k < input.size() && k < nextBr && onlySpace; ++k) {
+                    if (!std::isspace(static_cast<unsigned char>(input[k])))
+                        onlySpace = false;
+                }
+                if (!onlySpace || nextBr == std::string::npos) break;
+                pos = nextBr;
+            }
+            size_t close = input.find('>', pos);
+            if (close == std::string::npos) break;
+            ++brCount;
+            pos = close + 1;
+        }
+        if (brCount >= 2) {
+            result += gap;
+        } else {
+            // Just one <br>, keep it
+            size_t close = input.find('>', i);
+            if (close != std::string::npos) {
+                result.append(input, i, close + 1 - i);
+            }
+        }
+        i = pos;
+    }
+    return result;
+}
+
+// Collapse repeated gap divs into one
+std::string collapseRepeatedGaps(const std::string& input) {
+    static const std::string gapTag = "<div class=\"commentary-gap\">&nbsp;</div>";
+    std::string result;
+    result.reserve(input.size());
+    size_t i = 0;
+    while (i < input.size()) {
+        size_t gapPos = input.find(gapTag, i);
+        if (gapPos != i) {
+            result.push_back(input[i]);
+            ++i;
+            continue;
+        }
+        // Found a gap tag; skip consecutive ones
+        result += gapTag;
+        i = gapPos + gapTag.size();
+        while (true) {
+            // Skip whitespace
+            size_t next = i;
+            while (next < input.size() && std::isspace(static_cast<unsigned char>(input[next])))
+                ++next;
+            if (input.compare(next, gapTag.size(), gapTag) == 0) {
+                i = next + gapTag.size();
+            } else {
+                break;
+            }
+        }
+    }
+    return result;
+}
+
+} // anonymous namespace
+
 std::string normalizeCommentaryMarkup(const std::string& text) {
     if (trimCopy(text).empty()) return text;
 
-    std::string normalized = text;
-    static const std::regex selfClosingParagraphRe(R"(<p\s*/\s*>)",
-                                                   std::regex::icase);
-    static const std::regex emptyParagraphRe(R"(<p\b[^>]*>\s*</p>)",
-                                             std::regex::icase);
-    static const std::regex multiBreakRe(R"((?:<br\s*/?>\s*){2,})",
-                                         std::regex::icase);
-    static const std::regex repeatedGapRe(
-        R"((?:<div class="commentary-gap">&nbsp;</div>\s*){2,})",
-        std::regex::icase);
-
-    normalized = std::regex_replace(
-        normalized, selfClosingParagraphRe,
-        "<div class=\"commentary-gap\">&nbsp;</div>");
-    normalized = std::regex_replace(
-        normalized, emptyParagraphRe,
-        "<div class=\"commentary-gap\">&nbsp;</div>");
-    normalized = std::regex_replace(
-        normalized, multiBreakRe,
-        "<div class=\"commentary-gap\">&nbsp;</div>");
-    normalized = std::regex_replace(
-        normalized, repeatedGapRe,
-        "<div class=\"commentary-gap\">&nbsp;</div>");
+    std::string normalized = replaceSelfClosingAndEmptyParagraphs(text);
+    normalized = collapseMultipleBreaks(normalized);
+    normalized = collapseRepeatedGaps(normalized);
     return normalized;
 }
 
@@ -2799,13 +2932,13 @@ std::string SwordManager::getVerseText(const std::string& moduleName,
                                         const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
     sword::SWModule* mod = getModule(moduleName);
-    if (!mod) return "<p><i>Module not found: " + moduleName + "</i></p>";
+    if (!mod) return "<p><i>Module not found: " + htmlEscapeAttr(moduleName) + "</i></p>";
 
     mod->setKey(key.c_str());
     std::string text = std::string(mod->renderText().c_str());
 
     if (text.empty()) {
-        return "<p><i>No text available for " + key + "</i></p>";
+        return "<p><i>No text available for " + htmlEscapeAttr(key) + "</i></p>";
     }
 
     text = postProcessHtml(text);
@@ -2901,7 +3034,7 @@ std::string SwordManager::getChapterText(const std::string& moduleName,
                                           VerseDecorationCallback verseDecorator) {
     std::lock_guard<std::mutex> lock(mutex_);
     sword::SWModule* mod = getModule(moduleName);
-    if (!mod) return "<p><i>Module not found: " + moduleName + "</i></p>";
+    if (!mod) return "<p><i>Module not found: " + htmlEscapeAttr(moduleName) + "</i></p>";
 
     sword::VerseKey* vk = dynamic_cast<sword::VerseKey*>(mod->getKey());
     if (!vk) {
@@ -3186,7 +3319,7 @@ std::string SwordManager::getCommentaryText(const std::string& moduleName,
                                              const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
     sword::SWModule* mod = getModule(moduleName);
-    if (!mod) return "<p><i>Commentary module not found: " + moduleName + "</i></p>";
+    if (!mod) return "<p><i>Commentary module not found: " + htmlEscapeAttr(moduleName) + "</i></p>";
 
     VerseRef ref;
     bool hasChapterContext = false;
@@ -3406,7 +3539,7 @@ std::string SwordManager::getDictionaryEntry(const std::string& moduleName,
                                              std::string* resolvedKeyOut) {
     std::lock_guard<std::mutex> lock(mutex_);
     sword::SWModule* mod = getModule(moduleName);
-    if (!mod) return "<p><i>Dictionary module not found: " + moduleName + "</i></p>";
+    if (!mod) return "<p><i>Dictionary module not found: " + htmlEscapeAttr(moduleName) + "</i></p>";
     if (resolvedKeyOut) resolvedKeyOut->clear();
 
     std::string requestedKey = trimCopy(key);
@@ -3456,7 +3589,7 @@ std::string SwordManager::getGeneralBookEntry(const std::string& moduleName,
                                               const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
     sword::SWModule* mod = getModule(moduleName);
-    if (!mod) return "<p><i>General book module not found: " + moduleName + "</i></p>";
+    if (!mod) return "<p><i>General book module not found: " + htmlEscapeAttr(moduleName) + "</i></p>";
 
     std::vector<GeneralBookTocEntry> toc;
     {
@@ -3493,7 +3626,7 @@ std::string SwordManager::getGeneralBookEntry(const std::string& moduleName,
         const GeneralBookTocEntry& entry = toc[static_cast<size_t>(tocIndex)];
         mod->setKey(entry.key.c_str());
         if (mod->popError()) {
-            return "<p><i>No entry found for: " + lookupKey + "</i></p>";
+            return "<p><i>No entry found for: " + htmlEscapeAttr(lookupKey) + "</i></p>";
         }
         std::string text = std::string(mod->renderText().c_str());
         text = this->postProcessHtml(text);
@@ -3511,7 +3644,7 @@ std::string SwordManager::getGeneralBookEntry(const std::string& moduleName,
             placeholder << "</div>\n";
             return placeholder.str();
         }
-        return "<p><i>No entry found for: " + lookupKey + "</i></p>";
+        return "<p><i>No entry found for: " + htmlEscapeAttr(lookupKey) + "</i></p>";
     }
 
     mod->setKey(lookupKey.c_str());
@@ -3527,7 +3660,7 @@ std::string SwordManager::getGeneralBookEntry(const std::string& moduleName,
             return html.str();
         }
     }
-    return "<p><i>No entry found for: " + lookupKey + "</i></p>";
+    return "<p><i>No entry found for: " + htmlEscapeAttr(lookupKey) + "</i></p>";
 }
 
 std::string SwordManager::verseReferenceFromLink(const std::string& url) {
@@ -3895,11 +4028,19 @@ std::vector<SearchResult> SwordManager::search(
         scopePtr = &scopeKey;
     }
 
-    // Perform search
+    // Perform search with optional progress callback
+    void (*percentUpdate)(char, void*) = nullptr;
+    void* percentUserData = nullptr;
+    if (callback) {
+        percentUpdate = [](char percent, void* userData) {
+            auto* cb = static_cast<std::function<void(float)>*>(userData);
+            (*cb)(static_cast<float>(percent) / 100.0f);
+        };
+        percentUserData = &callback;
+    }
     sword::ListKey& resultKeys = mod->search(
         searchText.c_str(), searchType, 0, scopePtr,
-        nullptr,  // percent update function
-        nullptr   // percent user data
+        nullptr, percentUpdate, percentUserData
     );
 
     // Collect results
@@ -4004,9 +4145,11 @@ WordInfo SwordManager::getWordInfo(const std::string& moduleName,
                     std::string wordLower = word;
                     std::string attrLower = attrWord;
                     std::transform(wordLower.begin(), wordLower.end(),
-                                   wordLower.begin(), ::tolower);
+                                   wordLower.begin(),
+                                   [](unsigned char c) { return std::tolower(c); });
                     std::transform(attrLower.begin(), attrLower.end(),
-                                   attrLower.begin(), ::tolower);
+                                   attrLower.begin(),
+                                   [](unsigned char c) { return std::tolower(c); });
 
                     if (wordLower == attrLower) {
                         auto lemmaIt = wordAttrs.find("Lemma");
@@ -4260,15 +4403,22 @@ SwordManager::VerseRef SwordManager::parseVerseRef(const std::string& ref) {
 
     size_t colonPos = afterBook.find(':');
     if (colonPos != std::string::npos) {
-        result.chapter = std::stoi(afterBook.substr(0, colonPos));
-        std::string verseStr = afterBook.substr(colonPos + 1);
+        try {
+            result.chapter = std::stoi(afterBook.substr(0, colonPos));
+            std::string verseStr = afterBook.substr(colonPos + 1);
 
-        size_t dashPos = verseStr.find('-');
-        if (dashPos != std::string::npos) {
-            result.verse = std::stoi(verseStr.substr(0, dashPos));
-            result.verseEnd = std::stoi(verseStr.substr(dashPos + 1));
-        } else {
-            result.verse = std::stoi(verseStr);
+            size_t dashPos = verseStr.find('-');
+            if (dashPos != std::string::npos) {
+                result.verse = std::stoi(verseStr.substr(0, dashPos));
+                result.verseEnd = std::stoi(verseStr.substr(dashPos + 1));
+            } else {
+                result.verse = std::stoi(verseStr);
+            }
+        } catch (...) {
+            result.book = ref;
+            result.chapter = 0;
+            result.verse = 0;
+            result.verseEnd = 0;
         }
     } else {
         // Just chapter number
@@ -4355,19 +4505,28 @@ std::string SwordManager::renderedChapterHeadingLocked(sword::SWModule* mod,
     const bool oldIntros = vk->isIntros();
     const bool oldProcessAttrs = mod->isProcessEntryAttributes();
 
+    auto restoreState = [&]() {
+        mod->setProcessEntryAttributes(oldProcessAttrs);
+        vk->setIntros(oldIntros);
+        if (!oldKey.empty()) {
+            vk->setText(oldKey.c_str());
+        }
+    };
+
     vk->setIntros(true);
     mod->setProcessEntryAttributes(true);
 
-    std::ostringstream introKey;
-    introKey << book << " " << chapter << ":0";
-    vk->setText(introKey.str().c_str());
-    std::string raw = std::string(mod->renderText().c_str());
-
-    mod->setProcessEntryAttributes(oldProcessAttrs);
-    vk->setIntros(oldIntros);
-    if (!oldKey.empty()) {
-        vk->setText(oldKey.c_str());
+    std::string raw;
+    try {
+        std::ostringstream introKey;
+        introKey << book << " " << chapter << ":0";
+        vk->setText(introKey.str().c_str());
+        raw = std::string(mod->renderText().c_str());
+    } catch (...) {
+        restoreState();
+        return "";
     }
+    restoreState();
 
     std::string heading = extractChapterHeadingHtml(raw);
     if (trimCopy(stripTags(heading)).empty()) return "";
@@ -4422,14 +4581,15 @@ std::string SwordManager::postProcessHtml(const std::string& html) const {
             return;
         }
 
-        postProcessLru_.push_front(key);
-        postProcessCache_.emplace(key, PostProcessCacheEntry{
-            value, postProcessLru_.begin()
+        auto [inserted, ok] = postProcessCache_.emplace(key, PostProcessCacheEntry{
+            value, {}
         });
+        postProcessLru_.push_front(&inserted->first);
+        inserted->second.lruIt = postProcessLru_.begin();
 
         if (postProcessCache_.size() > kPostProcessCacheLimit) {
-            const std::string& evictKey = postProcessLru_.back();
-            postProcessCache_.erase(evictKey);
+            const std::string* evictKey = postProcessLru_.back();
+            postProcessCache_.erase(*evictKey);
             postProcessLru_.pop_back();
         }
     };

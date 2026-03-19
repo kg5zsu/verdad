@@ -984,8 +984,7 @@ void MainWindow::recordActiveStudyHistory() {
     }
 
     auto sameEntry = [](const StudyHistoryEntry& lhs, const StudyHistoryEntry& rhs) {
-        return trimCopy(lhs.module) == trimCopy(rhs.module) &&
-               trimCopy(lhs.reference) == trimCopy(rhs.reference);
+        return lhs.module == rhs.module && lhs.reference == rhs.reference;
     };
 
     if (state.history.empty()) {
@@ -2011,7 +2010,8 @@ void MainWindow::onDeferredTabSnapshotEviction(void* data) {
 }
 
 int MainWindow::handle(int event) {
-    if (event == FL_DRAG || event == FL_RELEASE) {
+    if (event == FL_RELEASE) {
+        // Refresh layout chrome after a potential splitter drag completes
         if (newStudyTabButton_) newStudyTabButton_->redraw();
         if (studyTabsWidget_) {
             studyTabsWidget_->damage(FL_DAMAGE_ALL);

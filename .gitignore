@@ -66,3 +66,4 @@ doc/*.jpg
 
 ref/
 tools/appimage-tools/
+.claude

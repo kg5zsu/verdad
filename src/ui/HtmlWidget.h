@@ -229,6 +229,7 @@ private:
     int contentHeight_ = 0;
     int lastRenderWidth_ = 0;
     bool allowHorizontalScroll_ = false;
+    bool isParallel_ = false;
 
     // Font cache
     struct FontInfo {
@@ -273,6 +274,10 @@ private:
         std::vector<int> xOffsets;
         int parallelColumn = -1;
     };
+
+    // Cache for parallel column detection during draw pass
+    mutable int cachedParallelColX_ = -1;
+    mutable int cachedParallelColResult_ = -1;
 
     struct SelectionPoint {
         int fragmentIndex = -1;

@@ -563,9 +563,15 @@ MaskedText collapseWhitespaceWithMask(const std::string& text,
         collapsed.text.pop_back();
         if (!collapsed.mask.empty()) collapsed.mask.pop_back();
     }
-    while (!collapsed.text.empty() && collapsed.text.front() == ' ') {
-        collapsed.text.erase(collapsed.text.begin());
-        if (!collapsed.mask.empty()) collapsed.mask.erase(collapsed.mask.begin());
+    {
+        size_t start = 0;
+        while (start < collapsed.text.size() && collapsed.text[start] == ' ') ++start;
+        if (start > 0) {
+            collapsed.text.erase(0, start);
+            if (collapsed.mask.size() >= start)
+                collapsed.mask.erase(collapsed.mask.begin(),
+                                     collapsed.mask.begin() + static_cast<ptrdiff_t>(start));
+        }
     }
 
     return collapsed;
@@ -1822,7 +1828,37 @@ void SearchIndexer::indexModuleNow(const std::string& moduleName) {
     std::string failureMessage;
 
     if (resourceType == "bible") {
+        // First pass: collect plain text with options off
+        mgr->setGlobalOption("Strong's Numbers", "Off");
+        mgr->setGlobalOption("Morphological Tags", "Off");
+        mgr->setGlobalOption("Footnotes", "Off");
+        mgr->setGlobalOption("Cross-references", "Off");
+        mgr->setGlobalOption("Headings", "Off");
+
+        std::vector<std::string> plainTexts;
+        plainTexts.reserve(keyedEntries.size());
         for (const auto& key : keyedEntries) {
+            if (stopRequested_.load()) {
+                cancelled = true;
+                break;
+            }
+            mod->setKey(key.c_str());
+            if (mod->popError()) {
+                plainTexts.emplace_back();
+                continue;
+            }
+            const char* plainRaw = mod->stripText();
+            plainTexts.push_back(trimCopy(plainRaw ? plainRaw : ""));
+        }
+
+        // Second pass: collect XHTML with options on, then insert
+        mgr->setGlobalOption("Strong's Numbers", "On");
+        mgr->setGlobalOption("Morphological Tags", "On");
+        mgr->setGlobalOption("Footnotes", "On");
+        mgr->setGlobalOption("Cross-references", "On");
+        mgr->setGlobalOption("Headings", "On");
+
+        for (size_t ki = 0; ki < keyedEntries.size() && !cancelled; ++ki) {
             if (stopRequested_.load()) {
                 cancelled = true;
                 break;
@@ -1831,22 +1867,11 @@ void SearchIndexer::indexModuleNow(const std::string& moduleName) {
             ++processedEntries;
             if ((processedEntries % 128) == 0) bumpProgress();
 
+            const auto& key = keyedEntries[ki];
             mod->setKey(key.c_str());
             if (mod->popError()) continue;
 
-            mgr->setGlobalOption("Strong's Numbers", "Off");
-            mgr->setGlobalOption("Morphological Tags", "Off");
-            mgr->setGlobalOption("Footnotes", "Off");
-            mgr->setGlobalOption("Cross-references", "Off");
-            mgr->setGlobalOption("Headings", "Off");
-            const char* plainRaw = mod->stripText();
-            std::string plain = trimCopy(plainRaw ? plainRaw : "");
-
-            mgr->setGlobalOption("Strong's Numbers", "On");
-            mgr->setGlobalOption("Morphological Tags", "On");
-            mgr->setGlobalOption("Footnotes", "On");
-            mgr->setGlobalOption("Cross-references", "On");
-            mgr->setGlobalOption("Headings", "On");
+            std::string plain = ki < plainTexts.size() ? plainTexts[ki] : "";
             std::string xhtml = std::string(mod->renderText().c_str());
 
             std::string keyText = trimCopy(mod->getKeyText() ? mod->getKeyText() : "");

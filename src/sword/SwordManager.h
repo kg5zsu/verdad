@@ -310,7 +310,7 @@ public:
 private:
     struct PostProcessCacheEntry {
         std::string value;
-        std::list<std::string>::iterator lruIt;
+        std::list<const std::string*>::iterator lruIt;
     };
     struct VerseHtmlCacheEntry {
         std::string value;
@@ -321,7 +321,7 @@ private:
     std::unique_ptr<sword::SWConfig> bundledSysConfig_;
     mutable std::mutex mutex_;
     mutable std::unordered_map<std::string, PostProcessCacheEntry> postProcessCache_;
-    mutable std::list<std::string> postProcessLru_;
+    mutable std::list<const std::string*> postProcessLru_;
     static constexpr size_t kPostProcessCacheLimit = 1024;
     mutable std::unordered_map<std::string, VerseHtmlCacheEntry> verseHtmlCache_;
     mutable std::list<std::string> verseHtmlLru_;

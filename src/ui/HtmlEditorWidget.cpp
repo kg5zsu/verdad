@@ -130,7 +130,9 @@ Fl_Font findFontVariant(Fl_Font baseFont, int targetAttrs, Fl_Font fallback) {
     const char* baseName = Fl::get_font_name(baseFont, &baseAttrs);
     if (!baseName || !baseName[0]) return fallback;
 
-    Fl_Font count = Fl::set_fonts("-*");
+    static Fl_Font cachedFontCount = 0;
+    if (cachedFontCount == 0) cachedFontCount = Fl::set_fonts("-*");
+    Fl_Font count = cachedFontCount;
     for (bool stripRegularSuffixes : {false, true}) {
         std::string familyKey = normalizeFontVariantFamily(baseName, stripRegularSuffixes);
         for (Fl_Font f = 0; f < count; ++f) {
@@ -733,12 +735,12 @@ void parseHtmlToEditorContent(const std::string& html,
                 bool ordered = !listStack.empty() && listStack.back().ordered;
                 if (ordered) {
                     int number = listStack.back().nextNumber++;
-                    int listLevel = detectListLevel(lowerTag);
-                    if (listLevel <= 0 && !listStack.empty()) {
-                        listLevel = static_cast<int>(listStack.size());
+                    int markerLevel = listLevel;
+                    if (markerLevel <= 0 && !listStack.empty()) {
+                        markerLevel = static_cast<int>(listStack.size());
                     }
                     appendPrefixIfNeeded(indent +
-                                         formatOrderedListMarker(number, std::max(0, listLevel - 1)) +
+                                         formatOrderedListMarker(number, std::max(0, markerLevel - 1)) +
                                          ". ");
                 } else {
                     appendPrefixIfNeeded(indent + "- ");

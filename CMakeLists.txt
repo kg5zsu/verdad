@@ -57,9 +57,6 @@ add_subdirectory(libs/fltk)
 
 # SWORD library
 find_package(SWORD REQUIRED)
-if(NOT SWORD_FOUND)
-    message(FATAL_ERROR "SWORD not found. Install libsword-dev.")
-endif()
 
 if(NOT WIN32)
     find_path(VERDAD_SWORD_SHARE_DIR

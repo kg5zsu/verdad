@@ -82,6 +82,7 @@ TagManager::~TagManager() {
 bool TagManager::load(const std::string& filepath) {
     tags_.clear();
     verseTags_.clear();
+    tagVerses_.clear();
     dirty_ = false;
 
     if (!openDatabase(filepath)) {
@@ -135,13 +136,17 @@ bool TagManager::deleteTag(const std::string& name) {
 
     tags_.erase(it);
 
-    for (auto verseIt = verseTags_.begin(); verseIt != verseTags_.end();) {
-        verseIt->second.erase(name);
-        if (verseIt->second.empty()) {
-            verseIt = verseTags_.erase(verseIt);
-        } else {
-            ++verseIt;
+    // Remove from inverted index and verseTags_
+    auto tvIt = tagVerses_.find(name);
+    if (tvIt != tagVerses_.end()) {
+        for (const auto& verseKey : tvIt->second) {
+            auto vtIt = verseTags_.find(verseKey);
+            if (vtIt != verseTags_.end()) {
+                vtIt->second.erase(name);
+                if (vtIt->second.empty()) verseTags_.erase(vtIt);
+            }
         }
+        tagVerses_.erase(tvIt);
     }
 
     dirty_ = true;
@@ -157,6 +162,17 @@ bool TagManager::renameTag(const std::string& oldName, const std::string& newNam
     tag.name = newName;
     tags_.erase(it);
     tags_[newName] = tag;
+
+    // Update inverted index
+    auto tvIt = tagVerses_.find(oldName);
+    std::set<std::string> verses;
+    if (tvIt != tagVerses_.end()) {
+        verses = std::move(tvIt->second);
+        tagVerses_.erase(tvIt);
+    }
+    if (!verses.empty()) {
+        tagVerses_[newName] = std::move(verses);
+    }
 
     for (auto& pair : verseTags_) {
         if (pair.second.erase(oldName) > 0) {
@@ -181,6 +197,7 @@ void TagManager::tagVerse(const std::string& verseKey, const std::string& tagNam
         createTag(tagName);
     }
     if (verseTags_[verseKey].insert(tagName).second) {
+        addToInvertedIndex(tagName, verseKey);
         dirty_ = true;
     }
 }
@@ -189,6 +206,7 @@ void TagManager::untagVerse(const std::string& verseKey, const std::string& tagN
     auto it = verseTags_.find(verseKey);
     if (it != verseTags_.end()) {
         if (it->second.erase(tagName) > 0) {
+            removeFromInvertedIndex(tagName, verseKey);
             dirty_ = true;
         }
         if (it->second.empty()) {
@@ -224,12 +242,9 @@ std::vector<Tag> TagManager::getTagsForVerse(const std::string& verseKey) const 
 }
 
 std::vector<std::string> TagManager::getVersesWithTag(const std::string& tagName) const {
-    std::vector<std::string> result;
-    for (const auto& pair : verseTags_) {
-        if (pair.second.count(tagName) > 0) {
-            result.push_back(pair.first);
-        }
-    }
+    auto it = tagVerses_.find(tagName);
+    if (it == tagVerses_.end()) return {};
+    std::vector<std::string> result(it->second.begin(), it->second.end());
     std::sort(result.begin(), result.end());
     return result;
 }
@@ -244,13 +259,9 @@ bool TagManager::verseHasTag(const std::string& verseKey,
 }
 
 int TagManager::getTagCount(const std::string& tagName) const {
-    int count = 0;
-    for (const auto& pair : verseTags_) {
-        if (pair.second.count(tagName) > 0) {
-            count++;
-        }
-    }
-    return count;
+    auto it = tagVerses_.find(tagName);
+    if (it == tagVerses_.end()) return 0;
+    return static_cast<int>(it->second.size());
 }
 
 bool TagManager::openDatabase(const std::string& filepath) {
@@ -294,6 +305,7 @@ bool TagManager::loadFromDatabase() {
 
     tags_.clear();
     verseTags_.clear();
+    tagVerses_.clear();
 
     sqlite3_stmt* tagStmt = nullptr;
     sqlite3_stmt* verseStmt = nullptr;
@@ -333,6 +345,7 @@ bool TagManager::loadFromDatabase() {
         if (!verseKey || !tagName) continue;
         if (tags_.find(tagName) == tags_.end()) continue;
         verseTags_[verseKey].insert(tagName);
+        tagVerses_[tagName].insert(verseKey);
     }
     if (ok && rc != SQLITE_DONE) {
         ok = false;
@@ -350,6 +363,18 @@ bool TagManager::loadFromDatabase() {
     return true;
 }
 
+void TagManager::addToInvertedIndex(const std::string& tagName, const std::string& verseKey) {
+    tagVerses_[tagName].insert(verseKey);
+}
+
+void TagManager::removeFromInvertedIndex(const std::string& tagName, const std::string& verseKey) {
+    auto it = tagVerses_.find(tagName);
+    if (it != tagVerses_.end()) {
+        it->second.erase(verseKey);
+        if (it->second.empty()) tagVerses_.erase(it);
+    }
+}
+
 bool TagManager::persistToDatabase() {
     if (!db_) return false;
     if (!dirty_) return true;
@@ -362,17 +387,22 @@ bool TagManager::persistToDatabase() {
     sqlite3_stmt* insertVerseTag = nullptr;
     bool ok = true;
 
-    if (!execSql(db_, "DELETE FROM verse_tags;")) ok = false;
-    if (ok && !execSql(db_, "DELETE FROM tags;")) ok = false;
+    // Use a temp-table swap strategy so that a crash never loses data:
+    // 1. Write new data into temp tables
+    // 2. DROP + rename in the same transaction (atomic swap)
+    if (!execSql(db_, "CREATE TABLE IF NOT EXISTS tags_new(name TEXT PRIMARY KEY, color TEXT);")) ok = false;
+    if (ok && !execSql(db_, "CREATE TABLE IF NOT EXISTS verse_tags_new(verse_key TEXT, tag_name TEXT);")) ok = false;
+    if (ok && !execSql(db_, "DELETE FROM tags_new;")) ok = false;
+    if (ok && !execSql(db_, "DELETE FROM verse_tags_new;")) ok = false;
 
     if (ok &&
         sqlite3_prepare_v2(
-            db_, "INSERT INTO tags(name, color) VALUES(?, ?);", -1, &insertTag, nullptr) != SQLITE_OK) {
+            db_, "INSERT INTO tags_new(name, color) VALUES(?, ?);", -1, &insertTag, nullptr) != SQLITE_OK) {
         ok = false;
     }
     if (ok &&
         sqlite3_prepare_v2(
-            db_, "INSERT INTO verse_tags(verse_key, tag_name) VALUES(?, ?);",
+            db_, "INSERT INTO verse_tags_new(verse_key, tag_name) VALUES(?, ?);",
             -1, &insertVerseTag, nullptr) != SQLITE_OK) {
         ok = false;
     }
@@ -402,14 +432,25 @@ bool TagManager::persistToDatabase() {
     if (insertTag) sqlite3_finalize(insertTag);
     if (insertVerseTag) sqlite3_finalize(insertVerseTag);
 
+    // Atomic swap: drop old tables, rename new ones
+    if (ok) ok = execSql(db_, "DROP TABLE IF EXISTS verse_tags;");
+    if (ok) ok = execSql(db_, "DROP TABLE IF EXISTS tags;");
+    if (ok) ok = execSql(db_, "ALTER TABLE tags_new RENAME TO tags;");
+    if (ok) ok = execSql(db_, "ALTER TABLE verse_tags_new RENAME TO verse_tags;");
+
     if (!ok) {
         execSql(db_, "ROLLBACK;");
+        // Clean up temp tables if they still exist
+        execSql(db_, "DROP TABLE IF EXISTS tags_new;");
+        execSql(db_, "DROP TABLE IF EXISTS verse_tags_new;");
         std::cerr << "Failed to save tag data to database.\n";
         return false;
     }
 
     if (!execSql(db_, "COMMIT;")) {
         execSql(db_, "ROLLBACK;");
+        execSql(db_, "DROP TABLE IF EXISTS tags_new;");
+        execSql(db_, "DROP TABLE IF EXISTS verse_tags_new;");
         return false;
     }
 
@@ -445,6 +486,7 @@ bool TagManager::importLegacyFile(const std::string& legacyPath) {
 
     tags_.clear();
     verseTags_.clear();
+    tagVerses_.clear();
 
     std::string line;
     std::string section;
@@ -493,6 +535,7 @@ bool TagManager::importLegacyFile(const std::string& legacyPath) {
                     tags_[tagName] = Tag{tagName, kDefaultTagColor};
                 }
                 verseTags_[verseKey].insert(tagName);
+                tagVerses_[tagName].insert(verseKey);
             }
         }
     }

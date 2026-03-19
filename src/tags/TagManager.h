@@ -74,10 +74,14 @@ private:
     bool hasStoredData() const;
     bool importLegacyFile(const std::string& legacyPath);
 
+    void addToInvertedIndex(const std::string& tagName, const std::string& verseKey);
+    void removeFromInvertedIndex(const std::string& tagName, const std::string& verseKey);
+
     std::string filepath_;
     sqlite3* db_ = nullptr;
     std::map<std::string, Tag> tags_;                        // tagName -> Tag
     std::map<std::string, std::set<std::string>> verseTags_; // verseKey -> set of tag names
+    std::map<std::string, std::set<std::string>> tagVerses_; // tagName -> set of verse keys (inverted index)
     bool dirty_ = false;
 };
 
