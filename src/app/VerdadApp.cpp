@@ -36,6 +36,10 @@ namespace {
 
 using PreferenceMap = std::unordered_map<std::string, std::string>;
 
+std::string joinPath(const std::string& base, const std::string& leaf) {
+    return (std::filesystem::path(base) / leaf).string();
+}
+
 std::string trimCopy(const std::string& s) {
     size_t start = 0;
     while (start < s.size() &&
@@ -465,11 +469,11 @@ bool VerdadApp::initialize(int argc, char* argv[]) {
     }
 
     // Load tags from the SQLite tag database.
-    tagMgr_->load(getConfigDir() + "/tags.db");
+    tagMgr_->load(joinPath(getConfigDir(), "tags.db"));
 
     // Initialize FTS5 index database (separate from tags/settings data).
     searchIndexer_ = std::make_unique<SearchIndexer>(
-        getConfigDir() + "/module_index.db");
+        joinPath(getConfigDir(), "module_index.db"));
 
     // Set up FLTK
     Fl::scheme("gtk+");
@@ -544,15 +548,15 @@ std::string VerdadApp::getConfigDir() const {
 #ifdef _WIN32
     char path[MAX_PATH];
     if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, path))) {
-        return std::string(path) + "\\Verdad";
+        return (std::filesystem::path(path) / "Verdad").string();
     }
-    return ".\\verdad_config";
+    return (std::filesystem::path(".") / "verdad_config").string();
 #elif defined(__APPLE__)
     const char* home = getenv("HOME");
     if (home) {
-        return std::string(home) + "/Library/Application Support/Verdad";
+        return (std::filesystem::path(home) / "Library" / "Application Support" / "Verdad").string();
     }
-    return "./verdad_config";
+    return (std::filesystem::path(".") / "verdad_config").string();
 #else
     const char* home = getenv("HOME");
     if (!home) {
@@ -560,9 +564,9 @@ std::string VerdadApp::getConfigDir() const {
         if (pw) home = pw->pw_dir;
     }
     if (home) {
-        return std::string(home) + "/.config/verdad";
+        return (std::filesystem::path(home) / ".config" / "verdad").string();
     }
-    return "./.config/verdad";
+    return (std::filesystem::path(".") / ".config" / "verdad").string();
 #endif
 }
 
@@ -573,7 +577,7 @@ void VerdadApp::ensureConfigDir() {
 }
 
 bool VerdadApp::loadPreferences() {
-    return loadPreferencesFromFile(getConfigDir() + "/preferences.conf", false);
+    return loadPreferencesFromFile(joinPath(getConfigDir(), "preferences.conf"), false);
 }
 
 bool VerdadApp::loadPreferencesFromFile(const std::string& prefFile,
@@ -716,7 +720,7 @@ bool VerdadApp::applyPreferencesMap(const PreferenceMap& prefs,
 }
 
 void VerdadApp::savePreferences() {
-    std::string prefFile = getConfigDir() + "/preferences.conf";
+    std::string prefFile = joinPath(getConfigDir(), "preferences.conf");
     std::ofstream file(prefFile);
     if (!file.is_open()) return;
 
