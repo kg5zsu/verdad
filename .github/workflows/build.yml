@@ -287,6 +287,9 @@ jobs:
       - name: Build Verdad
         run: cmake --build build --config Release
 
+      - name: Install WiX Toolset
+        run: choco install wixtoolset --yes
+
       - name: Package (zip)
         shell: pwsh
         run: |
@@ -313,8 +316,13 @@ jobs:
           cmake -E tar cf "$zipFile" --format=zip "$bundleName"
           Pop-Location
 
+      - name: Package (MSI)
+        run: cmake --build build --config Release --target msi
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: verdad-windows-x64
-          path: build/verdad-*.zip
+          path: |
+            build/verdad-*.zip
+            build/verdad-*.msi

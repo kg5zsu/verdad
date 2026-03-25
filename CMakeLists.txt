@@ -58,22 +58,20 @@ add_subdirectory(libs/fltk)
 # SWORD library
 find_package(SWORD REQUIRED)
 
-if(NOT WIN32)
-    find_path(VERDAD_SWORD_SHARE_DIR
-        NAMES locales.d
-        PATHS
-            ${SWORD_PREFIX}/share/sword
-            /usr/share/sword
-            /usr/local/share/sword
-            /opt/homebrew/share/sword
-    )
+find_path(VERDAD_SWORD_SHARE_DIR
+    NAMES locales.d
+    PATHS
+        ${SWORD_PREFIX}/share/sword
+        /usr/share/sword
+        /usr/local/share/sword
+        /opt/homebrew/share/sword
+)
 
-    find_file(VERDAD_SWORD_GLOBALS_CONF
-        NAMES globals.conf
-        PATH_SUFFIXES mods.d
-        HINTS ${VERDAD_SWORD_SHARE_DIR}
-    )
-endif()
+find_file(VERDAD_SWORD_GLOBALS_CONF
+    NAMES globals.conf
+    PATH_SUFFIXES mods.d
+    HINTS ${VERDAD_SWORD_SHARE_DIR}
+)
 
 # SQLite3 (FTS5 search index)
 # vcpkg installs sqlite3 under the 'unofficial-sqlite3' cmake package name.
@@ -243,17 +241,38 @@ add_custom_target(copy_runtime_assets ALL
 add_dependencies(verdad copy_runtime_assets)
 
 # Installation
-install(TARGETS verdad DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES
-    LICENSE
-    data/master.css
-    data/help.html
-    data/verdad_icon.png
-    data/verdad_icon_128.png
-    data/verdad_icon_24.png
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/verdad)
-install(DIRECTORY LICENSES
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/verdad)
+if(WIN32)
+    install(TARGETS verdad
+        RUNTIME DESTINATION .)
+    install(FILES
+        LICENSE
+        DESTINATION .)
+    install(FILES
+        data/master.css
+        data/help.html
+        data/verdad_icon.png
+        data/verdad_icon_128.png
+        data/verdad_icon_24.png
+        DESTINATION data)
+    install(DIRECTORY LICENSES
+        DESTINATION .)
+    if(IS_DIRECTORY "${VERDAD_SWORD_SHARE_DIR}")
+        install(DIRECTORY "${VERDAD_SWORD_SHARE_DIR}/"
+            DESTINATION sword)
+    endif()
+else()
+    install(TARGETS verdad DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES
+        LICENSE
+        data/master.css
+        data/help.html
+        data/verdad_icon.png
+        data/verdad_icon_128.png
+        data/verdad_icon_24.png
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/verdad)
+    install(DIRECTORY LICENSES
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/verdad)
+endif()
 
 if(UNIX AND NOT APPLE)
     install(FILES "${CMAKE_BINARY_DIR}/verdad.desktop"
@@ -497,6 +516,7 @@ endif()
 if(WIN32)
     set(VERDAD_WIN_DIR "${VERDAD_BUNDLE_DIR}")
     set(VERDAD_WIN_ZIP "${CMAKE_BINARY_DIR}/${VERDAD_BUNDLE_NAME}.zip")
+    set(VERDAD_WIN_MSI "${CMAKE_BINARY_DIR}/${VERDAD_BUNDLE_NAME}.msi")
 
     add_custom_target(winzip
         COMMAND ${CMAKE_COMMAND} -E rm -rf "${VERDAD_WIN_DIR}"
@@ -522,6 +542,28 @@ if(WIN32)
                 "${VERDAD_BUNDLE_NAME}"
         DEPENDS verdad copy_runtime_assets
         COMMENT "Creating ${VERDAD_BUNDLE_NAME}.zip"
+        VERBATIM
+    )
+
+    set(CPACK_PACKAGE_NAME "Verdad")
+    set(CPACK_PACKAGE_VENDOR "Verdad maintainers")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+        "Desktop Bible study application for CrossWire SWORD modules")
+    set(CPACK_PACKAGE_INSTALL_DIRECTORY "Verdad")
+    set(CPACK_PACKAGE_FILE_NAME "${VERDAD_BUNDLE_NAME}")
+    set(CPACK_PACKAGE_EXECUTABLES "verdad;Verdad")
+    set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
+    set(CPACK_WIX_UPGRADE_GUID "985E9F89-FBF0-4450-A40E-30D2D9920B97")
+    set(CPACK_WIX_PROGRAM_MENU_FOLDER "Verdad")
+    set(CPACK_WIX_VERSION 3)
+    include(CPack)
+
+    add_custom_target(msi
+        COMMAND ${CMAKE_COMMAND} -E rm -f "${VERDAD_WIN_MSI}"
+        COMMAND ${CMAKE_CPACK_COMMAND} -G WIX -C $<CONFIG>
+                --config "${CMAKE_BINARY_DIR}/CPackConfig.cmake"
+        DEPENDS verdad copy_runtime_assets
+        COMMENT "Creating ${VERDAD_BUNDLE_NAME}.msi"
         VERBATIM
     )
 endif()
