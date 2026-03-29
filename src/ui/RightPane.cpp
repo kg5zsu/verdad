@@ -48,12 +48,6 @@ constexpr int kGeneralBookOverlayMaxW = 360;
 constexpr int kGeneralBookPageFillThresholdPx = 280;
 constexpr int kGeneralBookMaxLoadedSections = 12;
 
-std::string composeCss(const std::string& base, const std::string& extra) {
-    if (base.empty()) return extra;
-    if (extra.empty()) return base;
-    return base + "\n" + extra;
-}
-
 std::string escapeCssString(const std::string& text) {
     std::string out;
     out.reserve(text.size() + 8);
@@ -114,25 +108,13 @@ std::string buildStudypadVerseInsertHtml(VerdadApp* app,
     return html.str();
 }
 
-std::string commentarySelectionCss(int verse) {
+std::string commentaryVerseNumberElementId(int verse) {
     if (verse <= 0) return "";
+    return "cv" + std::to_string(verse);
+}
 
-    std::ostringstream css;
-    css << "div.commentary-verse#v" << verse
-        << " > div.commentary-gutter > a.versenum-link > span.commentary-versenum {"
-        << " display:inline-block;"
-        << " padding:1px 1px;"
-        << " border-radius:3px;"
-        << " border:1px solid #c0d0e0;"
-        << " background-color:#e0e8f0;"
-        << " color:#1a5276;"
-        << " line-height:1.1;"
-        << " }\n";
-    css << "div.commentary-verse#v" << verse
-        << " > div.commentary-gutter > a.versenum-link:hover > span.commentary-versenum {"
-        << " background-color:#c0d0e0;"
-        << " }\n";
-    return css.str();
+std::string commentaryVerseNumberSelectedStyle() {
+    return "background-color:#e0e8f0;color:#1a5276;";
 }
 
 class ResizeAwareTabs : public StyledTabs {
@@ -1264,8 +1246,9 @@ void RightPane::showCommentary(const std::string& moduleName,
 
 void RightPane::updateCommentarySelection(int verse) {
     if (highlightedCommentaryVerse_ == verse) return;
+    int oldVerse = highlightedCommentaryVerse_;
     highlightedCommentaryVerse_ = verse;
-    applyCommentaryStyleOverride();
+    syncCommentarySelectionClass(oldVerse, verse);
 }
 
 std::string RightPane::activeBibleReference() const {
@@ -1286,8 +1269,18 @@ std::string RightPane::activeBibleReference() const {
 
 void RightPane::applyCommentaryStyleOverride() {
     if (!commentaryHtml_) return;
-    commentaryHtml_->setStyleOverrideCss(composeCss(
-        htmlStyleOverrideCss_, commentarySelectionCss(highlightedCommentaryVerse_)));
+    commentaryHtml_->setStyleOverrideCss(htmlStyleOverrideCss_);
+    syncCommentarySelectionClass(0, highlightedCommentaryVerse_);
+}
+
+void RightPane::syncCommentarySelectionClass(int oldVerse, int newVerse) {
+    if (!commentaryHtml_) return;
+    commentaryHtml_->updateElementStyleById(
+        commentaryVerseNumberElementId(oldVerse),
+        "",
+        commentaryVerseNumberElementId(newVerse),
+        commentaryVerseNumberSelectedStyle(),
+        false);
 }
 
 void RightPane::showDictionaryEntry(const std::string& key) {
@@ -2008,7 +2001,10 @@ void RightPane::refresh() {
     perf::ScopeTimer timer("RightPane::refresh");
     TopTab keepTab = visibleTopTab();
 
-    if (!currentCommentary_.empty() && !currentCommentaryRef_.empty()) {
+    bool commentaryVisible = (keepTab == TopTab::Commentary);
+    if (!currentCommentary_.empty() &&
+        !currentCommentaryRef_.empty() &&
+        (commentaryVisible || commentaryEditing_)) {
         showCommentary(currentCommentary_, currentCommentaryRef_);
     }
     if (!currentDictionary_.empty() && !currentDictKey_.empty()) {

@@ -312,6 +312,7 @@ private:
     bool isManagedStudypadPath(const std::string& path) const;
     void loadCommentaryEditorForCurrentEntry();
     void applyCommentaryStyleOverride();
+    void syncCommentarySelectionClass(int oldVerse, int newVerse);
     void updateCommentarySelection(int verse);
     std::string activeBibleReference() const;
     void onHtmlLink(const std::string& url, bool commentarySource);

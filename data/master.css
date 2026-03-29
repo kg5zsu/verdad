@@ -328,6 +328,7 @@ div.commentary-gutter > a.versenum-link > span.commentary-versenum {
     display: inline-block;
     padding: 1px 1px;
     min-width: 1.1em;
+    border-radius: 3px;
     font-size: 0.95em;
     font-weight: bold;
     color: #1a5276;
@@ -335,11 +336,8 @@ div.commentary-gutter > a.versenum-link > span.commentary-versenum {
 }
 
 div.commentary-verse.commentary-selected > div.commentary-gutter > a.versenum-link > span.commentary-versenum {
-    border-radius: 3px;
-    border: 1px solid #c0d0e0;
     background-color: #e0e8f0;
     color: #1a5276;
-    line-height: 1.1;
 }
 
 div.commentary-verse.commentary-selected > div.commentary-gutter > a.versenum-link:hover > span.commentary-versenum {

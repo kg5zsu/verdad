@@ -79,7 +79,21 @@ public:
     /// Toggle a CSS class on up to two elements by id and rerender once.
     void updateElementClassById(const std::string& removeId,
                                 const std::string& addId,
-                                const std::string& className);
+                                const std::string& className,
+                                bool relayout = true);
+
+    /// Replace inline style on up to two elements by id and rerender once.
+    void updateElementStyleById(const std::string& removeId,
+                                const std::string& removeStyle,
+                                const std::string& addId,
+                                const std::string& addStyle,
+                                bool relayout = true);
+
+    /// Add or remove an inline style snippet on an element subtree by id.
+    void updateElementTreeStyleSnippetById(const std::string& removeId,
+                                           const std::string& addId,
+                                           const std::string& styleSnippet,
+                                           bool relayout = true);
 
     /// Scroll to a named anchor
     void scrollToAnchor(const std::string& anchor);

@@ -3283,16 +3283,17 @@ std::string SwordManager::getParallelText(
     for (int v = 1; v <= verseCount; ++v) {
         const std::string verseRef = book + " " + std::to_string(chapter)
                                      + ":" + std::to_string(v);
-        html << "<div class=\"parallel-row\" id=\"v" << v << "\">\n";
+        std::string rowClasses = "parallel-row";
+        if (selectedVerse > 0 && v == selectedVerse) {
+            rowClasses += " verse-selected";
+        }
+        html << "<div class=\"" << rowClasses << "\" id=\"v" << v << "\">\n";
         for (size_t i = 0; i < moduleNames.size(); ++i) {
             bool isLast = (i + 1 == moduleNames.size());
             int w = isLast ? lastColWidth : colWidth;
             const char* colClass = isLast ? "parallel-col-last" : "parallel-col";
             std::string cellClasses = isLast ? "parallel-cell-last" : "parallel-cell";
             const std::string columnAttr = std::to_string(i);
-            if (selectedVerse > 0 && v == selectedVerse) {
-                cellClasses += " verse-selected";
-            }
             const std::string moduleAttr = htmlEscapeAttr(moduleNames[i]);
             sword::SWModule* mod = getModule(moduleNames[i]);
             html << "<div class=\"" << colClass << "\" data-module=\""
@@ -3414,7 +3415,8 @@ std::string SwordManager::getCommentaryText(const std::string& moduleName,
         html << "\" id=\"v" << verse << "\">";
         html << "<div class=\"commentary-gutter\">"
              << "<a class=\"versenum-link\" href=\"bible-verse:" << verse << "\">"
-             << "<span class=\"commentary-versenum\">" << verse << "</span></a>"
+             << "<span class=\"commentary-versenum\" id=\"cv" << verse
+             << "\">" << verse << "</span></a>"
              << "</div>";
         html << "<div class=\"commentary-text\">";
         html << "<div class=\"commentary-scroll-anchor\" id=\"vpos" << verse

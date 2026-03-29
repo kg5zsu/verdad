@@ -94,6 +94,14 @@ std::string buildVerseTagMarkersHtml(VerdadApp* app, const std::string& verseRef
     html << "</span>";
     return html.str();
 }
+
+std::string verseElementId(int verse) {
+    return verse > 0 ? "v" + std::to_string(verse) : "";
+}
+
+std::string selectedVerseInlineStyleSnippet() {
+    return "--verdad-selected-verse:1;color:#1f7f1f !important;";
+}
 } // namespace
 
 BiblePane::BiblePane(VerdadApp* app, int X, int Y, int W, int H)
@@ -295,6 +303,10 @@ void BiblePane::resize(int X, int Y, int W, int H) {
 
 void BiblePane::navigateTo(const std::string& book, int chapter, int verse) {
     if (moduleName_.empty()) return;
+    if (book == currentBook_ && chapter == currentChapter_) {
+        selectVerse(verse);
+        return;
+    }
 
     currentBook_ = book;
     currentChapter_ = chapter;
@@ -464,6 +476,10 @@ void BiblePane::refresh() {
 void BiblePane::setHtmlStyleOverride(const std::string& css) {
     if (htmlWidget_) {
         htmlWidget_->setStyleOverrideCss(css);
+        if (currentVerse_ != htmlStoredSelectedVerse_ &&
+            canUpdateVerseSelectionInPlace()) {
+            syncVerseSelectionInPlace(htmlStoredSelectedVerse_, currentVerse_);
+        }
     }
 }
 
@@ -549,11 +565,16 @@ void BiblePane::selectVerse(int verse) {
     int maxVerse = app_->swordManager().getVerseCount(moduleName_, currentBook_, currentChapter_);
     if (maxVerse <= 0) maxVerse = 1;
     int clampedVerse = std::max(1, std::min(verse, maxVerse));
+    int oldVerse = currentVerse_;
     bool changed = (clampedVerse != currentVerse_);
 
     currentVerse_ = clampedVerse;
     if (changed) {
-        updateDisplay();
+        if (canUpdateVerseSelectionInPlace()) {
+            syncVerseSelectionInPlace(oldVerse, currentVerse_);
+        } else {
+            updateDisplay();
+        }
     }
     syncReferenceInput();
     if (htmlWidget_) {
@@ -655,6 +676,7 @@ BiblePane::DisplayBuffer BiblePane::captureDisplayBuffer() const {
     buf.scrollY = snap.scrollY;
     buf.contentHeight = snap.contentHeight;
     buf.renderWidth = snap.renderWidth;
+    buf.storedSelectedVerse = htmlStoredSelectedVerse_;
     buf.scrollbarVisible = snap.scrollbarVisible;
     buf.valid = snap.valid;
     return buf;
@@ -671,6 +693,7 @@ BiblePane::DisplayBuffer BiblePane::takeDisplayBuffer() {
     buf.scrollY = snap.scrollY;
     buf.contentHeight = snap.contentHeight;
     buf.renderWidth = snap.renderWidth;
+    buf.storedSelectedVerse = htmlStoredSelectedVerse_;
     buf.scrollbarVisible = snap.scrollbarVisible;
     buf.valid = snap.valid;
     return buf;
@@ -688,7 +711,12 @@ void BiblePane::restoreDisplayBuffer(const DisplayBuffer& buffer) {
     snap.renderWidth = buffer.renderWidth;
     snap.scrollbarVisible = buffer.scrollbarVisible;
     snap.valid = buffer.valid;
+    htmlStoredSelectedVerse_ = buffer.storedSelectedVerse;
     htmlWidget_->restoreSnapshot(snap);
+    if (currentVerse_ != htmlStoredSelectedVerse_ &&
+        canUpdateVerseSelectionInPlace()) {
+        syncVerseSelectionInPlace(htmlStoredSelectedVerse_, currentVerse_);
+    }
 }
 
 void BiblePane::restoreDisplayBuffer(DisplayBuffer&& buffer) {
@@ -703,8 +731,13 @@ void BiblePane::restoreDisplayBuffer(DisplayBuffer&& buffer) {
     snap.renderWidth = buffer.renderWidth;
     snap.scrollbarVisible = buffer.scrollbarVisible;
     snap.valid = buffer.valid;
+    htmlStoredSelectedVerse_ = buffer.storedSelectedVerse;
     buffer.valid = false;
     htmlWidget_->restoreSnapshot(std::move(snap));
+    if (currentVerse_ != htmlStoredSelectedVerse_ &&
+        canUpdateVerseSelectionInPlace()) {
+        syncVerseSelectionInPlace(htmlStoredSelectedVerse_, currentVerse_);
+    }
 }
 
 void BiblePane::buildNavBar() {
@@ -842,6 +875,7 @@ void BiblePane::updateDisplay() {
     }
     if (moduleName_.empty()) {
         htmlWidget_->setHtml("<div class=\"chapter\"><p><i>No Bible module selected.</i></p></div>");
+        htmlStoredSelectedVerse_ = 0;
         htmlWidget_->scrollToTop();
         return;
     }
@@ -851,11 +885,13 @@ void BiblePane::updateDisplay() {
     }
     if (currentBook_.empty()) {
         htmlWidget_->setHtml("<div class=\"chapter\"><p><i>No books available in selected module.</i></p></div>");
+        htmlStoredSelectedVerse_ = 0;
         htmlWidget_->scrollToTop();
         return;
     }
 
     std::string html;
+    bool hasVerseMarkup = true;
     perf::StepTimer step;
     auto verseDecorator = [this](const std::string& verseRef) {
         return buildVerseTagMarkersHtml(app_, verseRef);
@@ -905,6 +941,7 @@ void BiblePane::updateDisplay() {
     }
 
     if (html.empty()) {
+        hasVerseMarkup = false;
         html = "<div class=\"chapter\"><p><i>No text available for current reference.</i></p></div>";
     }
 
@@ -920,6 +957,7 @@ void BiblePane::updateDisplay() {
     htmlWidget_->resize(x(), textY, w(), textH);
 
     htmlWidget_->setHtml(html);
+    htmlStoredSelectedVerse_ = hasVerseMarkup ? currentVerse_ : 0;
     perf::logf("BiblePane::updateDisplay htmlWidget_->setHtml: %.3f ms", step.elapsedMs());
     step.reset();
     if (currentVerse_ > 0) {
@@ -930,6 +968,28 @@ void BiblePane::updateDisplay() {
     htmlWidget_->redraw();
     redrawChrome();
     perf::logf("BiblePane::updateDisplay scroll+redraw: %.3f ms", step.elapsedMs());
+}
+
+bool BiblePane::canUpdateVerseSelectionInPlace() const {
+    return htmlWidget_ &&
+           !moduleName_.empty() &&
+           !currentBook_.empty() &&
+           htmlStoredSelectedVerse_ > 0 &&
+           !htmlWidget_->currentHtml().empty();
+}
+
+void BiblePane::syncVerseSelectionInPlace(int oldVerse, int newVerse) {
+    perf::ScopeTimer timer("BiblePane::syncVerseSelectionInPlace");
+    if (!htmlWidget_) return;
+    htmlWidget_->updateElementClassById(verseElementId(oldVerse),
+                                        verseElementId(newVerse),
+                                        "verse-selected",
+                                        false);
+    htmlWidget_->updateElementTreeStyleSnippetById(
+        verseElementId(oldVerse),
+        verseElementId(newVerse),
+        selectedVerseInlineStyleSnippet(),
+        false);
 }
 
 void BiblePane::normalizeParallelModules() {

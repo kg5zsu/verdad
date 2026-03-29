@@ -1182,6 +1182,7 @@ void MainWindow::captureActiveTabDisplayBuffers() {
         ctx.bibleBuffer.scrollY = b.scrollY;
         ctx.bibleBuffer.contentHeight = b.contentHeight;
         ctx.bibleBuffer.renderWidth = b.renderWidth;
+        ctx.bibleBuffer.storedSelectedVerse = b.storedSelectedVerse;
         ctx.bibleBuffer.scrollbarVisible = b.scrollbarVisible;
         ctx.bibleBuffer.valid = b.valid;
         ctx.hasBibleBuffer = b.valid;
@@ -1321,6 +1322,7 @@ void MainWindow::applyTabState(int index) {
         b.scrollY = ctx.bibleBuffer.scrollY;
         b.contentHeight = ctx.bibleBuffer.contentHeight;
         b.renderWidth = ctx.bibleBuffer.renderWidth;
+        b.storedSelectedVerse = ctx.bibleBuffer.storedSelectedVerse;
         b.scrollbarVisible = ctx.bibleBuffer.scrollbarVisible;
         b.valid = ctx.bibleBuffer.valid;
         biblePane_->restoreDisplayBuffer(std::move(b));

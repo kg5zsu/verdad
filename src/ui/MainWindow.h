@@ -171,6 +171,7 @@ private:
         int scrollY = 0;
         int contentHeight = 0;
         int renderWidth = 0;
+        int storedSelectedVerse = 0;
         bool scrollbarVisible = false;
         bool valid = false;
     };

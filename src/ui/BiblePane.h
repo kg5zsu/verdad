@@ -27,6 +27,7 @@ public:
         int scrollY = 0;
         int contentHeight = 0;
         int renderWidth = 0;
+        int storedSelectedVerse = 0;
         bool scrollbarVisible = false;
         bool valid = false;
     };
@@ -170,6 +171,7 @@ private:
     std::string currentBook_;
     int currentChapter_ = 1;
     int currentVerse_ = 1;
+    int htmlStoredSelectedVerse_ = 0;
 
     // Parallel mode
     struct ParallelHeaderColumn {
@@ -191,6 +193,8 @@ private:
 
     /// Update the chapter text display
     void updateDisplay();
+    bool canUpdateVerseSelectionInPlace() const;
+    void syncVerseSelectionInPlace(int oldVerse, int newVerse);
     void normalizeParallelModules();
     void syncParallelHeader();
     void clearParallelHeader();
