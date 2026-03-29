@@ -9,6 +9,7 @@
 #include "ui/ModuleManagerDialog.h"
 #include "ui/StyledTabs.h"
 #include "ui/UiFontUtils.h"
+#include "ui/WrappingChoice.h"
 #include "sword/SwordManager.h"
 #include "search/SearchIndexer.h"
 #include "app/PerfTrace.h"
@@ -2573,7 +2574,7 @@ void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
     rowY = groupY + groupPadY;
     Fl_Box* greekDictLabel = new Fl_Box(labelX, rowY, labelW, 24, "Greek Strong's dict:");
     greekDictLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-    Fl_Choice* greekDictChoice = new Fl_Choice(fieldX, rowY, fieldW, 24);
+    Fl_Choice* greekDictChoice = new WrappingChoice(fieldX, rowY, fieldW, 24);
     bool hasGreekPreviewDictionaries = populateChoiceWithItems(
         greekDictChoice,
         greekDictionaryModules,
@@ -2583,7 +2584,7 @@ void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
 
     Fl_Box* hebrewDictLabel = new Fl_Box(labelX, rowY, labelW, 24, "Hebrew Strong's dict:");
     hebrewDictLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-    Fl_Choice* hebrewDictChoice = new Fl_Choice(fieldX, rowY, fieldW, 24);
+    Fl_Choice* hebrewDictChoice = new WrappingChoice(fieldX, rowY, fieldW, 24);
     bool hasHebrewPreviewDictionaries = populateChoiceWithItems(
         hebrewDictChoice,
         hebrewDictionaryModules,
@@ -2605,7 +2606,7 @@ void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
         label->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
         label->copy_label(labelText.c_str());
 
-        auto* choice = new Fl_Choice(fieldX, rowY, fieldW, 24);
+        auto* choice = new WrappingChoice(fieldX, rowY, fieldW, 24);
         std::vector<std::string> modules = self->app_->wordDictionaryModules(code);
         std::string emptyLabel = "No " + languageDisplayName(code) +
                                  " dictionaries installed";

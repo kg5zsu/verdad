@@ -1,6 +1,8 @@
+#include "ui/ChoicePopupUtils.h"
 #include "ui/FilterableChoiceWidget.h"
 
 #include <FL/Fl.H>
+#include <FL/Fl_Browser_.H>
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_Hold_Browser.H>
 #include <FL/Fl_Menu_Button.H>
@@ -33,6 +35,7 @@ namespace {
 
 constexpr int kPopupMaxRows = 10;
 constexpr int kPopupMinWidth = 120;
+constexpr int kPopupWidthPadding = 24;
 
 char lowerAsciiChar(char c) {
     return static_cast<char>(
@@ -81,28 +84,19 @@ std::string browserLineLabel(const std::string& label) {
     return "@." + label;
 }
 
-std::pair<int, int> rootPosition(const Fl_Widget* widget) {
-    if (!widget) return {0, 0};
+int desiredPopupWidth(const FilterableChoiceWidget* widget,
+                      const std::vector<std::string>& labels) {
+    if (!widget) return kPopupMinWidth;
 
-    int rootX = widget->x();
-    int rootY = widget->y();
-    const Fl_Window* top = widget->window();
-    if (top) {
-        rootX += top->x_root();
-        rootY += top->y_root();
+    int width = std::max(widget->w(), kPopupMinWidth);
+    for (const auto& label : labels) {
+        width = std::max(width,
+                         choice_popup::measureLabelWidth(widget->textfont(),
+                                                         widget->textsize(),
+                                                         label) +
+                             kPopupWidthPadding);
     }
-
-    return {rootX, rootY};
-}
-
-bool rootPointInsideWidget(const Fl_Widget* widget, int rootX, int rootY) {
-    if (!widget || !widget->window() || !widget->visible_r()) return false;
-
-    const auto [widgetX, widgetY] = rootPosition(widget);
-    return rootX >= widgetX &&
-           rootX < widgetX + widget->w() &&
-           rootY >= widgetY &&
-           rootY < widgetY + widget->h();
+    return width;
 }
 
 std::vector<FilterableChoiceWidget*>& liveWidgets() {
@@ -292,6 +286,7 @@ void FilterableChoiceWidget::ensurePopupCreated() {
     popupWindow_->begin();
     popupBrowser_ = new Fl_Hold_Browser(0, 0, w(), 1);
     popupBrowser_->box(FL_DOWN_BOX);
+    popupBrowser_->has_scrollbar(Fl_Browser_::VERTICAL);
     popupBrowser_->when(FL_WHEN_CHANGED);
     popupBrowser_->callback(onPopupSelected, this);
     popupWindow_->resizable(popupBrowser_);
@@ -315,6 +310,7 @@ void FilterableChoiceWidget::refreshPopupContents(const std::string& filter) {
         }
         popupBrowser_->value(0);
         updatePopupGeometry();
+        choice_popup::positionBrowserForOpen(popupBrowser_, 0);
         return;
     }
 
@@ -333,6 +329,7 @@ void FilterableChoiceWidget::refreshPopupContents(const std::string& filter) {
         }
         popupBrowser_->value(0);
         updatePopupGeometry();
+        choice_popup::positionBrowserForOpen(popupBrowser_, 0);
         return;
     }
 
@@ -348,8 +345,8 @@ void FilterableChoiceWidget::refreshPopupContents(const std::string& filter) {
         }
     }
     popupBrowser_->value(selectedLine);
-    popupBrowser_->show(selectedLine);
     updatePopupGeometry();
+    choice_popup::positionBrowserForOpen(popupBrowser_, selectedLine);
 }
 
 std::string FilterableChoiceWidget::exactItemMatch(const std::string& value) const {
@@ -370,11 +367,20 @@ void FilterableChoiceWidget::updatePopupGeometry() {
     const int lineCount = std::max(1, popupBrowser_->size());
     const int visibleRows = std::min(lineCount, kPopupMaxRows);
     const int lineHeight = std::max(20, static_cast<int>(popupBrowser_->textsize()) + 8);
-    int popupW = std::max(w(), kPopupMinWidth);
+    std::vector<std::string> visibleLabels = popupItems_;
+    if (visibleLabels.empty()) {
+        if (!emptyFilterPrompt_.empty()) {
+            visibleLabels.push_back(emptyFilterPrompt_);
+        } else if (!noMatchesLabel_.empty()) {
+            visibleLabels.push_back(noMatchesLabel_);
+        }
+    }
+    int popupW = desiredPopupWidth(this, visibleLabels);
     int popupH = std::max(lineHeight + 4, (visibleRows * lineHeight) + 4);
 
     const int hostW = std::max(1, window()->w());
     const int hostH = std::max(1, window()->h());
+    popupW = choice_popup::clampPopupColumnWidth(popupW, hostW, kPopupMinWidth);
     popupW = std::min(popupW, hostW);
 
     const int popupBelowY = y() + h() - 1;
@@ -413,6 +419,7 @@ bool FilterableChoiceWidget::showPopup() {
     }
 
     updatePopupGeometry();
+    choice_popup::positionBrowserForOpen(popupBrowser_, popupSelectionLine());
     openPopupOwner() = this;
     if (popupWindow_->parent() == window()) {
         window()->remove(*popupWindow_);
@@ -478,7 +485,7 @@ void FilterableChoiceWidget::movePopupSelection(int delta) {
     }
 
     popupBrowser_->value(line);
-    popupBrowser_->show(line);
+    popupBrowser_->make_visible(line);
     popupBrowser_->redraw();
 }
 
@@ -553,7 +560,7 @@ bool FilterableChoiceWidget::ownsFocus() {
 }
 
 bool FilterableChoiceWidget::containsRootPoint(int rootX, int rootY) const {
-    return rootPointInsideWidget(this, rootX, rootY);
+    return choice_popup::rootPointInsideWidget(this, rootX, rootY);
 }
 
 bool FilterableChoiceWidget::popupContainsRootPoint(int rootX, int rootY) const {
@@ -566,14 +573,14 @@ bool FilterableChoiceWidget::popupContainsRootPoint(int rootX, int rootY) const 
 }
 
 bool FilterableChoiceWidget::menuButtonContainsRootPoint(int rootX, int rootY) {
-    return rootPointInsideWidget(menubutton(), rootX, rootY);
+    return choice_popup::rootPointInsideWidget(menubutton(), rootX, rootY);
 }
 
 bool FilterableChoiceWidget::eventInMenuButton() {
     const int rootX = Fl::event_x_root();
     const int rootY = Fl::event_y_root();
     return popupVisible() ? menuButtonContainsRootPoint(rootX, rootY)
-                          : rootPointInsideWidget(menubutton(), rootX, rootY);
+                          : choice_popup::rootPointInsideWidget(menubutton(), rootX, rootY);
 }
 
 FilterableChoiceWidget* FilterableChoiceWidget::widgetAtRootPoint(int rootX, int rootY) {

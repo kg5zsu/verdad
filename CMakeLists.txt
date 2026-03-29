@@ -105,6 +105,8 @@ set(SOURCES
     src/ui/MainWindow.cpp
     src/ui/BibleBookChoice.cpp
     src/ui/FilterableChoiceWidget.cpp
+    src/ui/WrappingChoice.cpp
+    src/ui/WrappingInputChoice.cpp
     src/ui/StyledTabs.cpp
     src/ui/ModuleManagerDialog.cpp
     src/ui/HtmlWidget.cpp
@@ -130,6 +132,8 @@ set(HEADERS
     src/ui/MainWindow.h
     src/ui/BibleBookChoice.h
     src/ui/FilterableChoiceWidget.h
+    src/ui/WrappingChoice.h
+    src/ui/WrappingInputChoice.h
     src/ui/StyledTabs.h
     src/ui/ModuleManagerDialog.h
     src/ui/HtmlWidget.h
@@ -140,6 +144,7 @@ set(HEADERS
     src/ui/SearchPanel.h
     src/ui/ModulePanel.h
     src/ui/TagPanel.h
+    src/ui/ChoicePopupUtils.h
     src/ui/UiFontUtils.h
     src/ui/VerseReferenceSort.h
     src/ui/VerseListCopyMenu.h

@@ -6,6 +6,7 @@
 #include "ui/ModuleChoiceUtils.h"
 #include "ui/VerseReferenceSort.h"
 #include "ui/VerseListCopyMenu.h"
+#include "ui/WrappingChoice.h"
 #include "search/SearchIndexer.h"
 #include "search/SmartSearch.h"
 #include "sword/SwordManager.h"
@@ -834,7 +835,7 @@ SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
 
     int cy = Y + padding;
 
-    targetChoice_ = new Fl_Choice(X + padding, cy, colW, choiceH);
+    targetChoice_ = new WrappingChoice(X + padding, cy, colW, choiceH);
     targetChoice_->add("Bible only");
     targetChoice_->add("Library only");
     targetChoice_->add("All resources");
@@ -842,17 +843,17 @@ SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
     targetChoice_->tooltip("Search target");
     targetChoice_->callback(onFilterChoiceChanged, this);
 
-    moduleChoice_ = new Fl_Choice(X + padding + colW + colGap, cy, colW, choiceH);
+    moduleChoice_ = new WrappingChoice(X + padding + colW + colGap, cy, colW, choiceH);
     moduleChoice_->tooltip("Module filter");
     moduleChoice_->callback(onFilterChoiceChanged, this);
 
     cy += choiceH + padding;
 
-    resourceTypeChoice_ = new Fl_Choice(X + padding, cy, colW, choiceH);
+    resourceTypeChoice_ = new WrappingChoice(X + padding, cy, colW, choiceH);
     resourceTypeChoice_->tooltip("Resource type filter");
     resourceTypeChoice_->callback(onFilterChoiceChanged, this);
 
-    searchType_ = new Fl_Choice(X + padding + colW + colGap, cy, colW, choiceH);
+    searchType_ = new WrappingChoice(X + padding + colW + colGap, cy, colW, choiceH);
     searchType_->add("Multi-word");
     searchType_->add("Exact phrase");
     searchType_->add("Regex");
@@ -862,11 +863,11 @@ SearchPanel::SearchPanel(VerdadApp* app, int X, int Y, int W, int H)
 
     cy += choiceH + padding;
 
-    bibleScopeChoice_ = new Fl_Choice(X + padding, cy, colW, choiceH);
+    bibleScopeChoice_ = new WrappingChoice(X + padding, cy, colW, choiceH);
     bibleScopeChoice_->tooltip("Bible scope");
     bibleScopeChoice_->callback(onFilterChoiceChanged, this);
 
-    sortChoice_ = new Fl_Choice(X + padding + colW + colGap, cy, colW, choiceH);
+    sortChoice_ = new WrappingChoice(X + padding + colW + colGap, cy, colW, choiceH);
     sortChoice_->add("Relevance");
     sortChoice_->add("Canonical");
     sortChoice_->add("By module");

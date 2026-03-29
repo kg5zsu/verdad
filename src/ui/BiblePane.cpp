@@ -5,6 +5,8 @@
 #include "ui/MainWindow.h"
 #include "ui/LeftPane.h"
 #include "ui/ModuleChoiceUtils.h"
+#include "ui/WrappingChoice.h"
+#include "ui/WrappingInputChoice.h"
 #include "ui/TagPanel.h"
 #include "ui/VerseContext.h"
 #include "sword/SwordManager.h"
@@ -32,71 +34,8 @@ constexpr int kMorphButtonW = 52;
 constexpr int kFootnotesButtonW = 50;
 constexpr int kCrossRefsButtonW = 46;
 
-class HistoryInputChoice : public Fl_Input_Choice {
-public:
-    HistoryInputChoice(int X, int Y, int W, int H, const char* L = nullptr)
-        : Fl_Input_Choice(X, Y, W, H, L) {}
-
-    void setPopupInitialIndex(int index) { popupInitialIndex_ = index; }
-
-    bool consumeMenuSelectionCallback() {
-        bool wasMenuSelection = menuSelectionPending_;
-        menuSelectionPending_ = false;
-        return wasMenuSelection;
-    }
-
-    int handle(int event) override {
-        if (event == FL_PUSH && eventInMenuButton()) {
-            if (Fl::visible_focus()) Fl::focus(menubutton());
-            if (showMenuWithInitialSelection()) return 1;
-        }
-
-        if (event == FL_KEYBOARD &&
-            Fl::focus() == menubutton() &&
-            Fl::event_key() == ' ' &&
-            !(Fl::event_state() & (FL_SHIFT | FL_CTRL | FL_ALT | FL_META))) {
-            if (showMenuWithInitialSelection()) return 1;
-        }
-
-        return Fl_Input_Choice::handle(event);
-    }
-
-private:
-    int popupInitialIndex_ = -1;
-    bool menuSelectionPending_ = false;
-
-    bool eventInMenuButton() const {
-        const int ex = Fl::event_x();
-        const int ey = Fl::event_y();
-        return ex >= menu_x() &&
-               ex < menu_x() + menu_w() &&
-               ey >= menu_y() &&
-               ey < menu_y() + menu_h();
-    }
-
-    bool showMenuWithInitialSelection() {
-        Fl_Menu_Button* button = menubutton();
-        if (!button || !button->menu() || !button->menu()->text) return false;
-
-        button->menu_end();
-
-        const Fl_Menu_Item* initial = nullptr;
-        if (popupInitialIndex_ >= 0 && popupInitialIndex_ < button->size()) {
-            initial = &button->menu()[popupInitialIndex_];
-        } else {
-            initial = button->mvalue();
-        }
-
-        const Fl_Menu_Item* picked = button->menu()->pulldown(
-            x(), y(), w(), h(), initial, button);
-        menuSelectionPending_ = (picked != nullptr);
-        button->picked(picked);
-        return true;
-    }
-};
-
-HistoryInputChoice* historyInputChoice(Fl_Input_Choice* choice) {
-    return static_cast<HistoryInputChoice*>(choice);
+WrappingInputChoice* historyInputChoice(Fl_Input_Choice* choice) {
+    return static_cast<WrappingInputChoice*>(choice);
 }
 
 int findChoiceIndexByLabel(const Fl_Choice* choice, const std::string& label) {
@@ -784,7 +723,7 @@ void BiblePane::buildNavBar() {
     bookChoice_->setBrowserLineSpacing(app_ ? app_->appearanceSettings().browserLineSpacing : 0);
     cx += 122;
 
-    chapterChoice_ = new Fl_Choice(cx, cy, 50, nh);
+    chapterChoice_ = new WrappingChoice(cx, cy, 50, nh);
     chapterChoice_->callback(onChapterChange, this);
     chapterChoice_->tooltip("Select chapter");
     cx += 52;
@@ -805,7 +744,7 @@ void BiblePane::buildNavBar() {
     historyBackButton_->deactivate();
     cx += historyBackButton_->w() + 2;
 
-    historyChoice_ = new HistoryInputChoice(cx, cy, kHistoryChoiceWidth, nh);
+    historyChoice_ = new WrappingInputChoice(cx, cy, kHistoryChoiceWidth, nh);
     historyChoice_->callback(onHistoryChoice, this);
     historyChoice_->when(FL_WHEN_CHANGED | FL_WHEN_RELEASE);
     historyChoice_->input()->when(FL_WHEN_ENTER_KEY_ALWAYS);
@@ -824,7 +763,7 @@ void BiblePane::buildNavBar() {
     historyRightSeparator_->box(FL_THIN_DOWN_BOX);
     cx += historyRightSeparator_->w() + 2;
 
-    moduleChoice_ = new Fl_Choice(cx, cy, 100, nh);
+    moduleChoice_ = new WrappingChoice(cx, cy, 100, nh);
     moduleChoice_->callback(onModuleChange, this);
     moduleChoice_->tooltip("Select Bible module");
 
@@ -1073,8 +1012,8 @@ void BiblePane::syncParallelHeader() {
         //col.group->color(FL_BACKGROUND2_COLOR);
         col.group->begin();
 
-        col.moduleChoice = new Fl_Choice(col.group->x() + 2, col.group->y() + 2,
-                                         std::max(40, col.group->w() - 28), 24);
+        col.moduleChoice = new WrappingChoice(col.group->x() + 2, col.group->y() + 2,
+                                              std::max(40, col.group->w() - 28), 24);
         populateParallelChoice(col.moduleChoice);
         col.moduleChoice->callback(onParallelModuleChange, this);
         col.moduleChoice->tooltip("Parallel Bible module");

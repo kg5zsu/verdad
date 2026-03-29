@@ -9,6 +9,7 @@
 #include "ui/MainWindow.h"
 #include "ui/ModuleChoiceUtils.h"
 #include "ui/StyledTabs.h"
+#include "ui/WrappingChoice.h"
 #include "sword/SwordManager.h"
 #include "app/PerfTrace.h"
 
@@ -707,7 +708,7 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
 
     commentaryGroup_ = new Fl_Group(tileX, panelY, tileW, panelH, "Commentary");
     commentaryGroup_->begin();
-    commentaryChoice_ = new Fl_Choice(tileX + 2, panelY + 2, tileW - 4, choiceH);
+    commentaryChoice_ = new WrappingChoice(tileX + 2, panelY + 2, tileW - 4, choiceH);
     commentaryChoice_->callback(onCommentaryModuleChange, this);
     commentaryEditButton_ = new Fl_Button(tileX + tileW - 154, panelY + 2, 48, choiceH, "Edit");
     commentaryEditButton_->callback(onCommentaryEdit, this);
@@ -741,7 +742,7 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
 
     generalBooksGroup_ = new Fl_Group(tileX, panelY, tileW, panelH, "General Books");
     generalBooksGroup_->begin();
-    generalBookChoice_ = new Fl_Choice(tileX + 2, panelY + 2, tileW - 4, choiceH);
+    generalBookChoice_ = new WrappingChoice(tileX + 2, panelY + 2, tileW - 4, choiceH);
     generalBookChoice_->callback(onGeneralBookModuleChange, this);
     generalBookBackButton_ = new Fl_Button(tileX + 2, panelY + choiceH + 4,
                                            kGeneralBookNavButtonW, choiceH, "@<-");
@@ -798,10 +799,10 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
 
     documentsGroup_ = new Fl_Group(tileX, panelY, tileW, panelH, "Studypad");
     documentsGroup_->begin();
-    documentChoice_ = new Fl_Choice(tileX + 2,
-                                    panelY + 2,
-                                    std::max(20, (tileW - 4) - studypadToolbarButtonsWidth() - kStudypadToolbarButtonGap),
-                                    choiceH);
+    documentChoice_ = new WrappingChoice(tileX + 2,
+                                         panelY + 2,
+                                         std::max(20, (tileW - 4) - studypadToolbarButtonsWidth() - kStudypadToolbarButtonGap),
+                                         choiceH);
     documentChoice_->callback(onDocumentChoiceChange, this);
     documentChoice_->tooltip("Select a studypad");
     auto* documentNewButton = new Fl_Button(tileX + tileW - studypadToolbarButtonsWidth() - 2,
@@ -898,10 +899,10 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
                                              "@->");
     dictionaryForwardButton_->callback(onDictionaryForward, this);
     dictionaryForwardButton_->tooltip("Show next dictionary entry");
-    dictionaryChoice_ = new Fl_Choice(tileX + 2 + dictKeyAreaW + 2,
-                                      tileY + tabsInitH + 2,
-                                      dictChoiceW,
-                                      choiceH);
+    dictionaryChoice_ = new WrappingChoice(tileX + 2 + dictKeyAreaW + 2,
+                                           tileY + tabsInitH + 2,
+                                           dictChoiceW,
+                                           choiceH);
     dictionaryChoice_->callback(onDictionaryModuleChange, this);
     dictionaryHtml_ = new HtmlWidget(tileX + 2,
                                      tileY + tabsInitH + choiceH + 4,

@@ -7,6 +7,7 @@
 #include "ui/FilterableChoiceWidget.h"
 #include "ui/MainWindow.h"
 #include "ui/UiFontUtils.h"
+#include "ui/WrappingChoice.h"
 
 #include <FL/Fl.H>
 #include <FL/Fl_Box.H>
@@ -1280,7 +1281,7 @@ void ModuleManagerDialog::buildUi() {
     warningBox_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
 
     const int row1Y = kMargin + kWarningHeight + kRowSpacing;
-    sourceChoice_ = new Fl_Choice(90, row1Y, 250, kControlHeight, "Source:");
+    sourceChoice_ = new WrappingChoice(90, row1Y, 250, kControlHeight, "Source:");
     sourceChoice_->callback(onSourceChanged, this);
 
     addRemoteButton_ = new Fl_Button(350, row1Y, 110, kControlHeight, "Add Remote...");
@@ -1321,7 +1322,7 @@ void ModuleManagerDialog::buildUi() {
     sortChoiceLabel_->box(FL_NO_BOX);
     sortChoiceLabel_->align(FL_ALIGN_RIGHT | FL_ALIGN_INSIDE);
 
-    sortChoice_ = new Fl_Choice(rightX + 578, row2Y, 160, kControlHeight);
+    sortChoice_ = new WrappingChoice(rightX + 578, row2Y, 160, kControlHeight);
     sortChoice_->add("Module ID");
     sortChoice_->add("Description");
     sortChoice_->add("Language");

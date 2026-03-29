@@ -1,5 +1,6 @@
 #include "ui/HtmlEditorWidget.h"
 
+#include "ui/WrappingChoice.h"
 #include "ui/UiFontUtils.h"
 #include "sword/SwordManager.h"
 
@@ -2425,7 +2426,7 @@ void HtmlEditorWidget::buildToolbar() {
     redoButton_ = makeButton(kButtonW, "@redo");
     boldButton_ = makeButton(kButtonW, "B");
     italicButton_ = makeButton(kButtonW, "I");
-    sizeChoice_ = new Fl_Choice(bx, y() + 2, kSizeChoiceW, kToolbarH - 4);
+    sizeChoice_ = new WrappingChoice(bx, y() + 2, kSizeChoiceW, kToolbarH - 4);
     sizeChoice_->callback(onToolbarButton, this);
     bx += kSizeChoiceW + kButtonGap;
     centerButton_ = makeButton(kWideButtonW, "Ctr");
