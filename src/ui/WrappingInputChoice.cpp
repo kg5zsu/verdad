@@ -48,6 +48,7 @@ public:
         , owner_(owner) {
         box(FL_UP_BOX);
         color(FL_BACKGROUND2_COLOR);
+        set_menu_window();
         clear_border();
     }
 
@@ -434,8 +435,9 @@ bool WrappingInputChoice::showPopup() {
     }
 
     choice_popup::activePopupOwner() = this;
-    popupWindow_->show();
+    // Grab before show so FLTK maps the popup like a menu, not a normal window.
     Fl::grab(popupWindow_);
+    popupWindow_->show();
     focusColumn(currentPopupColumn());
     popupWindow_->redraw();
     redraw();

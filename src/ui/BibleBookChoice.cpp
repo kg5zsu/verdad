@@ -67,6 +67,7 @@ public:
         , owner_(owner) {
         box(FL_UP_BOX);
         color(FL_BACKGROUND2_COLOR);
+        set_menu_window();
         clear_border();
     }
 
@@ -386,8 +387,9 @@ bool BibleBookChoice::showPopup(int preferredColumn) {
     updatePopupGeometry();
 
     openPopupOwner() = this;
-    popupWindow_->show();
+    // Grab before show so FLTK maps the popup like a menu, not a normal window.
     Fl::grab(popupWindow_);
+    popupWindow_->show();
     focusColumn(preferredColumn >= 0 ? preferredColumn : currentPopupColumn());
     popupWindow_->redraw();
     redraw();
