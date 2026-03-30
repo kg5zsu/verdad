@@ -293,6 +293,9 @@ public:
     /// Check if module has morphology
     bool moduleHasMorph(const std::string& moduleName) const;
 
+    /// Check if module is a daily devotional / reading-plan style resource.
+    bool moduleIsDailyDevotion(const std::string& moduleName) const;
+
     /// Parse a verse key string into components
     struct VerseRef {
         std::string book;

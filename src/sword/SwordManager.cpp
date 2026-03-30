@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <ctime>
 #include <regex>
 #include <sstream>
 #include <cstring>
@@ -163,6 +164,101 @@ bool moduleHasFeature(sword::SWModule* mod, const char* value) {
     return moduleHasConfigValue(mod, "Feature", value);
 }
 
+bool isDailyDevotionModule(sword::SWModule* mod) {
+    return moduleHasFeature(mod, "DailyDevotion");
+}
+
+bool parseDailyDevotionMonthDay(const std::string& raw, int& monthOut, int& dayOut) {
+    const std::string trimmed = trimCopy(raw);
+    if (trimmed.empty()) return false;
+
+    const size_t sep = trimmed.find_first_of("./-");
+    if (sep == std::string::npos) return false;
+    if (trimmed.find_first_of("./-", sep + 1) != std::string::npos) return false;
+
+    const std::string monthText = trimmed.substr(0, sep);
+    const std::string dayText = trimmed.substr(sep + 1);
+    if (monthText.empty() || dayText.empty()) return false;
+
+    auto parsePart = [](const std::string& text, int& valueOut) {
+        int value = 0;
+        const char* start = text.data();
+        const char* end = text.data() + text.size();
+        auto [ptr, ec] = std::from_chars(start, end, value);
+        if (ec != std::errc() || ptr != end) return false;
+        valueOut = value;
+        return true;
+    };
+
+    int month = 0;
+    int day = 0;
+    if (!parsePart(monthText, month) || !parsePart(dayText, day)) return false;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+
+    monthOut = month;
+    dayOut = day;
+    return true;
+}
+
+std::string formatDailyDevotionKey(int month, int day) {
+    char buffer[16];
+    std::snprintf(buffer, sizeof(buffer), "%02d.%02d", month, day);
+    return std::string(buffer);
+}
+
+std::string normalizeDailyDevotionKey(const std::string& raw) {
+    int month = 0;
+    int day = 0;
+    if (parseDailyDevotionMonthDay(raw, month, day)) {
+        return formatDailyDevotionKey(month, day);
+    }
+    return trimCopy(raw);
+}
+
+std::string todayDailyDevotionKey() {
+    std::time_t now = std::time(nullptr);
+    std::tm localTime{};
+#if defined(_WIN32)
+    localtime_s(&localTime, &now);
+#else
+    localtime_r(&now, &localTime);
+#endif
+    return formatDailyDevotionKey(localTime.tm_mon + 1, localTime.tm_mday);
+}
+
+std::string renderDailyDevotionEntryHtml(sword::SWModule* mod,
+                                         const std::string& key,
+                                         std::string* resolvedKeyOut = nullptr) {
+    if (!mod) return "";
+    if (resolvedKeyOut) resolvedKeyOut->clear();
+
+    std::string lookupKey = normalizeDailyDevotionKey(key);
+    if (lookupKey.empty()) {
+        lookupKey = todayDailyDevotionKey();
+    }
+
+    mod->setKey(lookupKey.c_str());
+    if (mod->popError()) return "";
+
+    std::string html = std::string(mod->renderText().c_str());
+    if (mod->popError()) return "";
+
+    std::string resolvedKey = trimCopy(safeConfigEntry(mod->getKeyText()));
+    if (resolvedKey.empty()) {
+        resolvedKey = lookupKey;
+    }
+    if (resolvedKeyOut) *resolvedKeyOut = resolvedKey;
+
+    if (!containsNonWhitespace(html)) return "";
+
+    std::ostringstream out;
+    out << "<div class=\"dictionary daily-devotion\">\n";
+    out << "<div class=\"entry-key\">" << htmlEscapeAttr(resolvedKey) << "</div>\n";
+    out << html;
+    out << "\n</div>\n";
+    return out.str();
+}
+
 bool sameBookChapter(const sword::VerseKey* vk,
                      char testament,
                      char book,
@@ -300,6 +396,9 @@ std::vector<std::string> moduleFeatureLabels(sword::SWModule* mod) {
     }
     if (moduleHasFeature(mod, "HebrewDef")) {
         appendFeatureLabel(labels, "Hebrew definitions");
+    }
+    if (isDailyDevotionModule(mod)) {
+        appendFeatureLabel(labels, "Daily devotion");
     }
 
     return labels;
@@ -3982,6 +4081,17 @@ std::string SwordManager::getDictionaryEntry(const std::string& moduleName,
     if (!mod) return "<p><i>Dictionary module not found: " + htmlEscapeAttr(moduleName) + "</i></p>";
     if (resolvedKeyOut) resolvedKeyOut->clear();
 
+    if (isDailyDevotionModule(mod)) {
+        std::string html = renderDailyDevotionEntryHtml(mod, key, resolvedKeyOut);
+        const std::string requestedKey = trimCopy(key);
+        const std::string displayKey =
+            requestedKey.empty() ? todayDailyDevotionKey() : normalizeDailyDevotionKey(requestedKey);
+        if (html.empty()) {
+            return "<p><i>No entry found for: " + htmlEscapeAttr(displayKey) + "</i></p>";
+        }
+        return html;
+    }
+
     std::string requestedKey = trimCopy(key);
     std::string displayKey = requestedKey;
     std::string text;
@@ -4838,6 +4948,11 @@ bool SwordManager::moduleHasMorph(const std::string& moduleName) const {
         return filters.find("Morph") != std::string::npos;
     }
     return false;
+}
+
+bool SwordManager::moduleIsDailyDevotion(const std::string& moduleName) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return isDailyDevotionModule(getModule(moduleName));
 }
 
 SwordManager::VerseRef SwordManager::parseVerseRef(const std::string& ref) {

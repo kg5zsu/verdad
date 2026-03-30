@@ -2992,12 +2992,27 @@ void RightPane::onDictionaryModuleChange(Fl_Widget* /*w*/, void* data) {
     self->currentDictionary_ = module_choice::selectedModuleName(
         self->dictionaryChoice_, self->dictionaryChoiceModules_);
     self->populateDictionaryKeyChoices();
+    const bool isDailyDevotion =
+        self->app_ &&
+        self->app_->swordManager().moduleIsDailyDevotion(self->currentDictionary_);
     std::string key = self->dictionaryKeyInput_ && self->dictionaryKeyInput_->value()
         ? self->dictionaryKeyInput_->value()
         : "";
     key = trimCopy(key);
-    if (key.empty()) key = self->currentDictKey_;
-    if (!self->currentDictionary_.empty() && !key.empty()) {
+    if (isDailyDevotion) {
+        if (!key.empty() && self->dictionaryKeys_) {
+            auto it = std::find(self->dictionaryKeys_->begin(),
+                                self->dictionaryKeys_->end(),
+                                key);
+            if (it == self->dictionaryKeys_->end()) {
+                key.clear();
+            }
+        }
+    } else if (key.empty()) {
+        key = self->currentDictKey_;
+    }
+    if (!self->currentDictionary_.empty() &&
+        (!key.empty() || isDailyDevotion)) {
         self->showDictionaryEntryInternal(self->currentDictionary_, key);
     } else {
         self->updateDictionaryNavigationChrome();
