@@ -136,6 +136,9 @@ public:
     /// Get list of available dictionary/lexicon modules
     std::vector<ModuleInfo> getDictionaryModules() const;
 
+    /// Get list of available daily devotion modules.
+    std::vector<ModuleInfo> getDailyDevotionModules() const;
+
     /// Get list of available general book modules
     std::vector<ModuleInfo> getGeneralBookModules() const;
 
@@ -206,6 +209,17 @@ public:
     std::string getDictionaryEntry(const std::string& moduleName,
                                    const std::string& key,
                                    std::string* resolvedKeyOut = nullptr);
+
+    /// Get a daily devotion entry using an ISO date or mm.dd key.
+    std::string getDailyDevotionEntry(const std::string& moduleName,
+                                      const std::string& key,
+                                      std::string* resolvedKeyOut = nullptr);
+
+    /// Extract one-line month summaries keyed by ISO date for calendar cells.
+    std::unordered_map<std::string, std::string> getDailyDevotionMonthSummaries(
+        const std::string& moduleName,
+        int year,
+        int month);
 
     /// Return traversable keys for a dictionary or lexicon module.
     std::shared_ptr<const std::vector<std::string>> getDictionaryKeys(

@@ -12,6 +12,8 @@
 #include <vector>
 #include <chrono>
 
+#include "ui/DailyWorkspaceState.h"
+
 class Fl_Box;
 class Fl_Hold_Browser;
 
@@ -66,6 +68,7 @@ public:
         std::string generalBookKey;
         bool documentsTabActive = false;
         std::string documentPath;
+        DailyWorkspaceState dailyWorkspace;
         std::vector<StudyTabState> studyTabs;
     };
 

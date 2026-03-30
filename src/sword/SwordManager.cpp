@@ -1,6 +1,7 @@
 #include "sword/SwordManager.h"
 #include "sword/SwordPaths.h"
 #include "app/PerfTrace.h"
+#include "reading/DateUtils.h"
 
 #include <swmgr.h>
 #include <swconfig.h>
@@ -224,6 +225,14 @@ std::string todayDailyDevotionKey() {
     localtime_r(&now, &localTime);
 #endif
     return formatDailyDevotionKey(localTime.tm_mon + 1, localTime.tm_mday);
+}
+
+std::string dailyDevotionLookupKey(const std::string& raw) {
+    reading::Date date{};
+    if (reading::parseIsoDate(trimCopy(raw), date)) {
+        return formatDailyDevotionKey(date.month, date.day);
+    }
+    return normalizeDailyDevotionKey(raw);
 }
 
 std::string renderDailyDevotionEntryHtml(sword::SWModule* mod,
@@ -1666,6 +1675,44 @@ std::string stripTags(const std::string& html) {
         if (!inTag) out.push_back(c);
     }
     return decodeHtmlEntities(out);
+}
+
+std::string collapseWhitespaceCopy(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+
+    bool inSpace = false;
+    for (char c : text) {
+        if (std::isspace(static_cast<unsigned char>(c))) {
+            if (!out.empty()) inSpace = true;
+            continue;
+        }
+
+        if (inSpace) {
+            out.push_back(' ');
+            inSpace = false;
+        }
+        out.push_back(c);
+    }
+
+    return trimCopy(out);
+}
+
+std::string summarizeDailyDevotionHtml(const std::string& html) {
+    static const std::regex headingRe(
+        R"(<h[1-4][^>]*>\s*(.*?)\s*</h[1-4]>)",
+        std::regex::icase);
+
+    std::smatch match;
+    if (std::regex_search(html, match, headingRe)) {
+        std::string heading = collapseWhitespaceCopy(stripTags(match[1].str()));
+        if (!heading.empty()) return heading;
+    }
+
+    std::string plain = collapseWhitespaceCopy(stripTags(html));
+    if (plain.empty()) return "";
+    if (plain.size() <= 72) return plain;
+    return plain.substr(0, 69) + "...";
 }
 
 struct CommentaryBuildPerf {
@@ -3226,7 +3273,46 @@ std::vector<ModuleInfo> SwordManager::getCommentaryModules() const {
 }
 
 std::vector<ModuleInfo> SwordManager::getDictionaryModules() const {
-    return getModulesByType("Lexicons / Dictionaries");
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<ModuleInfo> modules;
+
+    if (!mgr_) return modules;
+
+    for (auto it = mgr_->Modules.begin(); it != mgr_->Modules.end(); ++it) {
+        sword::SWModule* mod = it->second;
+        if (!mod || isDailyDevotionModule(mod)) continue;
+        const char* typeRaw = mod->getType();
+        if (typeRaw && std::string(typeRaw) == "Lexicons / Dictionaries") {
+            modules.push_back(buildModuleInfo(mod));
+        }
+    }
+
+    std::sort(modules.begin(), modules.end(),
+              [](const ModuleInfo& a, const ModuleInfo& b) {
+                  return a.name < b.name;
+              });
+
+    return modules;
+}
+
+std::vector<ModuleInfo> SwordManager::getDailyDevotionModules() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<ModuleInfo> modules;
+
+    if (!mgr_) return modules;
+
+    for (auto it = mgr_->Modules.begin(); it != mgr_->Modules.end(); ++it) {
+        sword::SWModule* mod = it->second;
+        if (!mod || !isDailyDevotionModule(mod)) continue;
+        modules.push_back(buildModuleInfo(mod));
+    }
+
+    std::sort(modules.begin(), modules.end(),
+              [](const ModuleInfo& a, const ModuleInfo& b) {
+                  return a.name < b.name;
+              });
+
+    return modules;
 }
 
 std::vector<ModuleInfo> SwordManager::getGeneralBookModules() const {
@@ -4133,6 +4219,68 @@ std::string SwordManager::getDictionaryEntry(const std::string& moduleName,
     html << text;
     html << "</div>\n";
     return html.str();
+}
+
+std::string SwordManager::getDailyDevotionEntry(const std::string& moduleName,
+                                                const std::string& key,
+                                                std::string* resolvedKeyOut) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    sword::SWModule* mod = getModule(moduleName);
+    if (!mod) {
+        return "<p><i>Daily devotion module not found: " +
+               htmlEscapeAttr(moduleName) + "</i></p>";
+    }
+    if (!isDailyDevotionModule(mod)) {
+        return "<p><i>Module is not a daily devotion: " +
+               htmlEscapeAttr(moduleName) + "</i></p>";
+    }
+
+    std::string lookupKey = dailyDevotionLookupKey(key);
+    std::string html = renderDailyDevotionEntryHtml(mod, lookupKey, resolvedKeyOut);
+    if (!html.empty()) return html;
+
+    const std::string displayKey = lookupKey.empty() ? todayDailyDevotionKey() : lookupKey;
+    return "<p><i>No entry found for: " + htmlEscapeAttr(displayKey) + "</i></p>";
+}
+
+std::unordered_map<std::string, std::string>
+SwordManager::getDailyDevotionMonthSummaries(const std::string& moduleName,
+                                             int year,
+                                             int month) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::unordered_map<std::string, std::string> summaries;
+
+    sword::SWModule* mod = getModule(moduleName);
+    if (!mod || !isDailyDevotionModule(mod) ||
+        year < 1 || month < 1 || month > 12) {
+        return summaries;
+    }
+
+    std::unique_ptr<sword::SWKey> restoreKey(
+        mod->getKey() ? mod->getKey()->clone() : nullptr);
+    const int dayCount = reading::daysInMonth(year, month);
+    for (int day = 1; day <= dayCount; ++day) {
+        const std::string lookupKey = formatDailyDevotionKey(month, day);
+        mod->setKey(lookupKey.c_str());
+        if (mod->popError()) continue;
+
+        std::string html = std::string(mod->renderText().c_str());
+        if (mod->popError() || !containsNonWhitespace(html)) continue;
+
+        std::string summary = summarizeDailyDevotionHtml(html);
+        if (summary.empty()) continue;
+
+        summaries.emplace(
+            reading::formatIsoDate(reading::Date{year, month, day}),
+            std::move(summary));
+    }
+
+    if (restoreKey) {
+        mod->setKey(*restoreKey);
+        mod->popError();
+    }
+
+    return summaries;
 }
 
 std::string SwordManager::getGeneralBookEntry(const std::string& moduleName,

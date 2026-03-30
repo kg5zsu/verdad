@@ -101,6 +101,7 @@ set(SOURCES
     src/sword/SwordPaths.cpp
     src/search/SearchIndexer.cpp
     src/search/SmartSearch.cpp
+    src/reading/ReadingPlanManager.cpp
     src/tags/TagManager.cpp
     src/ui/MainWindow.cpp
     src/ui/BibleBookChoice.cpp
@@ -111,6 +112,8 @@ set(SOURCES
     src/ui/ModuleManagerDialog.cpp
     src/ui/HtmlWidget.cpp
     src/ui/HtmlEditorWidget.cpp
+    src/ui/MonthCalendarWidget.cpp
+    src/ui/ReadingPlanEditorDialog.cpp
     src/ui/LeftPane.cpp
     src/ui/BiblePane.cpp
     src/ui/RightPane.cpp
@@ -128,6 +131,8 @@ set(HEADERS
     src/sword/SwordPaths.h
     src/search/SearchIndexer.h
     src/search/SmartSearch.h
+    src/reading/DateUtils.h
+    src/reading/ReadingPlanManager.h
     src/tags/TagManager.h
     src/ui/MainWindow.h
     src/ui/BibleBookChoice.h
@@ -138,8 +143,11 @@ set(HEADERS
     src/ui/ModuleManagerDialog.h
     src/ui/HtmlWidget.h
     src/ui/HtmlEditorWidget.h
+    src/ui/MonthCalendarWidget.h
+    src/ui/ReadingPlanEditorDialog.h
     src/ui/LeftPane.h
     src/ui/BiblePane.h
+    src/ui/DailyWorkspaceState.h
     src/ui/RightPane.h
     src/ui/SearchPanel.h
     src/ui/ModulePanel.h

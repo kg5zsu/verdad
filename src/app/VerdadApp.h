@@ -12,6 +12,7 @@ namespace verdad {
 class SwordManager;
 class SearchIndexer;
 class TagManager;
+class ReadingPlanManager;
 class MainWindow;
 
 /// Main application class - owns all managers and the main window
@@ -63,6 +64,10 @@ public:
 
     /// Get the tag manager
     TagManager& tagManager() { return *tagMgr_; }
+
+    /// Get the reading plan manager.
+    ReadingPlanManager& readingPlanManager() { return *readingPlanMgr_; }
+    const ReadingPlanManager& readingPlanManager() const { return *readingPlanMgr_; }
 
     /// Get the search indexer (may be nullptr if initialization failed)
     SearchIndexer* searchIndexer() { return searchIndexer_.get(); }
@@ -158,6 +163,7 @@ private:
     std::unique_ptr<SwordManager> swordMgr_;
     std::unique_ptr<SearchIndexer> searchIndexer_;
     std::unique_ptr<TagManager> tagMgr_;
+    std::unique_ptr<ReadingPlanManager> readingPlanMgr_;
     std::unique_ptr<MainWindow> mainWindow_;
     AppearanceSettings appearanceSettings_;
     PreviewDictionarySettings previewDictionarySettings_;

@@ -1,5 +1,6 @@
 #include "app/VerdadApp.h"
 #include "app/PlatformPaths.h"
+#include "reading/ReadingPlanManager.h"
 #include "sword/SwordManager.h"
 #include "search/SearchIndexer.h"
 #include "tags/TagManager.h"
@@ -315,6 +316,16 @@ MainWindow::SessionState sessionStateFromPreferences(const PreferenceMap& prefs)
     state.generalBookKey = lookup("general_book_key");
     state.documentsTabActive = parseBoolOr(lookup("documents_tab_active"), false);
     state.documentPath = lookup("document_path");
+    state.dailyWorkspace.tabActive =
+        parseBoolOr(lookup("daily_workspace_active"), false);
+    state.dailyWorkspace.mode =
+        dailyWorkspaceModeFromToken(trimCopy(lookup("daily_workspace_mode")));
+    state.dailyWorkspace.devotionalModule = lookup("daily_workspace_devotional_module");
+    state.dailyWorkspace.readingPlanId =
+        parseIntOr(lookup("daily_workspace_plan_id"), 0);
+    state.dailyWorkspace.selectedDateIso = lookup("daily_workspace_date");
+    state.dailyWorkspace.calendarVisible =
+        parseBoolOr(lookup("daily_workspace_calendar_open"), false);
 
     std::string activeLegacyGeneralBookModule;
     std::string activeLegacyGeneralBookKey;
@@ -443,7 +454,8 @@ VerdadApp* VerdadApp::instance_ = nullptr;
 VerdadApp::VerdadApp()
     : swordMgr_(std::make_unique<SwordManager>())
     , searchIndexer_(nullptr)
-    , tagMgr_(std::make_unique<TagManager>()) {
+    , tagMgr_(std::make_unique<TagManager>())
+    , readingPlanMgr_(std::make_unique<ReadingPlanManager>()) {
     instance_ = this;
 }
 
@@ -470,6 +482,7 @@ bool VerdadApp::initialize(int argc, char* argv[]) {
 
     // Load tags from the SQLite tag database.
     tagMgr_->load(joinPath(getConfigDir(), "tags.db"));
+    readingPlanMgr_->load(joinPath(getConfigDir(), "reading_plans.db"));
 
     // Initialize FTS5 index database (separate from tags/settings data).
     searchIndexer_ = std::make_unique<SearchIndexer>(
@@ -782,6 +795,17 @@ void VerdadApp::savePreferences() {
         file << "general_book_key=" << state.generalBookKey << "\n";
         file << "documents_tab_active=" << (state.documentsTabActive ? 1 : 0) << "\n";
         file << "document_path=" << state.documentPath << "\n";
+        file << "daily_workspace_active=" << (state.dailyWorkspace.tabActive ? 1 : 0) << "\n";
+        file << "daily_workspace_mode="
+             << dailyWorkspaceModeToken(state.dailyWorkspace.mode) << "\n";
+        file << "daily_workspace_devotional_module="
+             << state.dailyWorkspace.devotionalModule << "\n";
+        file << "daily_workspace_plan_id="
+             << state.dailyWorkspace.readingPlanId << "\n";
+        file << "daily_workspace_date="
+             << state.dailyWorkspace.selectedDateIso << "\n";
+        file << "daily_workspace_calendar_open="
+             << (state.dailyWorkspace.calendarVisible ? 1 : 0) << "\n";
         file << "study_tab_count=" << state.studyTabs.size() << "\n";
 
         for (size_t i = 0; i < state.studyTabs.size(); ++i) {

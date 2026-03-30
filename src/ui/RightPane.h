@@ -15,7 +15,10 @@
 #include <deque>
 #include <unordered_map>
 
+#include "reading/DateUtils.h"
+#include "reading/ReadingPlanManager.h"
 #include "sword/SwordManager.h"
+#include "ui/DailyWorkspaceState.h"
 
 namespace verdad {
 
@@ -23,6 +26,7 @@ class VerdadApp;
 class HtmlWidget;
 class HtmlEditorWidget;
 class FilterableChoiceWidget;
+class MonthCalendarWidget;
 
 /// Right pane for commentary, dictionary, and general books.
 /// Commentary/General Books are top tabs; dictionary is a resizable bottom pane.
@@ -31,6 +35,7 @@ public:
     enum class TopTab {
         Commentary,
         GeneralBooks,
+        DevotionsPlans,
         Documents,
     };
 
@@ -113,6 +118,13 @@ public:
     bool isDocumentsTabActive() const;
     void setDocumentsTabActive(bool active);
     const std::string& currentDocumentPath() const { return currentDocumentPath_; }
+
+    bool isDevotionsPlansTabActive() const;
+    void setDevotionsPlansTabActive(bool active);
+    void setDailyDevotionModule(const std::string& moduleName,
+                                bool activateTab = false);
+    DailyWorkspaceState currentDailyWorkspaceState() const;
+    void setDailyWorkspaceState(const DailyWorkspaceState& state);
 
     bool newDocument();
     bool openDocument(const std::string& path, bool activateTab);
@@ -243,6 +255,33 @@ private:
     bool generalBookTreeSyncing_ = false;
     static constexpr size_t kGeneralBookSectionCacheLimit = 48;
 
+    // Devotions & Plans tab (global, not tied to study tabs)
+    Fl_Group* devotionsPlansGroup_;
+    Fl_Choice* dailyModeChoice_;
+    Fl_Choice* dailyDevotionalChoice_;
+    Fl_Choice* dailyReadingPlanChoice_;
+    Fl_Button* dailyPrevDayButton_;
+    Fl_Button* dailyDateButton_;
+    Fl_Button* dailyTodayButton_;
+    Fl_Button* dailyNextDayButton_;
+    Fl_Button* dailyCalendarButton_;
+    Fl_Button* dailyNewPlanButton_;
+    Fl_Button* dailyEditPlanButton_;
+    Fl_Button* dailyDeletePlanButton_;
+    Fl_Button* dailyOpenInBibleButton_;
+    Fl_Button* dailyCompleteButton_;
+    Fl_Button* dailyRescheduleButton_;
+    Fl_Group* dailyCalendarGroup_;
+    Fl_Button* dailyPrevMonthButton_;
+    Fl_Button* dailyNextMonthButton_;
+    Fl_Box* dailyMonthLabel_;
+    MonthCalendarWidget* dailyCalendarWidget_;
+    HtmlWidget* dailyHtml_;
+    std::vector<std::string> dailyDevotionalModules_;
+    std::vector<std::string> dailyDevotionalLabels_;
+    std::vector<int> dailyReadingPlanIds_;
+    DailyWorkspaceState dailyWorkspaceState_;
+
     // Studypad tab (global, not tied to study tabs)
     Fl_Group* documentsGroup_;
     Fl_Choice* documentChoice_;
@@ -297,6 +336,19 @@ private:
     std::string buildGeneralBookWindowHtml();
     void restoreGeneralBookLoadedRangeFromHtml(const std::string& html);
 
+    /// Populate and refresh the Devotions & Plans workspace.
+    void populateDailyDevotionModules();
+    void populateReadingPlanChoices();
+    void refreshDailyWorkspace(bool forceCalendarReload = false);
+    void updateDailyWorkspaceControls();
+    void updateDailyCalendarMeta();
+    void updateDailyCalendarHeader();
+    void showDailyDevotionEntry(const std::string& moduleName,
+                                const std::string& dateIso);
+    void showReadingPlanDay(int planId, const std::string& dateIso);
+    void openReadingPlanPassage(const std::string& reference);
+    void onDailyContentLink(const std::string& url);
+
     void layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH);
     TopTab visibleTopTab() const;
     void updateCommentaryEditorChrome();
@@ -332,6 +384,23 @@ private:
     static void onGeneralBookForward(Fl_Widget* w, void* data);
     static void onGeneralBookContents(Fl_Widget* w, void* data);
     static void onGeneralBookTreeSelect(Fl_Widget* w, void* data);
+    static void onDailyModeChange(Fl_Widget* w, void* data);
+    static void onDailyDevotionalModuleChange(Fl_Widget* w, void* data);
+    static void onDailyReadingPlanChange(Fl_Widget* w, void* data);
+    static void onDailyPrevDay(Fl_Widget* w, void* data);
+    static void onDailyDateButton(Fl_Widget* w, void* data);
+    static void onDailyToday(Fl_Widget* w, void* data);
+    static void onDailyNextDay(Fl_Widget* w, void* data);
+    static void onDailyCalendarToggle(Fl_Widget* w, void* data);
+    static void onDailyPrevMonth(Fl_Widget* w, void* data);
+    static void onDailyNextMonth(Fl_Widget* w, void* data);
+    static void onDailyCalendarDateSelected(const reading::Date& date, RightPane* self);
+    static void onDailyNewPlan(Fl_Widget* w, void* data);
+    static void onDailyEditPlan(Fl_Widget* w, void* data);
+    static void onDailyDeletePlan(Fl_Widget* w, void* data);
+    static void onDailyOpenInBible(Fl_Widget* w, void* data);
+    static void onDailyToggleComplete(Fl_Widget* w, void* data);
+    static void onDailyReschedule(Fl_Widget* w, void* data);
     static void onDocumentChoiceChange(Fl_Widget* w, void* data);
     static void onDocumentNew(Fl_Widget* w, void* data);
     static void onDocumentSave(Fl_Widget* w, void* data);

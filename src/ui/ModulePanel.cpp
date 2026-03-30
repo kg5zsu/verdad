@@ -17,12 +17,14 @@ namespace {
 
 constexpr const char* kBibleGroup = "Biblical Texts";
 constexpr const char* kCommentaryGroup = "Commentaries";
+constexpr const char* kDevotionalGroup = "Daily Devotionals";
 constexpr const char* kDictionaryGroup = "Dictionaries";
 constexpr const char* kGeneralBookGroup = "General Books";
 
 enum class ModuleGroup {
     Bible,
     Commentary,
+    DailyDevotion,
     Dictionary,
     GeneralBook,
     Unknown,
@@ -94,6 +96,7 @@ std::string htmlEscape(const std::string& text) {
 ModuleGroup moduleGroupFromLabel(const std::string& label) {
     if (label == kBibleGroup) return ModuleGroup::Bible;
     if (label == kCommentaryGroup) return ModuleGroup::Commentary;
+    if (label == kDevotionalGroup) return ModuleGroup::DailyDevotion;
     if (label == kDictionaryGroup) return ModuleGroup::Dictionary;
     if (label == kGeneralBookGroup) return ModuleGroup::GeneralBook;
     return ModuleGroup::Unknown;
@@ -204,6 +207,8 @@ std::vector<ModuleInfo> modulesForGroup(VerdadApp* app, ModuleGroup group) {
         return app->swordManager().getBibleModules();
     case ModuleGroup::Commentary:
         return app->swordManager().getCommentaryModules();
+    case ModuleGroup::DailyDevotion:
+        return app->swordManager().getDailyDevotionModules();
     case ModuleGroup::Dictionary:
         return app->swordManager().getDictionaryModules();
     case ModuleGroup::GeneralBook:
@@ -312,10 +317,17 @@ void activateSelectedModule(MainWindow* mainWindow,
         break;
     case ModuleGroup::Commentary:
         rightPane->setDocumentsTabActive(false);
+        rightPane->setDevotionsPlansTabActive(false);
         rightPane->setDictionaryTabActive(false);
         rightPane->setCommentaryModule(selection.moduleName, true);
         break;
+    case ModuleGroup::DailyDevotion:
+        rightPane->setDocumentsTabActive(false);
+        rightPane->setDevotionsPlansTabActive(true);
+        rightPane->setDailyDevotionModule(selection.moduleName, true);
+        break;
     case ModuleGroup::Dictionary:
+        rightPane->setDevotionsPlansTabActive(false);
         rightPane->setDictionaryModule(selection.moduleName);
         if (!rightPane->currentDictionaryKey().empty()) {
             rightPane->showDictionaryEntry(selection.moduleName,
@@ -325,6 +337,7 @@ void activateSelectedModule(MainWindow* mainWindow,
     case ModuleGroup::GeneralBook:
         rightPane->setGeneralBookModule(selection.moduleName);
         rightPane->setDocumentsTabActive(false);
+        rightPane->setDevotionsPlansTabActive(false);
         rightPane->setDictionaryTabActive(true);
         rightPane->showGeneralBookEntry(selection.moduleName,
                                         rightPane->currentGeneralBookKey());
@@ -385,6 +398,7 @@ void ModulePanel::populateTree() {
 
     addModuleGroup(kBibleGroup, app_->swordManager().getBibleModules());
     addModuleGroup(kCommentaryGroup, app_->swordManager().getCommentaryModules());
+    addModuleGroup(kDevotionalGroup, app_->swordManager().getDailyDevotionModules());
     addModuleGroup(kDictionaryGroup, app_->swordManager().getDictionaryModules());
     addModuleGroup(kGeneralBookGroup, app_->swordManager().getGeneralBookModules());
 

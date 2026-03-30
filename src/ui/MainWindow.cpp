@@ -343,11 +343,13 @@ bool copyDirectoryRecursive(const std::string& fromPath,
 
 bool runZipArchive(const std::string& workingDir,
                    const std::string& archivePath,
-                   bool includeTagsDb) {
+                   bool includeTagsDb,
+                   bool includeReadingPlansDb) {
     std::string cmd = "cd " + shellQuote(workingDir) +
                       " && zip -rq " + shellQuote(archivePath) +
                       " preferences.conf";
     if (includeTagsDb) cmd += " tags.db";
+    if (includeReadingPlansDb) cmd += " reading_plans.db";
     cmd += " studypad";
 #ifdef _WIN32
     cmd += " >NUL 2>NUL";
@@ -1763,6 +1765,7 @@ MainWindow::SessionState MainWindow::captureSessionState() {
         state.generalBookKey = rightPane_->currentGeneralBookKey();
         state.documentsTabActive = rightPane_->isDocumentsTabActive();
         state.documentPath = rightPane_->currentDocumentPath();
+        state.dailyWorkspace = rightPane_->currentDailyWorkspaceState();
     }
     if (documentRestoreScheduled_) {
         state.documentsTabActive = pendingDocumentsTabActive_;
@@ -1824,6 +1827,9 @@ void MainWindow::restoreSessionState(const SessionState& state) {
     if (state.studyTabs.empty() || !studyTabsWidget_) {
         addStudyTab("", "Genesis", 1, 1);
         if (rightPane_) {
+            DailyWorkspaceState dailyState = state.dailyWorkspace;
+            dailyState.calendarVisible = false;
+            rightPane_->setDailyWorkspaceState(dailyState);
             if (state.dictionaryPaneHeight > 0) {
                 rightPane_->setDictionaryPaneHeight(state.dictionaryPaneHeight);
             }
@@ -1835,7 +1841,13 @@ void MainWindow::restoreSessionState(const SessionState& state) {
                 rightPane_->showGeneralBookEntry(rightPane_->currentGeneralBookModule(),
                                                  rightPane_->currentGeneralBookKey());
             }
-            rightPane_->setDictionaryTabActive(state.generalBooksTabActive);
+            if (state.documentsTabActive) {
+                rightPane_->setDocumentsTabActive(true);
+            } else if (dailyState.tabActive) {
+                rightPane_->setDevotionsPlansTabActive(true);
+            } else {
+                rightPane_->setDictionaryTabActive(state.generalBooksTabActive);
+            }
             scheduleDeferredDocumentRestore(state.documentPath,
                                             state.documentsTabActive);
         }
@@ -1892,6 +1904,9 @@ void MainWindow::restoreSessionState(const SessionState& state) {
     }
 
     if (rightPane_) {
+        DailyWorkspaceState dailyState = state.dailyWorkspace;
+        dailyState.calendarVisible = false;
+        rightPane_->setDailyWorkspaceState(dailyState);
         if (state.dictionaryPaneHeight > 0) {
             rightPane_->setDictionaryPaneHeight(state.dictionaryPaneHeight);
         }
@@ -1903,7 +1918,13 @@ void MainWindow::restoreSessionState(const SessionState& state) {
             rightPane_->showGeneralBookEntry(rightPane_->currentGeneralBookModule(),
                                              rightPane_->currentGeneralBookKey());
         }
-        rightPane_->setDictionaryTabActive(state.generalBooksTabActive);
+        if (state.documentsTabActive) {
+            rightPane_->setDocumentsTabActive(true);
+        } else if (dailyState.tabActive) {
+            rightPane_->setDevotionsPlansTabActive(true);
+        } else {
+            rightPane_->setDictionaryTabActive(state.generalBooksTabActive);
+        }
     }
 
     if (!studyTabs_.empty()) {
@@ -2153,11 +2174,13 @@ bool MainWindow::exportSettingsArchive(const std::string& archivePath,
     }
 
     app_->tagManager().save();
+    app_->readingPlanManager().save();
     app_->savePreferences();
 
     fs::path configDir(app_->getConfigDir());
     fs::path prefsPath = configDir / "preferences.conf";
     fs::path tagsPath = configDir / "tags.db";
+    fs::path readingPlansPath = configDir / "reading_plans.db";
     fs::path studypadPath = configDir / "studypad";
 
     std::error_code ec;
@@ -2192,6 +2215,15 @@ bool MainWindow::exportSettingsArchive(const std::string& archivePath,
         return false;
     }
 
+    bool includeReadingPlansDb = fs::exists(readingPlansPath, ec) && !ec;
+    if (includeReadingPlansDb &&
+        !copyBinaryFile(readingPlansPath.string(),
+                        (stagingDir / "reading_plans.db").string())) {
+        cleanup();
+        errorMessage = "Failed to stage reading_plans.db for export.";
+        return false;
+    }
+
     fs::path stagingStudypad = stagingDir / "studypad";
     if (fs::exists(studypadPath, ec) && !ec) {
         if (!copyDirectoryRecursive(studypadPath.string(), stagingStudypad.string())) {
@@ -2208,7 +2240,10 @@ bool MainWindow::exportSettingsArchive(const std::string& archivePath,
     std::error_code removeError;
     fs::remove(destination, removeError);
 
-    if (!runZipArchive(stagingDir.string(), destination.string(), includeTagsDb)) {
+    if (!runZipArchive(stagingDir.string(),
+                       destination.string(),
+                       includeTagsDb,
+                       includeReadingPlansDb)) {
         cleanup();
         errorMessage = "zip failed to create the settings archive.";
         return false;
@@ -2253,6 +2288,7 @@ bool MainWindow::importSettingsArchive(const std::string& archivePath,
     fs::path extractedDir(tempDir);
     fs::path extractedPrefs = extractedDir / "preferences.conf";
     fs::path extractedTags = extractedDir / "tags.db";
+    fs::path extractedReadingPlans = extractedDir / "reading_plans.db";
     fs::path extractedStudypad = extractedDir / "studypad";
     if (!fs::exists(extractedPrefs, ec) || ec) {
         cleanup();
@@ -2283,6 +2319,15 @@ bool MainWindow::importSettingsArchive(const std::string& archivePath,
         }
     }
 
+    if (fs::exists(extractedReadingPlans, ec) && !ec) {
+        if (!copyBinaryFile(extractedReadingPlans.string(),
+                            (configDir / "reading_plans.db").string())) {
+            cleanup();
+            errorMessage = "Failed to copy reading_plans.db into the config directory.";
+            return false;
+        }
+    }
+
     if (fs::exists(extractedStudypad, ec) && !ec) {
         if (!copyDirectoryRecursive(extractedStudypad.string(),
                                     (configDir / "studypad").string())) {
@@ -2297,6 +2342,10 @@ bool MainWindow::importSettingsArchive(const std::string& archivePath,
     fs::path tagsPath = configDir / "tags.db";
     if (fs::exists(tagsPath, ec) && !ec) {
         app_->tagManager().load(tagsPath.string());
+    }
+    fs::path readingPlansPath = configDir / "reading_plans.db";
+    if (fs::exists(readingPlansPath, ec) && !ec) {
+        app_->readingPlanManager().load(readingPlansPath.string());
     }
 
     if (!app_->loadPreferencesFromFile((configDir / "preferences.conf").string(), true)) {
