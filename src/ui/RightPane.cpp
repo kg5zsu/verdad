@@ -56,6 +56,8 @@ constexpr int kGeneralBookMaxLoadedSections = 12;
 constexpr int kDailyNavButtonW = 28;
 constexpr int kDailyCalendarDrawerH = 252;
 constexpr int kDailyActionButtonW = 112;
+constexpr int kDailyReadingPlanBottomMinH = 180;
+constexpr int kDailyReadingPlanBottomMaxH = 260;
 
 std::string escapeCssString(const std::string& text) {
     std::string out;
@@ -612,6 +614,30 @@ std::vector<std::string> extractSwordReadingPlanItemHtml(const std::string& html
     return items;
 }
 
+std::string buildReadingPlanPassageLinkHtml(const std::string& reference) {
+    std::string trimmedReference = trimCopy(reference);
+    if (trimmedReference.empty()) return "";
+
+    std::ostringstream html;
+    html << "<a href=\"verdad-plan://open?ref="
+         << urlEncode(trimmedReference) << "\">"
+         << htmlEscape(trimmedReference) << "</a>";
+    return html.str();
+}
+
+std::string joinHtmlItems(const std::vector<std::string>& items,
+                          const std::string& separatorHtml) {
+    std::ostringstream html;
+    bool first = true;
+    for (const auto& item : items) {
+        if (trimCopy(item).empty()) continue;
+        if (!first) html << separatorHtml;
+        html << item;
+        first = false;
+    }
+    return html.str();
+}
+
 const ReadingPlanDay* readingPlanDayForDate(const ReadingPlan& plan,
                                             const std::string& dateIso) {
     for (const auto& day : plan.days) {
@@ -699,6 +725,8 @@ std::string buildSwordReadingPlanDayHtml(const std::string& moduleName,
 }
 
 std::string buildDailyDevotionPageHtml(const std::string& dateIso,
+                                       const std::string& readingSummaryHtml,
+                                       const std::string& headingHtml,
                                        const std::string& entryHtml) {
     std::string body = extractDailyEntryBodyHtml(entryHtml);
     if (body.empty()) return entryHtml;
@@ -706,7 +734,18 @@ std::string buildDailyDevotionPageHtml(const std::string& dateIso,
     std::ostringstream html;
     html << "<div class=\"dictionary daily-devotion\">\n";
     html << "<div class=\"entry-key\">" << htmlEscape(dateIso) << "</div>\n";
+    if (!trimCopy(readingSummaryHtml).empty()) {
+        html << readingSummaryHtml << "\n";
+    }
+    html << "<hr class=\"daily-devotion-divider\" />\n";
+    if (!trimCopy(headingHtml).empty()) {
+        html << "<h2 class=\"daily-devotion-heading\">"
+             << headingHtml
+             << "</h2>\n";
+    }
+    html << "<div class=\"daily-devotion-body\">\n";
     html << body << "\n";
+    html << "</div>\n";
     html << "</div>\n";
     return html.str();
 }
@@ -1076,8 +1115,7 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     , currentGeneralBook_()
     , currentGeneralBookKey_()
     , devotionsPlansGroup_(nullptr)
-    , dailyDevotionalModeButton_(nullptr)
-    , dailyReadingPlansModeButton_(nullptr)
+    , dailyModeButton_(nullptr)
     , dailyDevotionalChoice_(nullptr)
     , dailyReadingPlanChoice_(nullptr)
     , dailyPrevDayButton_(nullptr)
@@ -1228,36 +1266,28 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
 
     devotionsPlansGroup_ = new Fl_Group(tileX, panelY, tileW, panelH, "Daily");
     devotionsPlansGroup_->begin();
-    dailyDevotionalModeButton_ = new Fl_Button(tileX + 2, panelY + 2, 98, choiceH, "Devotional");
-    dailyDevotionalModeButton_->type(FL_TOGGLE_BUTTON);
-    dailyDevotionalModeButton_->box(FL_THIN_UP_BOX);
-    dailyDevotionalModeButton_->down_box(FL_THIN_DOWN_BOX);
-    dailyDevotionalModeButton_->callback(onDailyModeChange, this);
-    dailyReadingPlansModeButton_ = new Fl_Button(tileX + 100, panelY + 2, 110, choiceH, "Reading Plan");
-    dailyReadingPlansModeButton_->type(FL_TOGGLE_BUTTON);
-    dailyReadingPlansModeButton_->box(FL_THIN_UP_BOX);
-    dailyReadingPlansModeButton_->down_box(FL_THIN_DOWN_BOX);
-    dailyReadingPlansModeButton_->callback(onDailyModeChange, this);
+    dailyModeButton_ = new Fl_Button(tileX + 2, panelY + 2, 128, choiceH, "Reading Plans...");
+    dailyModeButton_->callback(onDailyModeChange, this);
 
-    dailyDevotionalChoice_ = new WrappingChoice(tileX + 214, panelY + 2, 240, choiceH);
+    dailyDevotionalChoice_ = new WrappingChoice(tileX + 134, panelY + 2, 240, choiceH);
     dailyDevotionalChoice_->callback(onDailyDevotionalModuleChange, this);
-    dailyReadingPlanChoice_ = new WrappingChoice(tileX + 214, panelY + 2, 240, choiceH);
+    dailyReadingPlanChoice_ = new WrappingChoice(tileX + 134, panelY + 2, 240, choiceH);
     dailyReadingPlanChoice_->callback(onDailyReadingPlanChange, this);
     dailyReadingPlanChoice_->hide();
 
-    dailyPrevDayButton_ = new Fl_Button(tileX + 458, panelY + 2, kDailyNavButtonW, choiceH, "@<-");
+    dailyPrevDayButton_ = new Fl_Button(tileX + 378, panelY + 2, kDailyNavButtonW, choiceH, "@<-");
     dailyPrevDayButton_->callback(onDailyPrevDay, this);
-    dailyDateButton_ = new Fl_Button(tileX + 488, panelY + 2, 136, choiceH, "");
+    dailyDateButton_ = new Fl_Button(tileX + 408, panelY + 2, 136, choiceH, "");
     dailyDateButton_->callback(onDailyDateButton, this);
-    dailyTodayButton_ = new Fl_Button(tileX + 626, panelY + 2, 56, choiceH, "Today");
+    dailyTodayButton_ = new Fl_Button(tileX + 546, panelY + 2, 56, choiceH, "Today");
     dailyTodayButton_->callback(onDailyToday, this);
-    dailyNextDayButton_ = new Fl_Button(tileX + 684, panelY + 2, kDailyNavButtonW, choiceH, "@->");
+    dailyNextDayButton_ = new Fl_Button(tileX + 604, panelY + 2, kDailyNavButtonW, choiceH, "@->");
     dailyNextDayButton_->callback(onDailyNextDay, this);
-    dailyNewPlanButton_ = new Fl_Button(tileX + 716, panelY + 2, 52, choiceH, "New");
+    dailyNewPlanButton_ = new Fl_Button(tileX + 636, panelY + 2, 52, choiceH, "New");
     dailyNewPlanButton_->callback(onDailyNewPlan, this);
-    dailyEditPlanButton_ = new Fl_Button(tileX + 770, panelY + 2, 48, choiceH, "Edit");
+    dailyEditPlanButton_ = new Fl_Button(tileX + 690, panelY + 2, 48, choiceH, "Edit");
     dailyEditPlanButton_->callback(onDailyEditPlan, this);
-    dailyDeletePlanButton_ = new Fl_Button(tileX + 820, panelY + 2, 58, choiceH, "Delete");
+    dailyDeletePlanButton_ = new Fl_Button(tileX + 740, panelY + 2, 58, choiceH, "Delete");
     dailyDeletePlanButton_->callback(onDailyDeletePlan, this);
 
     dailyCompleteButton_ = new Fl_Button(tileX + 2,
@@ -1498,7 +1528,7 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
         !generalBookBackButton_ || !generalBookForwardButton_ ||
         !generalBookContentsButton_ || !generalBookHtml_ ||
         !generalBookTocPanel_ || !generalBookTocPanelHeader_ || !generalBookTocTree_ ||
-        !devotionsPlansGroup_ || !dailyDevotionalModeButton_ || !dailyReadingPlansModeButton_ ||
+        !devotionsPlansGroup_ || !dailyModeButton_ ||
         !dailyDevotionalChoice_ ||
         !dailyReadingPlanChoice_ || !dailyPrevDayButton_ || !dailyDateButton_ ||
         !dailyTodayButton_ || !dailyNextDayButton_ ||
@@ -1592,12 +1622,13 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
                                 std::max(20, overlayW - 8),
                                 std::max(40, overlayH - kGeneralBookOverlayHeaderH - 6));
 
+    const bool readingPlansMode =
+        dailyWorkspaceState_.mode == DailyWorkspaceMode::ReadingPlans;
     const int dailyRow1Y = panelY + 2;
     const int dailyRow2Y = dailyRow1Y + rowH + 4;
-    const int dailyModeButton1W = 98;
-    const int dailyModeButton2W = 110;
-    const int dailyChoiceX = contentX + dailyModeButton1W + dailyModeButton2W + 4;
-    const int dailyNavXBase = contentX + std::max(180, (contentW * 2) / 5);
+    const int dailyModeButtonW = 128;
+    const int dailyChoiceX = contentX + dailyModeButtonW + 4;
+    const int dailyNavXBase = contentX + std::max(180, (contentW * 9) / 20);
     const int rightButtonsW =
         dailyNewPlanButton_->w() + dailyEditPlanButton_->w() +
         dailyDeletePlanButton_->w() + 8;
@@ -1605,11 +1636,7 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
         140,
         std::min(260,
                  std::max(140, contentW - (dailyNavXBase - contentX) - rightButtonsW - 240)));
-    dailyDevotionalModeButton_->resize(contentX, dailyRow1Y, dailyModeButton1W, rowH);
-    dailyReadingPlansModeButton_->resize(contentX + dailyModeButton1W,
-                                         dailyRow1Y,
-                                         dailyModeButton2W,
-                                         rowH);
+    dailyModeButton_->resize(contentX, dailyRow1Y, dailyModeButtonW, rowH);
     dailyDevotionalChoice_->resize(dailyChoiceX, dailyRow1Y, dailyChoiceW, rowH);
     dailyReadingPlanChoice_->resize(dailyChoiceX, dailyRow1Y, dailyChoiceW, rowH);
 
@@ -1646,10 +1673,27 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
                                    98,
                                    rowH);
 
+    const int dailyCalendarY = dailyRow2Y + rowH + 6;
+    int dailyCalendarH = kDailyCalendarDrawerH;
+    int dailyHtmlY = dailyRow2Y + rowH + 8;
+    int dailyHtmlH = std::max(10, (panelY + panelH) - dailyHtmlY - 2);
+    if (readingPlansMode) {
+        int requestedBottomH = std::clamp(panelH / 3,
+                                          kDailyReadingPlanBottomMinH,
+                                          kDailyReadingPlanBottomMaxH);
+        int maxBottomH = std::max(10, (panelY + panelH) - (dailyCalendarY + 96) - 2);
+        dailyHtmlH = std::min(requestedBottomH, maxBottomH);
+        dailyHtmlY = (panelY + panelH) - dailyHtmlH - 2;
+        dailyCalendarH = std::max(80, dailyHtmlY - dailyCalendarY - 8);
+    } else if (dailyCalendarGroup_->visible()) {
+        dailyHtmlY = dailyCalendarY + dailyCalendarH + 8;
+        dailyHtmlH = std::max(10, (panelY + panelH) - dailyHtmlY - 2);
+    }
+
     dailyCalendarGroup_->resize(contentX,
-                                dailyRow2Y + rowH + 6,
+                                dailyCalendarY,
                                 contentW,
-                                kDailyCalendarDrawerH);
+                                dailyCalendarH);
     dailyPrevMonthButton_->resize(dailyCalendarGroup_->x() + 6,
                                   dailyCalendarGroup_->y() + 6,
                                   30,
@@ -1666,13 +1710,10 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
                                  dailyCalendarGroup_->y() + 34,
                                  std::max(20, dailyCalendarGroup_->w() - 12),
                                  std::max(80, dailyCalendarGroup_->h() - 40));
-    int dailyHtmlY = dailyCalendarGroup_->visible()
-        ? dailyCalendarGroup_->y() + dailyCalendarGroup_->h() + 8
-        : dailyRow2Y + rowH + 8;
     dailyHtml_->resize(contentX,
                        dailyHtmlY,
                        contentW,
-                       std::max(10, (panelY + panelH) - dailyHtmlY - 2));
+                       dailyHtmlH);
 
     int docsButtonsW = studypadToolbarButtonsWidth();
     int documentChoiceW = std::max(20, contentW - docsButtonsW - kStudypadToolbarButtonGap);
@@ -1718,8 +1759,8 @@ void RightPane::resize(int X, int Y, int W, int H) {
 
     if (!contentTile_ || !contentResizeBox_ || !tabs_ || !commentaryGroup_ ||
         !commentaryChoice_ || !commentaryHtml_ || !commentaryEditor_ ||
-        !devotionsPlansGroup_ || !dailyDevotionalModeButton_ ||
-        !dailyReadingPlansModeButton_ || !dailyDevotionalChoice_ ||
+        !devotionsPlansGroup_ || !dailyModeButton_ ||
+        !dailyDevotionalChoice_ ||
         !dailyReadingPlanChoice_ || !dailyPrevDayButton_ || !dailyDateButton_ ||
         !dailyTodayButton_ || !dailyNextDayButton_ ||
         !dailyNewPlanButton_ || !dailyEditPlanButton_ || !dailyDeletePlanButton_ ||
@@ -1802,7 +1843,8 @@ int RightPane::handle(int event) {
         }
     }
 
-    if (dailyWorkspaceState_.calendarVisible &&
+    if (dailyWorkspaceState_.mode != DailyWorkspaceMode::ReadingPlans &&
+        dailyWorkspaceState_.calendarVisible &&
         visibleTopTab() == TopTab::DevotionsPlans &&
         (event == FL_KEYDOWN || event == FL_SHORTCUT) &&
         Fl::event_key() == FL_Escape) {
@@ -2484,7 +2526,6 @@ void RightPane::setDailyDevotionModule(const std::string& moduleName,
                                        bool activateTab) {
     dailyWorkspaceState_.mode = DailyWorkspaceMode::Devotionals;
     dailyWorkspaceState_.devotionalModule = moduleName;
-    dailyWorkspaceState_.swordReadingPlanModule.clear();
     if (dailyDevotionalChoice_) {
         module_choice::applyChoiceValue(dailyDevotionalChoice_,
                                         dailyDevotionalModules_,
@@ -2744,8 +2785,7 @@ void RightPane::redrawChrome() {
     if (generalBookContentsButton_) generalBookContentsButton_->redraw();
     if (generalBookTocPanel_) generalBookTocPanel_->redraw();
     if (generalBookTocTree_) generalBookTocTree_->redraw();
-    if (dailyDevotionalModeButton_) dailyDevotionalModeButton_->redraw();
-    if (dailyReadingPlansModeButton_) dailyReadingPlansModeButton_->redraw();
+    if (dailyModeButton_) dailyModeButton_->redraw();
     if (dailyDevotionalChoice_) dailyDevotionalChoice_->redraw();
     if (dailyReadingPlanChoice_) dailyReadingPlanChoice_->redraw();
     if (dailyPrevDayButton_) dailyPrevDayButton_->redraw();
@@ -3292,7 +3332,7 @@ void RightPane::updateDailyCalendarMeta() {
 }
 
 void RightPane::updateDailyWorkspaceControls() {
-    if (!dailyDevotionalModeButton_ || !dailyReadingPlansModeButton_ ||
+    if (!dailyModeButton_ ||
         !dailyDevotionalChoice_ || !dailyReadingPlanChoice_ ||
         !dailyDateButton_ || !dailyCalendarGroup_ ||
         !dailyCompleteButton_ || !dailyRescheduleButton_ ||
@@ -3302,8 +3342,8 @@ void RightPane::updateDailyWorkspaceControls() {
 
     const bool readingPlansMode =
         dailyWorkspaceState_.mode == DailyWorkspaceMode::ReadingPlans;
-    dailyDevotionalModeButton_->value(readingPlansMode ? 0 : 1);
-    dailyReadingPlansModeButton_->value(readingPlansMode ? 1 : 0);
+    dailyModeButton_->copy_label(
+        readingPlansMode ? "Back to Daily" : "Reading Plans...");
     if (dailyDevotionalChoice_) {
         module_choice::applyChoiceValue(dailyDevotionalChoice_,
                                         dailyDevotionalModules_,
@@ -3348,7 +3388,7 @@ void RightPane::updateDailyWorkspaceControls() {
         dailyDateButton_->copy_label("Select Date");
     }
 
-    if (dailyWorkspaceState_.calendarVisible) {
+    if (readingPlansMode || dailyWorkspaceState_.calendarVisible) {
         dailyCalendarGroup_->show();
     } else {
         dailyCalendarGroup_->hide();
@@ -3399,6 +3439,93 @@ void RightPane::updateDailyWorkspaceControls() {
     }
 }
 
+std::string RightPane::dailyDevotionalHeadingLabel(const std::string& moduleName) const {
+    if (moduleName.empty()) return "";
+
+    int index = module_choice::findChoiceIndexByModuleName(dailyDevotionalModules_, moduleName);
+    if (index >= 0 && index < static_cast<int>(dailyDevotionalLabels_.size())) {
+        return dailyDevotionalLabels_[static_cast<size_t>(index)];
+    }
+
+    if (!app_) return moduleName;
+    std::string description = module_choice::trimCopy(
+        app_->swordManager().getModuleDescription(moduleName));
+    if (description.empty() ||
+        module_choice::equalsIgnoreCaseAscii(description, moduleName)) {
+        return moduleName;
+    }
+    return moduleName + ": " + description;
+}
+
+std::string RightPane::buildSelectedReadingPlanSummaryHtml(const std::string& dateIso) const {
+    if (!app_) return "";
+
+    std::string planLabel;
+    std::vector<std::string> itemsHtml;
+
+    if (dailyWorkspaceState_.readingPlanSource == DailyReadingPlanSource::SwordModule) {
+        const std::string moduleName = dailyWorkspaceState_.swordReadingPlanModule;
+        if (moduleName.empty()) return "";
+
+        planLabel = dailyDevotionalHeadingLabel(moduleName);
+        std::string entryHtml = app_->swordManager().getDailyDevotionEntry(moduleName, dateIso);
+        std::string rewrittenBody = extractDailyEntryBodyHtml(
+            rewriteSwordReadingPlanLinks(entryHtml, nullptr));
+        itemsHtml = extractSwordReadingPlanItemHtml(rewrittenBody);
+    } else if (dailyWorkspaceState_.readingPlanId > 0) {
+        ReadingPlan plan;
+        if (!app_->readingPlanManager().getPlan(dailyWorkspaceState_.readingPlanId, plan)) {
+            return "";
+        }
+
+        planLabel = plan.summary.name;
+        const ReadingPlanDay* day = readingPlanDayForDate(plan, dateIso);
+        if (day) {
+            std::vector<std::string> passageLinks;
+            passageLinks.reserve(day->passages.size());
+            for (const auto& passage : day->passages) {
+                std::string linkHtml = buildReadingPlanPassageLinkHtml(passage.reference);
+                if (!linkHtml.empty()) passageLinks.push_back(std::move(linkHtml));
+            }
+
+            std::string joinedLinks = joinHtmlItems(
+                passageLinks,
+                "<span class=\"daily-reading-summary-separator\">, </span>");
+            if (!module_choice::trimCopy(day->title).empty()) {
+                std::ostringstream item;
+                item << "<span class=\"daily-reading-summary-item-label\">"
+                     << htmlEscape(day->title)
+                     << "</span>";
+                if (!joinedLinks.empty()) {
+                    item << " " << joinedLinks;
+                }
+                itemsHtml.push_back(item.str());
+            } else if (!joinedLinks.empty()) {
+                itemsHtml.push_back(joinedLinks);
+            }
+        }
+    }
+
+    if (planLabel.empty() && itemsHtml.empty()) return "";
+
+    std::ostringstream html;
+    html << "<div class=\"daily-reading-summary\">";
+    if (!planLabel.empty()) {
+        html << "<span class=\"daily-reading-summary-plan\">"
+             << htmlEscape(planLabel)
+             << "</span>";
+        html << "<span class=\"daily-reading-summary-separator\">: </span>";
+    }
+    if (!itemsHtml.empty()) {
+        html << joinHtmlItems(itemsHtml,
+                              "<span class=\"daily-reading-summary-separator\"> | </span>");
+    } else {
+        html << "<span class=\"daily-reading-summary-empty\">No readings scheduled.</span>";
+    }
+    html << "</div>";
+    return html.str();
+}
+
 void RightPane::showDailyDevotionEntry(const std::string& moduleName,
                                        const std::string& dateIso) {
     if (!dailyHtml_ || !app_) return;
@@ -3409,7 +3536,11 @@ void RightPane::showDailyDevotionEntry(const std::string& moduleName,
     }
 
     std::string entryHtml = app_->swordManager().getDailyDevotionEntry(moduleName, dateIso);
-    dailyHtml_->setHtml(buildDailyDevotionPageHtml(dateIso, entryHtml));
+    dailyHtml_->setHtml(buildDailyDevotionPageHtml(
+        dateIso,
+        buildSelectedReadingPlanSummaryHtml(dateIso),
+        htmlEscape(dailyDevotionalHeadingLabel(moduleName)),
+        entryHtml));
 }
 
 void RightPane::showReadingPlanDay(int planId, const std::string& dateIso) {
@@ -3463,6 +3594,17 @@ void RightPane::refreshDailyWorkspace(bool /*forceCalendarReload*/) {
     reading::parseIsoDate(dailyWorkspaceState_.selectedDateIso, selectedDate);
     if (!reading::sameDate(dailyCalendarWidget_->selectedDate(), selectedDate)) {
         dailyCalendarWidget_->setSelectedDate(selectedDate);
+    }
+    const bool calendarShouldTrackSelection =
+        dailyWorkspaceState_.mode == DailyWorkspaceMode::ReadingPlans ||
+        dailyWorkspaceState_.calendarVisible;
+    if (calendarShouldTrackSelection) {
+        reading::Date displayedMonth = dailyCalendarWidget_->displayedMonth();
+        if (!displayedMonth.valid() ||
+            displayedMonth.year != selectedDate.year ||
+            displayedMonth.month != selectedDate.month) {
+            dailyCalendarWidget_->setDisplayedMonth(selectedDate);
+        }
     }
 
     if (dailyWorkspaceState_.mode == DailyWorkspaceMode::Devotionals) {
@@ -4344,13 +4486,13 @@ void RightPane::onGeneralBookTreeSelect(Fl_Widget* /*w*/, void* data) {
                                self->generalBookToc_[static_cast<size_t>(index)].key);
 }
 
-void RightPane::onDailyModeChange(Fl_Widget* w, void* data) {
+void RightPane::onDailyModeChange(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
-    if (!self || !w) return;
+    if (!self) return;
     self->dailyWorkspaceState_.mode =
-        (w == self->dailyReadingPlansModeButton_)
-            ? DailyWorkspaceMode::ReadingPlans
-            : DailyWorkspaceMode::Devotionals;
+        (self->dailyWorkspaceState_.mode == DailyWorkspaceMode::ReadingPlans)
+            ? DailyWorkspaceMode::Devotionals
+            : DailyWorkspaceMode::ReadingPlans;
     self->refreshDailyWorkspace(true);
 }
 
@@ -4360,7 +4502,6 @@ void RightPane::onDailyDevotionalModuleChange(Fl_Widget* /*w*/, void* data) {
     self->dailyWorkspaceState_.mode = DailyWorkspaceMode::Devotionals;
     self->dailyWorkspaceState_.devotionalModule = module_choice::selectedModuleName(
         self->dailyDevotionalChoice_, self->dailyDevotionalModules_);
-    self->dailyWorkspaceState_.swordReadingPlanModule.clear();
     self->refreshDailyWorkspace(true);
 }
 
@@ -4403,6 +4544,15 @@ void RightPane::onDailyPrevDay(Fl_Widget* /*w*/, void* data) {
 void RightPane::onDailyDateButton(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self) return;
+    if (self->dailyWorkspaceState_.mode == DailyWorkspaceMode::ReadingPlans) {
+        reading::Date date{};
+        if (reading::parseIsoDate(self->dailyWorkspaceState_.selectedDateIso, date) &&
+            self->dailyCalendarWidget_) {
+            self->dailyCalendarWidget_->setDisplayedMonth(date);
+            self->updateDailyCalendarMeta();
+        }
+        return;
+    }
     self->dailyWorkspaceState_.calendarVisible =
         !self->dailyWorkspaceState_.calendarVisible;
     self->updateDailyWorkspaceControls();

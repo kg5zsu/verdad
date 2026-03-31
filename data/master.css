@@ -363,6 +363,56 @@ div.dictionary .entry-key {
     margin-bottom: 6px;
 }
 
+div.daily-reading-summary {
+    margin: 0 0 6px 0;
+    line-height: 1.45;
+    color: #45525d;
+}
+
+div.daily-reading-summary .daily-reading-summary-plan {
+    font-weight: bold;
+    color: #274d68;
+}
+
+div.daily-reading-summary .daily-reading-summary-item-label {
+    font-weight: bold;
+    color: #5a4636;
+}
+
+div.daily-reading-summary .daily-reading-summary-separator {
+    color: #7b8792;
+}
+
+div.daily-reading-summary .daily-reading-summary-empty {
+    font-style: italic;
+    color: #6b7280;
+}
+
+div.daily-reading-summary a {
+    text-decoration: none;
+}
+
+div.daily-reading-summary a:hover {
+    text-decoration: underline;
+}
+
+hr.daily-devotion-divider {
+    border: 0;
+    border-top: 1px solid #d3dde6;
+    margin: 8px 0 10px 0;
+}
+
+h2.daily-devotion-heading {
+    margin: 0 0 10px 0;
+    color: #274d68;
+    font-size: 1.3em;
+    line-height: 1.2;
+}
+
+div.daily-devotion-body > :first-child {
+    margin-top: 0;
+}
+
 /* Link/preview blocks */
 div.preview-verse-ref {
     margin: 0 0 6px 0;

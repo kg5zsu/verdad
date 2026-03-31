@@ -270,8 +270,7 @@ private:
 
     // Devotions & Plans tab (global, not tied to study tabs)
     Fl_Group* devotionsPlansGroup_;
-    Fl_Button* dailyDevotionalModeButton_;
-    Fl_Button* dailyReadingPlansModeButton_;
+    Fl_Button* dailyModeButton_;
     Fl_Choice* dailyDevotionalChoice_;
     Fl_Choice* dailyReadingPlanChoice_;
     Fl_Button* dailyPrevDayButton_;
@@ -355,6 +354,8 @@ private:
     void updateDailyWorkspaceControls();
     void updateDailyCalendarMeta();
     void updateDailyCalendarHeader();
+    std::string dailyDevotionalHeadingLabel(const std::string& moduleName) const;
+    std::string buildSelectedReadingPlanSummaryHtml(const std::string& dateIso) const;
     void showDailyDevotionEntry(const std::string& moduleName,
                                 const std::string& dateIso);
     void showReadingPlanDay(int planId, const std::string& dateIso);
