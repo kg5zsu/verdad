@@ -327,9 +327,6 @@ MainWindow::SessionState sessionStateFromPreferences(const PreferenceMap& prefs)
         parseIntOr(lookup("daily_workspace_plan_id"), 0);
     state.dailyWorkspace.swordReadingPlanModule =
         lookup("daily_workspace_sword_plan_module");
-    state.dailyWorkspace.selectedDateIso = lookup("daily_workspace_date");
-    state.dailyWorkspace.calendarVisible =
-        parseBoolOr(lookup("daily_workspace_calendar_open"), false);
 
     std::string activeLegacyGeneralBookModule;
     std::string activeLegacyGeneralBookKey;
@@ -810,10 +807,6 @@ void VerdadApp::savePreferences() {
              << state.dailyWorkspace.readingPlanId << "\n";
         file << "daily_workspace_sword_plan_module="
              << state.dailyWorkspace.swordReadingPlanModule << "\n";
-        file << "daily_workspace_date="
-             << state.dailyWorkspace.selectedDateIso << "\n";
-        file << "daily_workspace_calendar_open="
-             << (state.dailyWorkspace.calendarVisible ? 1 : 0) << "\n";
         file << "study_tab_count=" << state.studyTabs.size() << "\n";
 
         for (size_t i = 0; i < state.studyTabs.size(); ++i) {

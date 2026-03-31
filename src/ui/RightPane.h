@@ -270,18 +270,17 @@ private:
 
     // Devotions & Plans tab (global, not tied to study tabs)
     Fl_Group* devotionsPlansGroup_;
-    Fl_Choice* dailyModeChoice_;
+    Fl_Button* dailyDevotionalModeButton_;
+    Fl_Button* dailyReadingPlansModeButton_;
     Fl_Choice* dailyDevotionalChoice_;
     Fl_Choice* dailyReadingPlanChoice_;
     Fl_Button* dailyPrevDayButton_;
     Fl_Button* dailyDateButton_;
     Fl_Button* dailyTodayButton_;
     Fl_Button* dailyNextDayButton_;
-    Fl_Button* dailyCalendarButton_;
     Fl_Button* dailyNewPlanButton_;
     Fl_Button* dailyEditPlanButton_;
     Fl_Button* dailyDeletePlanButton_;
-    Fl_Button* dailyOpenInBibleButton_;
     Fl_Button* dailyCompleteButton_;
     Fl_Button* dailyRescheduleButton_;
     Fl_Group* dailyCalendarGroup_;
@@ -293,7 +292,6 @@ private:
     std::vector<std::string> dailyDevotionalModules_;
     std::vector<std::string> dailyDevotionalLabels_;
     std::vector<DailyReadingPlanChoiceItem> dailyReadingPlanChoices_;
-    std::vector<std::string> dailyCurrentOpenRefs_;
     DailyWorkspaceState dailyWorkspaceState_;
 
     // Studypad tab (global, not tied to study tabs)
@@ -407,14 +405,12 @@ private:
     static void onDailyDateButton(Fl_Widget* w, void* data);
     static void onDailyToday(Fl_Widget* w, void* data);
     static void onDailyNextDay(Fl_Widget* w, void* data);
-    static void onDailyCalendarToggle(Fl_Widget* w, void* data);
     static void onDailyPrevMonth(Fl_Widget* w, void* data);
     static void onDailyNextMonth(Fl_Widget* w, void* data);
     static void onDailyCalendarDateSelected(const reading::Date& date, RightPane* self);
     static void onDailyNewPlan(Fl_Widget* w, void* data);
     static void onDailyEditPlan(Fl_Widget* w, void* data);
     static void onDailyDeletePlan(Fl_Widget* w, void* data);
-    static void onDailyOpenInBible(Fl_Widget* w, void* data);
     static void onDailyToggleComplete(Fl_Widget* w, void* data);
     static void onDailyReschedule(Fl_Widget* w, void* data);
     static void onDocumentChoiceChange(Fl_Widget* w, void* data);
