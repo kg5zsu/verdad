@@ -284,6 +284,7 @@ private:
     Fl_Button* dailyEditPlanButton_;
     Fl_Button* dailyDeletePlanButton_;
     Fl_Button* dailyCompleteButton_;
+    Fl_Button* dailyCompleteThroughButton_;
     Fl_Button* dailyRescheduleButton_;
     Fl_Group* dailyCalendarGroup_;
     Fl_Button* dailyPrevMonthButton_;
@@ -357,6 +358,17 @@ private:
     void updateDailyWorkspaceControls();
     void updateDailyCalendarMeta();
     void updateDailyCalendarHeader();
+    void ensureDailyWorkspaceDates();
+    std::string currentDailyDateIso() const;
+    void setCurrentDailyDateIso(const std::string& dateIso);
+    std::vector<std::string> selectedDailyCalendarDateIsos() const;
+    std::vector<std::string> actionableSelectedReadingPlanDateIsos(bool* allCompleted = nullptr) const;
+    std::vector<std::string> actionableReadingPlanDatesThroughCurrent(bool* allCompleted = nullptr) const;
+    std::string defaultReadingPlanDateIso() const;
+    std::string defaultEditableReadingPlanDateIso(int planId) const;
+    std::string defaultSwordReadingPlanDateIso(const std::string& moduleName) const;
+    bool swordReadingPlanHasContentForDate(const std::string& moduleName,
+                                           const std::string& dateIso) const;
     std::string dailyDevotionalHeadingLabel(const std::string& moduleName) const;
     void showDailyDevotionEntry(const std::string& moduleName,
                                 const std::string& dateIso);
@@ -415,6 +427,7 @@ private:
     static void onDailyEditPlan(Fl_Widget* w, void* data);
     static void onDailyDeletePlan(Fl_Widget* w, void* data);
     static void onDailyToggleComplete(Fl_Widget* w, void* data);
+    static void onDailyToggleCompleteThrough(Fl_Widget* w, void* data);
     static void onDailyReschedule(Fl_Widget* w, void* data);
     static void onDocumentChoiceChange(Fl_Widget* w, void* data);
     static void onDocumentNew(Fl_Widget* w, void* data);

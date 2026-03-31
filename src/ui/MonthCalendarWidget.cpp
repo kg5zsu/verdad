@@ -4,6 +4,8 @@
 #include <FL/fl_draw.H>
 
 #include <algorithm>
+#include <sstream>
+#include <unordered_set>
 
 namespace verdad {
 namespace {
@@ -27,6 +29,8 @@ MonthCalendarWidget::MonthCalendarWidget(int X, int Y, int W, int H, const char*
     , displayedMonth_(reading::today())
     , selectedDate_(reading::today()) {
     box(FL_FLAT_BOX);
+    selectedDateIsos_.push_back(reading::formatIsoDate(selectedDate_));
+    selectedDateSet_.insert(selectedDateIsos_.front());
 }
 
 void MonthCalendarWidget::setDisplayedMonth(const reading::Date& date) {
@@ -39,7 +43,41 @@ void MonthCalendarWidget::setSelectedDate(const reading::Date& date) {
     if (!date.valid()) return;
     selectedDate_ = date;
     displayedMonth_ = reading::Date{date.year, date.month, 1};
+    selectedDateIsos_.clear();
+    selectedDateIsos_.push_back(reading::formatIsoDate(date));
+    selectedDateSet_.clear();
+    selectedDateSet_.insert(selectedDateIsos_.front());
     redraw();
+}
+
+void MonthCalendarWidget::setSelectedDates(const std::vector<std::string>& dateIsos) {
+    selectedDateIsos_.clear();
+    selectedDateSet_.clear();
+    for (const auto& dateIso : dateIsos) {
+        if (!reading::isIsoDateInRange(dateIso)) continue;
+        if (!selectedDateSet_.insert(dateIso).second) continue;
+        selectedDateIsos_.push_back(dateIso);
+    }
+    if (selectedDateIsos_.empty()) {
+        if (selectedDate_.valid()) {
+            selectedDateIsos_.push_back(reading::formatIsoDate(selectedDate_));
+            selectedDateSet_.insert(selectedDateIsos_.front());
+        }
+    } else {
+        reading::Date lastDate{};
+        if (reading::parseIsoDate(selectedDateIsos_.back(), lastDate)) {
+            selectedDate_ = lastDate;
+        }
+    }
+    redraw();
+}
+
+std::vector<std::string> MonthCalendarWidget::selectedDateIsos() const {
+    return selectedDateIsos_;
+}
+
+bool MonthCalendarWidget::hasSelectedDateIso(const std::string& dateIso) const {
+    return selectedDateSet_.find(dateIso) != selectedDateSet_.end();
 }
 
 void MonthCalendarWidget::setDayMeta(
@@ -56,11 +94,28 @@ int MonthCalendarWidget::handle(int event) {
     if (event == FL_PUSH && Fl::event_button() == FL_LEFT_MOUSE) {
         Cell cell = cellAt(Fl::event_x(), Fl::event_y());
         if (cell.date.valid()) {
+            draggingSelection_ = true;
+            dragAnchorDate_ = cell.date;
             selectedDate_ = cell.date;
-            if (selectCallback_) selectCallback_(cell.date);
-            redraw();
+            setSelectionRange(cell.date, cell.date);
             return 1;
         }
+    } else if (event == FL_DRAG && draggingSelection_) {
+        Cell cell = cellAt(Fl::event_x(), Fl::event_y());
+        if (cell.date.valid()) {
+            if (reading::sameDate(cell.date, selectedDate_)) {
+                return 1;
+            }
+            selectedDate_ = cell.date;
+            setSelectionRange(dragAnchorDate_, cell.date);
+            return 1;
+        }
+    } else if (event == FL_RELEASE && draggingSelection_) {
+        draggingSelection_ = false;
+        if (selectedDate_.valid() && selectCallback_) {
+            selectCallback_(selectedDate_);
+        }
+        return 1;
     }
     return Fl_Widget::handle(event);
 }
@@ -91,12 +146,13 @@ void MonthCalendarWidget::draw() {
         CalendarDayMeta meta;
         if (metaIt != metaByIso_.end()) meta = metaIt->second;
 
-        bool selected = reading::sameDate(cell.date, selectedDate_);
+        const bool inSelection = hasSelectedDateIso(iso);
+        bool selected = inSelection;
         bool isToday = reading::sameDate(cell.date, today);
 
         Fl_Color fill = cell.inDisplayedMonth ? fl_rgb_color(250, 250, 250)
                                               : fl_rgb_color(240, 240, 240);
-        if (selected) {
+        if (inSelection) {
             fill = fl_rgb_color(220, 232, 248);
         } else if (meta.completed) {
             fill = fl_rgb_color(232, 247, 236);
@@ -113,9 +169,13 @@ void MonthCalendarWidget::draw() {
             fl_color(fl_rgb_color(46, 111, 191));
             fl_rect(cell.X + 1, cell.Y + 1, cell.W - 2, cell.H - 2);
         }
-        if (selected) {
+        if (inSelection) {
             fl_color(fl_rgb_color(30, 83, 153));
             fl_rect(cell.X + 2, cell.Y + 2, cell.W - 4, cell.H - 4);
+        }
+        if (reading::sameDate(cell.date, selectedDate_)) {
+            fl_color(fl_rgb_color(12, 58, 113));
+            fl_rect(cell.X + 3, cell.Y + 3, cell.W - 6, cell.H - 6);
         }
 
         fl_color(cell.inDisplayedMonth ? FL_BLACK : fl_rgb_color(140, 140, 140));
@@ -135,13 +195,31 @@ void MonthCalendarWidget::draw() {
         if (!meta.summary.empty()) {
             fl_color(summaryColorForCell(meta, cell.inDisplayedMonth));
             fl_font(FL_HELVETICA, 10);
-            const std::string clipped = reading::addEllipsis(meta.summary, 18);
-            fl_draw(clipped.c_str(),
-                    cell.X + kCellPadding,
-                    cell.Y + 18,
-                    cell.W - (kCellPadding * 2),
-                    cell.H - 20,
-                    FL_ALIGN_LEFT | FL_ALIGN_TOP | FL_ALIGN_CLIP);
+            const int lineHeight = 12;
+            const int maxLines = std::max(1, (cell.H - 22) / lineHeight);
+            std::istringstream stream(meta.summary);
+            std::vector<std::string> lines;
+            std::string line;
+            while (std::getline(stream, line)) {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (!line.empty()) lines.push_back(line);
+            }
+            int lineIndex = 0;
+            while (lineIndex < maxLines && lineIndex < static_cast<int>(lines.size())) {
+                std::string clipped = reading::addEllipsis(lines[static_cast<size_t>(lineIndex)],
+                                                           20);
+                if (lineIndex == maxLines - 1 &&
+                    static_cast<int>(lines.size()) > maxLines) {
+                    clipped = reading::addEllipsis(clipped, 17);
+                }
+                fl_draw(clipped.c_str(),
+                        cell.X + kCellPadding,
+                        cell.Y + 18 + (lineIndex * lineHeight),
+                        cell.W - (kCellPadding * 2),
+                        lineHeight,
+                        FL_ALIGN_LEFT | FL_ALIGN_TOP | FL_ALIGN_CLIP);
+                ++lineIndex;
+            }
         }
     }
 
@@ -179,6 +257,35 @@ void MonthCalendarWidget::buildCells(Cell cells[42]) const {
         cells[i].W = cellW;
         cells[i].H = cellH;
     }
+}
+
+void MonthCalendarWidget::setSelectionRange(const reading::Date& from, const reading::Date& to) {
+    if (!from.valid() || !to.valid()) return;
+
+    reading::Date start = from;
+    reading::Date end = to;
+    if (reading::compareDates(start, end) > 0) {
+        std::swap(start, end);
+    }
+
+    const std::string startIso = reading::formatIsoDate(start);
+    const std::string endIso = reading::formatIsoDate(end);
+    if (!selectedDateIsos_.empty() &&
+        selectedDateIsos_.front() == startIso &&
+        selectedDateIsos_.back() == endIso) {
+        return;
+    }
+
+    selectedDateIsos_.clear();
+    selectedDateSet_.clear();
+    reading::Date current = start;
+    while (reading::compareDates(current, end) <= 0) {
+        std::string currentIso = reading::formatIsoDate(current);
+        selectedDateIsos_.push_back(currentIso);
+        selectedDateSet_.insert(std::move(currentIso));
+        current = reading::addDays(current, 1);
+    }
+    redraw();
 }
 
 } // namespace verdad

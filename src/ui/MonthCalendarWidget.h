@@ -6,6 +6,8 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include "reading/DateUtils.h"
 
@@ -30,6 +32,9 @@ public:
 
     void setSelectedDate(const reading::Date& date);
     reading::Date selectedDate() const { return selectedDate_; }
+    void setSelectedDates(const std::vector<std::string>& dateIsos);
+    std::vector<std::string> selectedDateIsos() const;
+    bool hasSelectedDateIso(const std::string& dateIso) const;
 
     void setDayMeta(const std::unordered_map<std::string, CalendarDayMeta>& metaByIso);
     void setDateSelectCallback(DateSelectCallback callback);
@@ -49,11 +54,16 @@ private:
 
     reading::Date displayedMonth_;
     reading::Date selectedDate_;
+    std::vector<std::string> selectedDateIsos_;
+    std::unordered_set<std::string> selectedDateSet_;
     std::unordered_map<std::string, CalendarDayMeta> metaByIso_;
     DateSelectCallback selectCallback_;
+    bool draggingSelection_ = false;
+    reading::Date dragAnchorDate_;
 
     Cell cellAt(int mouseX, int mouseY) const;
     void buildCells(Cell cells[42]) const;
+    void setSelectionRange(const reading::Date& from, const reading::Date& to);
 };
 
 } // namespace verdad

@@ -395,6 +395,11 @@ std::vector<DailyReadingBarWidget::Chunk> chunksFromSummaryHtml(const std::strin
 
     return chunks;
 }
+
+bool summaryHtmlHasReadingLinks(const std::string& html) {
+    return html.find("<a ") != std::string::npos ||
+           html.find("<a href=") != std::string::npos;
+}
 } // namespace
 
 BiblePane::BiblePane(VerdadApp* app, int X, int Y, int W, int H)
@@ -937,21 +942,24 @@ void BiblePane::refreshDailyReadingPlanBar() {
     if (rightPane) {
         state = rightPane->currentDailyWorkspaceState();
     }
-    if (!reading::isIsoDateInRange(state.selectedDateIso)) {
-        state.selectedDateIso = reading::formatIsoDate(reading::today());
+    if (!reading::isIsoDateInRange(state.readingPlanSelectedDateIso)) {
+        state.readingPlanSelectedDateIso = reading::formatIsoDate(reading::today());
     }
 
     const std::string planLabel =
         rightPane ? rightPane->selectedDailyReadingPlanLabel() : std::string();
     std::string summaryHtml =
-        rightPane ? rightPane->selectedDailyReadingPlanSummaryHtml(state.selectedDateIso, false)
+        rightPane ? rightPane->selectedDailyReadingPlanSummaryHtml(
+                        state.readingPlanSelectedDateIso, false)
                   : std::string();
     std::vector<DailyReadingBarWidget::Chunk> chunks;
-    chunks.push_back({monthDayLabel(state.selectedDateIso), ""});
+    chunks.push_back({monthDayLabel(state.readingPlanSelectedDateIso), ""});
     chunks.push_back({": ", ""});
     if (!summaryHtml.empty()) {
         auto summaryChunks = chunksFromSummaryHtml(summaryHtml);
         chunks.insert(chunks.end(), summaryChunks.begin(), summaryChunks.end());
+    } else if (!planLabel.empty()) {
+        chunks.push_back({"No readings scheduled.", ""});
     } else {
         chunks.push_back({"No reading plan selected.", ""});
     }
@@ -967,13 +975,20 @@ void BiblePane::refreshDailyReadingPlanBar() {
         ReadingPlan plan;
         if (app_->readingPlanManager().getPlan(state.readingPlanId, plan)) {
             for (const auto& day : plan.days) {
-                if (day.dateIso == state.selectedDateIso) {
+                if (day.dateIso == state.readingPlanSelectedDateIso) {
                     canComplete = true;
                     completed = day.completed;
                     break;
                 }
             }
         }
+    } else if (app_ &&
+               state.readingPlanSource == DailyReadingPlanSource::SwordModule &&
+               !state.swordReadingPlanModule.empty() &&
+               summaryHtmlHasReadingLinks(summaryHtml)) {
+        canComplete = true;
+        completed = app_->readingPlanManager().swordDayCompleted(
+            state.swordReadingPlanModule, state.readingPlanSelectedDateIso);
     }
 
     dailyReadingCompleteButton_->value(completed ? 1 : 0);
@@ -1730,8 +1745,8 @@ void BiblePane::openDailyReadingPlanWorkspace() {
     RightPane* rightPane = app_->mainWindow()->rightPane();
     DailyWorkspaceState state = rightPane->currentDailyWorkspaceState();
     state.mode = DailyWorkspaceMode::ReadingPlans;
-    if (!reading::isIsoDateInRange(state.selectedDateIso)) {
-        state.selectedDateIso = reading::formatIsoDate(reading::today());
+    if (!reading::isIsoDateInRange(state.readingPlanSelectedDateIso)) {
+        state.readingPlanSelectedDateIso.clear();
     }
     rightPane->setDailyWorkspaceState(state);
     rightPane->setDevotionsPlansTabActive(true);
@@ -1757,34 +1772,48 @@ void BiblePane::updateDailyReadingPlanCompleted(bool completed) {
 
     RightPane* rightPane = app_->mainWindow()->rightPane();
     DailyWorkspaceState state = rightPane->currentDailyWorkspaceState();
-    if (state.readingPlanSource != DailyReadingPlanSource::Editable ||
-        state.readingPlanId <= 0 ||
-        !reading::isIsoDateInRange(state.selectedDateIso)) {
+    if (!reading::isIsoDateInRange(state.readingPlanSelectedDateIso)) {
         refreshDailyReadingPlanBar();
         return;
     }
 
-    ReadingPlan plan;
-    if (!app_->readingPlanManager().getPlan(state.readingPlanId, plan)) {
-        refreshDailyReadingPlanBar();
-        return;
-    }
-
-    bool hasDay = false;
-    for (const auto& day : plan.days) {
-        if (day.dateIso == state.selectedDateIso) {
-            hasDay = true;
-            break;
+    bool ok = false;
+    if (state.readingPlanSource == DailyReadingPlanSource::Editable &&
+        state.readingPlanId > 0) {
+        ReadingPlan plan;
+        if (!app_->readingPlanManager().getPlan(state.readingPlanId, plan)) {
+            refreshDailyReadingPlanBar();
+            return;
         }
-    }
-    if (!hasDay) {
-        refreshDailyReadingPlanBar();
-        return;
+
+        bool hasDay = false;
+        for (const auto& day : plan.days) {
+            if (day.dateIso == state.readingPlanSelectedDateIso) {
+                hasDay = true;
+                break;
+            }
+        }
+        if (!hasDay) {
+            refreshDailyReadingPlanBar();
+            return;
+        }
+
+        ok = app_->readingPlanManager().setDayCompleted(
+            state.readingPlanId, state.readingPlanSelectedDateIso, completed);
+    } else if (state.readingPlanSource == DailyReadingPlanSource::SwordModule &&
+               !state.swordReadingPlanModule.empty()) {
+        const std::string summaryHtml =
+            rightPane->selectedDailyReadingPlanSummaryHtml(state.readingPlanSelectedDateIso,
+                                                           false);
+        if (!summaryHtmlHasReadingLinks(summaryHtml)) {
+            refreshDailyReadingPlanBar();
+            return;
+        }
+        ok = app_->readingPlanManager().setSwordDayCompleted(
+            state.swordReadingPlanModule, state.readingPlanSelectedDateIso, completed);
     }
 
-    if (!app_->readingPlanManager().setDayCompleted(state.readingPlanId,
-                                                    state.selectedDateIso,
-                                                    completed)) {
+    if (!ok) {
         app_->mainWindow()->showTransientStatus("Failed to update reading plan completion.");
         refreshDailyReadingPlanBar();
         return;

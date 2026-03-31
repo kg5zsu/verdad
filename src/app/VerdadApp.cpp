@@ -318,8 +318,7 @@ MainWindow::SessionState sessionStateFromPreferences(const PreferenceMap& prefs)
     state.documentPath = lookup("document_path");
     state.dailyWorkspace.tabActive =
         parseBoolOr(lookup("daily_workspace_active"), false);
-    state.dailyWorkspace.mode =
-        dailyWorkspaceModeFromToken(trimCopy(lookup("daily_workspace_mode")));
+    state.dailyWorkspace.mode = DailyWorkspaceMode::Devotionals;
     state.dailyWorkspace.devotionalModule = lookup("daily_workspace_devotional_module");
     state.dailyWorkspace.readingPlanSource =
         dailyReadingPlanSourceFromToken(trimCopy(lookup("daily_workspace_plan_source")));

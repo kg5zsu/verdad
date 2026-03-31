@@ -231,6 +231,83 @@ bool ReadingPlanManager::setDayCompleted(int planId,
     return ok;
 }
 
+bool ReadingPlanManager::setSwordDayCompleted(const std::string& moduleName,
+                                              const std::string& dateIso,
+                                              bool completed) {
+    if (!db_ || dateIso.empty() || moduleName.empty() ||
+        !reading::isIsoDateInRange(dateIso)) {
+        return false;
+    }
+
+    static const char* kSql = R"SQL(
+        INSERT INTO sword_reading_plan_progress (module_name, day_date, completed)
+        VALUES (?, ?, ?)
+        ON CONFLICT(module_name, day_date)
+        DO UPDATE SET completed = excluded.completed;
+    )SQL";
+
+    sqlite3_stmt* stmt = nullptr;
+    bool ok = sqlite3_prepare_v2(db_, kSql, -1, &stmt, nullptr) == SQLITE_OK;
+    if (ok) ok = bindText(stmt, 1, moduleName);
+    if (ok) ok = bindText(stmt, 2, dateIso);
+    if (ok) ok = sqlite3_bind_int(stmt, 3, completed ? 1 : 0) == SQLITE_OK;
+    if (ok) ok = sqlite3_step(stmt) == SQLITE_DONE;
+    if (stmt) sqlite3_finalize(stmt);
+    return ok;
+}
+
+bool ReadingPlanManager::swordDayCompleted(const std::string& moduleName,
+                                           const std::string& dateIso) const {
+    if (!db_ || dateIso.empty() || moduleName.empty() ||
+        !reading::isIsoDateInRange(dateIso)) {
+        return false;
+    }
+
+    static const char* kSql = R"SQL(
+        SELECT completed
+          FROM sword_reading_plan_progress
+         WHERE module_name = ? AND day_date = ?;
+    )SQL";
+
+    sqlite3_stmt* stmt = nullptr;
+    bool ok = sqlite3_prepare_v2(db_, kSql, -1, &stmt, nullptr) == SQLITE_OK;
+    if (ok) ok = bindText(stmt, 1, moduleName);
+    if (ok) ok = bindText(stmt, 2, dateIso);
+    bool completed = false;
+    if (ok && sqlite3_step(stmt) == SQLITE_ROW) {
+        completed = sqlite3_column_int(stmt, 0) != 0;
+    }
+    if (stmt) sqlite3_finalize(stmt);
+    return completed;
+}
+
+std::unordered_set<std::string> ReadingPlanManager::swordCompletedDates(
+    const std::string& moduleName) const {
+    std::unordered_set<std::string> dates;
+    if (!db_ || moduleName.empty()) return dates;
+
+    static const char* kSql = R"SQL(
+        SELECT day_date
+          FROM sword_reading_plan_progress
+         WHERE module_name = ? AND completed != 0
+         ORDER BY day_date;
+    )SQL";
+
+    sqlite3_stmt* stmt = nullptr;
+    bool ok = sqlite3_prepare_v2(db_, kSql, -1, &stmt, nullptr) == SQLITE_OK;
+    if (ok) ok = bindText(stmt, 1, moduleName);
+
+    while (ok && sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* dateIso = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        if (dateIso && reading::isIsoDateInRange(dateIso)) {
+            dates.emplace(dateIso);
+        }
+    }
+
+    if (stmt) sqlite3_finalize(stmt);
+    return dates;
+}
+
 bool ReadingPlanManager::rescheduleDay(int planId,
                                        const std::string& fromDateIso,
                                        const std::string& toDateIso,
@@ -355,7 +432,17 @@ bool ReadingPlanManager::ensureSchema() {
         CREATE INDEX IF NOT EXISTS idx_reading_plan_day_passages_day_sort
             ON reading_plan_day_passages(day_id, sort_order);
 
-        PRAGMA user_version = 1;
+        CREATE TABLE IF NOT EXISTS sword_reading_plan_progress (
+            module_name TEXT NOT NULL,
+            day_date TEXT NOT NULL,
+            completed INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(module_name, day_date)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sword_reading_plan_progress_module_date
+            ON sword_reading_plan_progress(module_name, day_date);
+
+        PRAGMA user_version = 2;
     )SQL";
 
     return execSql(db_, kSchemaSql);

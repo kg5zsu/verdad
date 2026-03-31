@@ -32,6 +32,7 @@
 #include <fstream>
 #include <functional>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <system_error>
 #include <unordered_set>
@@ -479,10 +480,114 @@ int readingPlanChoiceIndexForSwordModule(
     return -1;
 }
 
+std::string rewriteSwordReadingPlanLinks(const std::string& html,
+                                         std::vector<std::string>* extractedRefs);
+std::string extractDailyEntryBodyHtml(const std::string& html);
+std::vector<std::string> extractSwordReadingPlanItemHtml(const std::string& html);
+std::vector<std::string> extractSwordReadingPlanReferences(
+    VerdadApp* app,
+    const std::string& html,
+    const std::string& moduleName,
+    const std::string& dateIso,
+    const std::string& verseModuleForRefs);
+
 std::string readingPlanDayCalendarSummary(const ReadingPlanDay& day) {
-    if (!trimCopy(day.title).empty()) return day.title;
-    if (!day.passages.empty()) return day.passages.front().reference;
-    return std::to_string(day.passages.size()) + " passages";
+    if (day.passages.empty()) return "(No passages)";
+
+    std::ostringstream summary;
+    for (size_t i = 0; i < day.passages.size(); ++i) {
+        if (i) summary << "\n";
+        summary << day.passages[i].reference;
+    }
+    return summary.str();
+}
+
+std::string decodeBasicHtmlEntities(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] != '&') {
+            out.push_back(text[i]);
+            continue;
+        }
+
+        size_t semi = text.find(';', i);
+        if (semi == std::string::npos) {
+            out.push_back(text[i]);
+            continue;
+        }
+
+        const std::string entity = text.substr(i, semi - i + 1);
+        if (entity == "&amp;") out.push_back('&');
+        else if (entity == "&lt;") out.push_back('<');
+        else if (entity == "&gt;") out.push_back('>');
+        else if (entity == "&quot;") out.push_back('"');
+        else if (entity == "&#39;") out.push_back('\'');
+        else if (entity == "&nbsp;") out.push_back(' ');
+        else {
+            out += entity;
+            i = semi;
+            continue;
+        }
+        i = semi;
+    }
+
+    return out;
+}
+
+std::string stripSimpleHtml(const std::string& html) {
+    std::string text;
+    text.reserve(html.size());
+    bool inTag = false;
+    for (char c : html) {
+        if (c == '<') {
+            inTag = true;
+            continue;
+        }
+        if (c == '>') {
+            inTag = false;
+            continue;
+        }
+        if (!inTag) text.push_back(c);
+    }
+    return trimCopy(decodeBasicHtmlEntities(text));
+}
+
+std::string swordReadingPlanCalendarSummary(VerdadApp* app,
+                                            const std::string& moduleName,
+                                            const std::string& dateIso) {
+    if (!app || moduleName.empty() || !reading::isIsoDateInRange(dateIso)) {
+        return "";
+    }
+
+    std::string entryHtml = app->swordManager().getDailyDevotionEntry(moduleName, dateIso);
+    std::string rewrittenBody = extractDailyEntryBodyHtml(
+        rewriteSwordReadingPlanLinks(entryHtml, nullptr));
+    std::vector<std::string> refs = extractSwordReadingPlanReferences(
+        app, rewrittenBody, moduleName, dateIso, "");
+    if (!refs.empty()) {
+        std::ostringstream summary;
+        for (size_t i = 0; i < refs.size(); ++i) {
+            if (i) summary << "\n";
+            summary << refs[i];
+        }
+        return summary.str();
+    }
+
+    std::vector<std::string> itemHtml = extractSwordReadingPlanItemHtml(rewrittenBody);
+    if (itemHtml.empty()) return "";
+
+    std::ostringstream summary;
+    bool first = true;
+    for (const auto& item : itemHtml) {
+        std::string text = stripSimpleHtml(item);
+        if (text.empty()) continue;
+        if (!first) summary << "\n";
+        summary << text;
+        first = false;
+    }
+    return summary.str();
 }
 
 std::vector<std::string> extractSwordReadingPlanReferences(
@@ -503,7 +608,12 @@ std::vector<std::string> extractSwordReadingPlanReferences(
     auto end = std::sregex_iterator();
     for (auto it = begin; it != end; ++it) {
         std::string url = (*it)[1].str();
-        std::string compactRef = trimCopy(SwordManager::verseReferenceFromLink(url));
+        std::string compactRef;
+        if (url.rfind("verdad-plan://open", 0) == 0) {
+            compactRef = firstReadingListItem(extractQueryValue(url, "ref"));
+        } else {
+            compactRef = trimCopy(SwordManager::verseReferenceFromLink(url));
+        }
         if (compactRef.empty()) {
             continue;
         }
@@ -1126,6 +1236,7 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     , dailyEditPlanButton_(nullptr)
     , dailyDeletePlanButton_(nullptr)
     , dailyCompleteButton_(nullptr)
+    , dailyCompleteThroughButton_(nullptr)
     , dailyRescheduleButton_(nullptr)
     , dailyCalendarGroup_(nullptr)
     , dailyPrevMonthButton_(nullptr)
@@ -1296,7 +1407,13 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
                                          choiceH,
                                          "Mark Complete");
     dailyCompleteButton_->callback(onDailyToggleComplete, this);
-    dailyRescheduleButton_ = new Fl_Button(tileX + 124,
+    dailyCompleteThroughButton_ = new Fl_Button(tileX + 124,
+                                                panelY + choiceH + 6,
+                                                118,
+                                                choiceH,
+                                                "Mark Previous");
+    dailyCompleteThroughButton_->callback(onDailyToggleCompleteThrough, this);
+    dailyRescheduleButton_ = new Fl_Button(tileX + 246,
                                            panelY + choiceH + 6,
                                            96,
                                            choiceH,
@@ -1534,6 +1651,7 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
         !dailyTodayButton_ || !dailyNextDayButton_ ||
         !dailyNewPlanButton_ || !dailyEditPlanButton_ || !dailyDeletePlanButton_ ||
         !dailyCompleteButton_ ||
+        !dailyCompleteThroughButton_ ||
         !dailyRescheduleButton_ || !dailyCalendarGroup_ || !dailyPrevMonthButton_ ||
         !dailyNextMonthButton_ || !dailyMonthLabel_ || !dailyCalendarWidget_ ||
         !dailyHtml_ ||
@@ -1668,7 +1786,13 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
                                    rowH);
 
     dailyCompleteButton_->resize(contentX, dailyRow2Y, 118, rowH);
-    dailyRescheduleButton_->resize(dailyCompleteButton_->x() + dailyCompleteButton_->w() + 4,
+    dailyCompleteThroughButton_->resize(dailyCompleteButton_->x() + dailyCompleteButton_->w() + 4,
+                                        dailyRow2Y,
+                                        118,
+                                        rowH);
+    dailyRescheduleButton_->resize(
+                                   dailyCompleteThroughButton_->x() +
+                                       dailyCompleteThroughButton_->w() + 4,
                                    dailyRow2Y,
                                    98,
                                    rowH);
@@ -1765,6 +1889,7 @@ void RightPane::resize(int X, int Y, int W, int H) {
         !dailyTodayButton_ || !dailyNextDayButton_ ||
         !dailyNewPlanButton_ || !dailyEditPlanButton_ || !dailyDeletePlanButton_ ||
         !dailyCompleteButton_ ||
+        !dailyCompleteThroughButton_ ||
         !dailyRescheduleButton_ || !dailyCalendarGroup_ || !dailyPrevMonthButton_ ||
         !dailyNextMonthButton_ || !dailyMonthLabel_ || !dailyCalendarWidget_ ||
         !dailyHtml_ ||
@@ -2544,6 +2669,7 @@ void RightPane::setDailyReadingPlanModule(const std::string& moduleName,
     dailyWorkspaceState_.readingPlanSource = DailyReadingPlanSource::SwordModule;
     dailyWorkspaceState_.readingPlanId = 0;
     dailyWorkspaceState_.swordReadingPlanModule = moduleName;
+    dailyWorkspaceState_.readingPlanSelectedDateIso.clear();
     if (dailyReadingPlanChoice_) {
         int index = readingPlanChoiceIndexForSwordModule(dailyReadingPlanChoices_, moduleName);
         dailyReadingPlanChoice_->value(index);
@@ -2562,11 +2688,9 @@ DailyWorkspaceState RightPane::currentDailyWorkspaceState() const {
 
 void RightPane::setDailyWorkspaceState(const DailyWorkspaceState& state) {
     dailyWorkspaceState_ = state;
-    if (!reading::isIsoDateInRange(dailyWorkspaceState_.selectedDateIso)) {
-        dailyWorkspaceState_.selectedDateIso = reading::formatIsoDate(reading::today());
-    }
     populateDailyDevotionModules();
     populateReadingPlanChoices();
+    ensureDailyWorkspaceDates();
     refreshDailyWorkspace(true);
 }
 
@@ -2812,6 +2936,7 @@ void RightPane::redrawChrome() {
     if (dailyEditPlanButton_) dailyEditPlanButton_->redraw();
     if (dailyDeletePlanButton_) dailyDeletePlanButton_->redraw();
     if (dailyCompleteButton_) dailyCompleteButton_->redraw();
+    if (dailyCompleteThroughButton_) dailyCompleteThroughButton_->redraw();
     if (dailyRescheduleButton_) dailyRescheduleButton_->redraw();
     if (dailyCalendarGroup_) dailyCalendarGroup_->redraw();
     if (dailyMonthLabel_) dailyMonthLabel_->redraw();
@@ -3222,6 +3347,10 @@ void RightPane::populateDailyDevotionModules() {
 void RightPane::populateReadingPlanChoices() {
     if (!dailyReadingPlanChoice_ || !app_) return;
 
+    const DailyReadingPlanSource previousSource = dailyWorkspaceState_.readingPlanSource;
+    const int previousPlanId = dailyWorkspaceState_.readingPlanId;
+    const std::string previousSwordModule = dailyWorkspaceState_.swordReadingPlanModule;
+
     auto plans = app_->readingPlanManager().listPlans();
     auto swordPlans = app_->swordManager().getDailyReadingPlanModules();
     dailyReadingPlanChoice_->clear();
@@ -3280,6 +3409,236 @@ void RightPane::populateReadingPlanChoices() {
         dailyWorkspaceState_.swordReadingPlanModule.clear();
         dailyReadingPlanChoice_->value(-1);
     }
+
+    if (dailyWorkspaceState_.readingPlanSource != previousSource ||
+        dailyWorkspaceState_.readingPlanId != previousPlanId ||
+        dailyWorkspaceState_.swordReadingPlanModule != previousSwordModule) {
+        dailyWorkspaceState_.readingPlanSelectedDateIso.clear();
+    }
+}
+
+void RightPane::ensureDailyWorkspaceDates() {
+    if (!reading::isIsoDateInRange(dailyWorkspaceState_.selectedDateIso)) {
+        dailyWorkspaceState_.selectedDateIso = reading::formatIsoDate(reading::today());
+    }
+    if (!reading::isIsoDateInRange(dailyWorkspaceState_.readingPlanSelectedDateIso)) {
+        dailyWorkspaceState_.readingPlanSelectedDateIso = defaultReadingPlanDateIso();
+    }
+}
+
+std::string RightPane::currentDailyDateIso() const {
+    if (dailyWorkspaceState_.mode == DailyWorkspaceMode::ReadingPlans) {
+        if (reading::isIsoDateInRange(dailyWorkspaceState_.readingPlanSelectedDateIso)) {
+            return dailyWorkspaceState_.readingPlanSelectedDateIso;
+        }
+    } else if (reading::isIsoDateInRange(dailyWorkspaceState_.selectedDateIso)) {
+        return dailyWorkspaceState_.selectedDateIso;
+    }
+    return reading::formatIsoDate(reading::today());
+}
+
+void RightPane::setCurrentDailyDateIso(const std::string& dateIso) {
+    if (!reading::isIsoDateInRange(dateIso)) return;
+    if (dailyWorkspaceState_.mode == DailyWorkspaceMode::ReadingPlans) {
+        dailyWorkspaceState_.readingPlanSelectedDateIso = dateIso;
+    } else {
+        dailyWorkspaceState_.selectedDateIso = dateIso;
+    }
+}
+
+std::vector<std::string> RightPane::selectedDailyCalendarDateIsos() const {
+    if (!dailyCalendarWidget_) {
+        return {currentDailyDateIso()};
+    }
+
+    std::vector<std::string> dateIsos = dailyCalendarWidget_->selectedDateIsos();
+    if (dateIsos.empty()) {
+        dateIsos.push_back(currentDailyDateIso());
+    }
+    return dateIsos;
+}
+
+std::vector<std::string> RightPane::actionableSelectedReadingPlanDateIsos(
+    bool* allCompleted) const {
+    std::vector<std::string> actionable;
+    if (allCompleted) *allCompleted = false;
+    if (!app_) return actionable;
+
+    const std::vector<std::string> selectedDateIsos = selectedDailyCalendarDateIsos();
+    bool anyCompletedState = false;
+    bool everyCompleted = true;
+
+    if (dailyWorkspaceState_.readingPlanSource == DailyReadingPlanSource::SwordModule) {
+        for (const auto& dateIso : selectedDateIsos) {
+            if (!swordReadingPlanHasContentForDate(dailyWorkspaceState_.swordReadingPlanModule,
+                                                   dateIso)) {
+                continue;
+            }
+            actionable.push_back(dateIso);
+            const bool completed = app_->readingPlanManager().swordDayCompleted(
+                dailyWorkspaceState_.swordReadingPlanModule, dateIso);
+            anyCompletedState = true;
+            everyCompleted = everyCompleted && completed;
+        }
+    } else if (dailyWorkspaceState_.readingPlanId > 0) {
+        ReadingPlan plan;
+        if (!app_->readingPlanManager().getPlan(dailyWorkspaceState_.readingPlanId, plan)) {
+            return actionable;
+        }
+
+        for (const auto& dateIso : selectedDateIsos) {
+            const ReadingPlanDay* day = readingPlanDayForDate(plan, dateIso);
+            if (!day) continue;
+            actionable.push_back(dateIso);
+            anyCompletedState = true;
+            everyCompleted = everyCompleted && day->completed;
+        }
+    }
+
+    if (allCompleted) {
+        *allCompleted = anyCompletedState && everyCompleted;
+    }
+    return actionable;
+}
+
+std::vector<std::string> RightPane::actionableReadingPlanDatesThroughCurrent(
+    bool* allCompleted) const {
+    std::vector<std::string> actionable;
+    if (allCompleted) *allCompleted = false;
+    if (!app_) return actionable;
+
+    const std::string currentDateIso = dailyWorkspaceState_.readingPlanSelectedDateIso;
+    if (!reading::isIsoDateInRange(currentDateIso)) return actionable;
+
+    bool anyCompletedState = false;
+    bool everyCompleted = true;
+
+    if (dailyWorkspaceState_.readingPlanSource == DailyReadingPlanSource::SwordModule) {
+        const std::string& moduleName = dailyWorkspaceState_.swordReadingPlanModule;
+        if (moduleName.empty()) return actionable;
+
+        const int year = reading::today().year;
+        std::set<std::string> availableDates;
+        for (int month = 1; month <= 12; ++month) {
+            auto summaries = app_->swordManager().getDailyReadingPlanMonthSummaries(
+                moduleName, year, month);
+            for (const auto& entry : summaries) {
+                if (!reading::isIsoDateInRange(entry.first) || entry.first > currentDateIso) {
+                    continue;
+                }
+                availableDates.insert(entry.first);
+            }
+        }
+
+        for (const auto& dateIso : availableDates) {
+            if (!swordReadingPlanHasContentForDate(moduleName, dateIso)) continue;
+            actionable.push_back(dateIso);
+            const bool completed = app_->readingPlanManager().swordDayCompleted(
+                moduleName, dateIso);
+            anyCompletedState = true;
+            everyCompleted = everyCompleted && completed;
+        }
+    } else if (dailyWorkspaceState_.readingPlanId > 0) {
+        ReadingPlan plan;
+        if (!app_->readingPlanManager().getPlan(dailyWorkspaceState_.readingPlanId, plan)) {
+            return actionable;
+        }
+
+        for (const auto& day : plan.days) {
+            if (day.dateIso > currentDateIso) break;
+            actionable.push_back(day.dateIso);
+            anyCompletedState = true;
+            everyCompleted = everyCompleted && day.completed;
+        }
+    }
+
+    if (allCompleted) {
+        *allCompleted = anyCompletedState && everyCompleted;
+    }
+    return actionable;
+}
+
+std::string RightPane::defaultReadingPlanDateIso() const {
+    const std::string todayIso = reading::formatIsoDate(reading::today());
+    if (!app_) return todayIso;
+
+    if (dailyWorkspaceState_.readingPlanSource == DailyReadingPlanSource::SwordModule) {
+        return defaultSwordReadingPlanDateIso(dailyWorkspaceState_.swordReadingPlanModule);
+    }
+    return defaultEditableReadingPlanDateIso(dailyWorkspaceState_.readingPlanId);
+}
+
+std::string RightPane::defaultEditableReadingPlanDateIso(int planId) const {
+    const std::string todayIso = reading::formatIsoDate(reading::today());
+    if (!app_ || planId <= 0) return todayIso;
+
+    ReadingPlan plan;
+    if (!app_->readingPlanManager().getPlan(planId, plan) || plan.days.empty()) {
+        return todayIso;
+    }
+
+    const bool anyCompleted = std::any_of(plan.days.begin(),
+                                          plan.days.end(),
+                                          [](const ReadingPlanDay& day) {
+                                              return day.completed;
+                                          });
+    if (!anyCompleted) return todayIso;
+
+    for (const auto& day : plan.days) {
+        if (!day.completed) {
+            return day.dateIso;
+        }
+    }
+    return todayIso;
+}
+
+std::string RightPane::defaultSwordReadingPlanDateIso(const std::string& moduleName) const {
+    const std::string todayIso = reading::formatIsoDate(reading::today());
+    if (!app_ || moduleName.empty()) return todayIso;
+
+    const int year = reading::today().year;
+    std::set<std::string> availableDates;
+    for (int month = 1; month <= 12; ++month) {
+        auto summaries = app_->swordManager().getDailyReadingPlanMonthSummaries(
+            moduleName, year, month);
+        for (const auto& entry : summaries) {
+            if (reading::isIsoDateInRange(entry.first)) {
+                availableDates.insert(entry.first);
+            }
+        }
+    }
+
+    if (availableDates.empty()) return todayIso;
+
+    const auto completedDates = app_->readingPlanManager().swordCompletedDates(moduleName);
+    bool anyCompletedInRange = false;
+    for (const auto& dateIso : availableDates) {
+        if (completedDates.find(dateIso) != completedDates.end()) {
+            anyCompletedInRange = true;
+            break;
+        }
+    }
+    if (!anyCompletedInRange) return todayIso;
+
+    for (const auto& dateIso : availableDates) {
+        if (completedDates.find(dateIso) == completedDates.end()) {
+            return dateIso;
+        }
+    }
+    return todayIso;
+}
+
+bool RightPane::swordReadingPlanHasContentForDate(const std::string& moduleName,
+                                                  const std::string& dateIso) const {
+    if (!app_ || moduleName.empty() || !reading::isIsoDateInRange(dateIso)) {
+        return false;
+    }
+
+    std::string entryHtml = app_->swordManager().getDailyDevotionEntry(moduleName, dateIso);
+    std::string rewrittenBody = extractDailyEntryBodyHtml(
+        rewriteSwordReadingPlanLinks(entryHtml, nullptr));
+    std::vector<std::string> itemHtml = extractSwordReadingPlanItemHtml(rewrittenBody);
+    return !itemHtml.empty() || !trimCopy(rewrittenBody).empty();
 }
 
 void RightPane::updateDailyCalendarHeader() {
@@ -3319,8 +3678,19 @@ void RightPane::updateDailyCalendarMeta() {
                 dailyWorkspaceState_.swordReadingPlanModule, month.year, month.month);
             for (auto& entry : summaries) {
                 CalendarDayMeta dayMeta;
-                dayMeta.summary = std::move(entry.second);
+                dayMeta.summary = swordReadingPlanCalendarSummary(
+                    app_, dailyWorkspaceState_.swordReadingPlanModule, entry.first);
+                if (dayMeta.summary.empty()) {
+                    dayMeta.summary = std::move(entry.second);
+                }
                 dayMeta.hasContent = true;
+                dayMeta.completed = app_->readingPlanManager().swordDayCompleted(
+                    dailyWorkspaceState_.swordReadingPlanModule, entry.first);
+                reading::Date date{};
+                if (reading::parseIsoDate(entry.first, date)) {
+                    dayMeta.overdue = !dayMeta.completed &&
+                                      reading::compareDates(date, today) < 0;
+                }
                 meta.emplace(entry.first, std::move(dayMeta));
             }
         }
@@ -3351,13 +3721,18 @@ void RightPane::updateDailyWorkspaceControls() {
     if (!dailyModeButton_ ||
         !dailyDevotionalChoice_ || !dailyReadingPlanChoice_ ||
         !dailyDateButton_ || !dailyCalendarGroup_ ||
-        !dailyCompleteButton_ || !dailyRescheduleButton_ ||
+        !dailyCompleteButton_ || !dailyCompleteThroughButton_ || !dailyRescheduleButton_ ||
         !dailyNewPlanButton_ || !dailyEditPlanButton_ || !dailyDeletePlanButton_) {
         return;
     }
 
     const bool readingPlansMode =
         dailyWorkspaceState_.mode == DailyWorkspaceMode::ReadingPlans;
+    const std::string activeDateIso = currentDailyDateIso();
+    bool selectedDaysCompleted = false;
+    const std::vector<std::string> actionableSelectedDates =
+        readingPlansMode ? actionableSelectedReadingPlanDateIsos(&selectedDaysCompleted)
+                         : std::vector<std::string>{};
     dailyModeButton_->copy_label(
         readingPlansMode ? "Back to Daily" : "Reading Plans...");
     if (dailyDevotionalChoice_) {
@@ -3385,6 +3760,7 @@ void RightPane::updateDailyWorkspaceControls() {
         dailyEditPlanButton_->show();
         dailyDeletePlanButton_->show();
         dailyCompleteButton_->show();
+        dailyCompleteThroughButton_->show();
         dailyRescheduleButton_->show();
     } else {
         dailyDevotionalChoice_->show();
@@ -3393,12 +3769,13 @@ void RightPane::updateDailyWorkspaceControls() {
         dailyEditPlanButton_->hide();
         dailyDeletePlanButton_->hide();
         dailyCompleteButton_->hide();
+        dailyCompleteThroughButton_->hide();
         dailyRescheduleButton_->hide();
     }
 
-    if (reading::isIsoDateInRange(dailyWorkspaceState_.selectedDateIso)) {
+    if (reading::isIsoDateInRange(activeDateIso)) {
         reading::Date date{};
-        reading::parseIsoDate(dailyWorkspaceState_.selectedDateIso, date);
+        reading::parseIsoDate(activeDateIso, date);
         dailyDateButton_->copy_label(reading::formatLongDate(date).c_str());
     } else {
         dailyDateButton_->copy_label("Select Date");
@@ -3414,18 +3791,25 @@ void RightPane::updateDailyWorkspaceControls() {
     bool readOnlyPlan = false;
     bool hasDay = false;
     bool dayCompleted = false;
+    bool throughCompleted = false;
+    const std::vector<std::string> actionableThroughDates =
+        readingPlansMode ? actionableReadingPlanDatesThroughCurrent(&throughCompleted)
+                         : std::vector<std::string>{};
     if (readingPlansMode &&
         dailyWorkspaceState_.readingPlanSource == DailyReadingPlanSource::SwordModule &&
         !dailyWorkspaceState_.swordReadingPlanModule.empty()) {
         hasPlan = true;
         readOnlyPlan = true;
-        hasDay = true;
+        hasDay = swordReadingPlanHasContentForDate(
+            dailyWorkspaceState_.swordReadingPlanModule, activeDateIso);
+        dayCompleted = app_->readingPlanManager().swordDayCompleted(
+            dailyWorkspaceState_.swordReadingPlanModule, activeDateIso);
     } else if (readingPlansMode && dailyWorkspaceState_.readingPlanId > 0 && app_) {
         ReadingPlan plan;
         if (app_->readingPlanManager().getPlan(dailyWorkspaceState_.readingPlanId, plan)) {
             hasPlan = true;
             if (const ReadingPlanDay* day =
-                    readingPlanDayForDate(plan, dailyWorkspaceState_.selectedDateIso)) {
+                    readingPlanDayForDate(plan, activeDateIso)) {
                 hasDay = true;
                 dayCompleted = day->completed;
             }
@@ -3441,9 +3825,22 @@ void RightPane::updateDailyWorkspaceControls() {
         else dailyDeletePlanButton_->deactivate();
     }
     if (dailyCompleteButton_) {
-        dailyCompleteButton_->copy_label(dayCompleted ? "Mark Incomplete" : "Mark Complete");
-        if (readingPlansMode && hasDay && !readOnlyPlan) dailyCompleteButton_->activate();
+        const bool useSelectionState = !actionableSelectedDates.empty();
+        dailyCompleteButton_->copy_label(
+            (useSelectionState ? selectedDaysCompleted : dayCompleted)
+                ? "Mark Incomplete"
+                : "Mark Complete");
+        if (readingPlansMode && (useSelectionState || hasDay)) dailyCompleteButton_->activate();
         else dailyCompleteButton_->deactivate();
+    }
+    if (dailyCompleteThroughButton_) {
+        dailyCompleteThroughButton_->copy_label(
+            throughCompleted ? "Unmark Previous" : "Mark Previous");
+        if (readingPlansMode && !actionableThroughDates.empty()) {
+            dailyCompleteThroughButton_->activate();
+        } else {
+            dailyCompleteThroughButton_->deactivate();
+        }
     }
     if (dailyRescheduleButton_) {
         if (readingPlansMode && hasDay && !readOnlyPlan) dailyRescheduleButton_->activate();
@@ -3554,7 +3951,7 @@ void RightPane::showDailyDevotionEntry(const std::string& moduleName,
     std::string entryHtml = app_->swordManager().getDailyDevotionEntry(moduleName, dateIso);
     dailyHtml_->setHtml(buildDailyDevotionPageHtml(
         dateIso,
-        selectedDailyReadingPlanSummaryHtml(dateIso, true),
+        "",
         htmlEscape(dailyDevotionalHeadingLabel(moduleName)),
         entryHtml));
 }
@@ -3602,14 +3999,41 @@ void RightPane::showSwordReadingPlanDay(const std::string& moduleName,
 void RightPane::refreshDailyWorkspace(bool /*forceCalendarReload*/) {
     if (!app_ || !dailyHtml_ || !dailyCalendarWidget_) return;
 
-    if (!reading::isIsoDateInRange(dailyWorkspaceState_.selectedDateIso)) {
-        dailyWorkspaceState_.selectedDateIso = reading::formatIsoDate(reading::today());
+    if (dailyWorkspaceState_.mode == DailyWorkspaceMode::ReadingPlans) {
+        if (dailyWorkspaceState_.readingPlanSource == DailyReadingPlanSource::SwordModule) {
+            if (dailyWorkspaceState_.swordReadingPlanModule.empty() &&
+                !dailyReadingPlanChoices_.empty()) {
+                for (const auto& item : dailyReadingPlanChoices_) {
+                    if (item.kind == DailyReadingPlanChoiceItem::Kind::SwordModule) {
+                        dailyWorkspaceState_.swordReadingPlanModule = item.moduleName;
+                        break;
+                    }
+                }
+            }
+        } else if (dailyWorkspaceState_.readingPlanId <= 0 && !dailyReadingPlanChoices_.empty()) {
+            for (const auto& item : dailyReadingPlanChoices_) {
+                if (item.kind == DailyReadingPlanChoiceItem::Kind::EditablePlan) {
+                    dailyWorkspaceState_.readingPlanId = item.planId;
+                    break;
+                }
+            }
+        }
     }
 
+    ensureDailyWorkspaceDates();
+
     reading::Date selectedDate{};
-    reading::parseIsoDate(dailyWorkspaceState_.selectedDateIso, selectedDate);
-    if (!reading::sameDate(dailyCalendarWidget_->selectedDate(), selectedDate)) {
-        dailyCalendarWidget_->setSelectedDate(selectedDate);
+    reading::parseIsoDate(currentDailyDateIso(), selectedDate);
+    if (dailyWorkspaceState_.mode == DailyWorkspaceMode::ReadingPlans) {
+        if (!dailyCalendarWidget_->hasSelectedDateIso(currentDailyDateIso())) {
+            dailyCalendarWidget_->setSelectedDate(selectedDate);
+            dailyCalendarWidget_->setSelectedDates({currentDailyDateIso()});
+        }
+    } else {
+        if (!reading::sameDate(dailyCalendarWidget_->selectedDate(), selectedDate)) {
+            dailyCalendarWidget_->setSelectedDate(selectedDate);
+        }
+        dailyCalendarWidget_->setSelectedDates({dailyWorkspaceState_.selectedDateIso});
     }
     const bool calendarShouldTrackSelection =
         dailyWorkspaceState_.mode == DailyWorkspaceMode::ReadingPlans ||
@@ -3632,28 +4056,11 @@ void RightPane::refreshDailyWorkspace(bool /*forceCalendarReload*/) {
                                dailyWorkspaceState_.selectedDateIso);
     } else {
         if (dailyWorkspaceState_.readingPlanSource == DailyReadingPlanSource::SwordModule) {
-            if (dailyWorkspaceState_.swordReadingPlanModule.empty() &&
-                !dailyReadingPlanChoices_.empty()) {
-                for (const auto& item : dailyReadingPlanChoices_) {
-                    if (item.kind == DailyReadingPlanChoiceItem::Kind::SwordModule) {
-                        dailyWorkspaceState_.swordReadingPlanModule = item.moduleName;
-                        break;
-                    }
-                }
-            }
             showSwordReadingPlanDay(dailyWorkspaceState_.swordReadingPlanModule,
-                                    dailyWorkspaceState_.selectedDateIso);
+                                    dailyWorkspaceState_.readingPlanSelectedDateIso);
         } else {
-            if (dailyWorkspaceState_.readingPlanId <= 0 && !dailyReadingPlanChoices_.empty()) {
-                for (const auto& item : dailyReadingPlanChoices_) {
-                    if (item.kind == DailyReadingPlanChoiceItem::Kind::EditablePlan) {
-                        dailyWorkspaceState_.readingPlanId = item.planId;
-                        break;
-                    }
-                }
-            }
             showReadingPlanDay(dailyWorkspaceState_.readingPlanId,
-                               dailyWorkspaceState_.selectedDateIso);
+                               dailyWorkspaceState_.readingPlanSelectedDateIso);
         }
     }
 
@@ -3685,7 +4092,7 @@ void RightPane::onDailyContentLink(const std::string& url) {
             : (dailyWorkspaceState_.readingPlanSource == DailyReadingPlanSource::SwordModule
                    ? dailyWorkspaceState_.swordReadingPlanModule
                    : std::string());
-    std::string sourceKey = dailyWorkspaceState_.selectedDateIso;
+    std::string sourceKey = currentDailyDateIso();
     std::string previewModule;
     if (BiblePane* biblePane = app_->mainWindow()->biblePane()) {
         previewModule = biblePane->currentModule();
@@ -4512,6 +4919,7 @@ void RightPane::onDailyModeChange(Fl_Widget* /*w*/, void* data) {
         (self->dailyWorkspaceState_.mode == DailyWorkspaceMode::ReadingPlans)
             ? DailyWorkspaceMode::Devotionals
             : DailyWorkspaceMode::ReadingPlans;
+    self->ensureDailyWorkspaceDates();
     self->refreshDailyWorkspace(true);
 }
 
@@ -4545,6 +4953,7 @@ void RightPane::onDailyReadingPlanChange(Fl_Widget* /*w*/, void* data) {
         self->dailyWorkspaceState_.readingPlanId = 0;
         self->dailyWorkspaceState_.swordReadingPlanModule.clear();
     }
+    self->dailyWorkspaceState_.readingPlanSelectedDateIso.clear();
     self->refreshDailyWorkspace(true);
 }
 
@@ -4552,11 +4961,10 @@ void RightPane::onDailyPrevDay(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self) return;
     reading::Date date{};
-    if (!reading::parseIsoDate(self->dailyWorkspaceState_.selectedDateIso, date)) {
+    if (!reading::parseIsoDate(self->currentDailyDateIso(), date)) {
         date = reading::today();
     }
-    self->dailyWorkspaceState_.selectedDateIso =
-        reading::formatIsoDate(reading::addDays(date, -1));
+    self->setCurrentDailyDateIso(reading::formatIsoDate(reading::addDays(date, -1)));
     self->refreshDailyWorkspace(true);
 }
 
@@ -4565,7 +4973,7 @@ void RightPane::onDailyDateButton(Fl_Widget* /*w*/, void* data) {
     if (!self) return;
     if (self->dailyWorkspaceState_.mode == DailyWorkspaceMode::ReadingPlans) {
         reading::Date date{};
-        if (reading::parseIsoDate(self->dailyWorkspaceState_.selectedDateIso, date) &&
+        if (reading::parseIsoDate(self->currentDailyDateIso(), date) &&
             self->dailyCalendarWidget_) {
             self->dailyCalendarWidget_->setDisplayedMonth(date);
             self->updateDailyCalendarMeta();
@@ -4581,8 +4989,7 @@ void RightPane::onDailyDateButton(Fl_Widget* /*w*/, void* data) {
 void RightPane::onDailyToday(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self) return;
-    self->dailyWorkspaceState_.selectedDateIso =
-        reading::formatIsoDate(reading::today());
+    self->setCurrentDailyDateIso(reading::formatIsoDate(reading::today()));
     self->refreshDailyWorkspace(true);
 }
 
@@ -4590,11 +4997,10 @@ void RightPane::onDailyNextDay(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self) return;
     reading::Date date{};
-    if (!reading::parseIsoDate(self->dailyWorkspaceState_.selectedDateIso, date)) {
+    if (!reading::parseIsoDate(self->currentDailyDateIso(), date)) {
         date = reading::today();
     }
-    self->dailyWorkspaceState_.selectedDateIso =
-        reading::formatIsoDate(reading::addDays(date, 1));
+    self->setCurrentDailyDateIso(reading::formatIsoDate(reading::addDays(date, 1)));
     self->refreshDailyWorkspace(true);
 }
 
@@ -4616,7 +5022,7 @@ void RightPane::onDailyNextMonth(Fl_Widget* /*w*/, void* data) {
 
 void RightPane::onDailyCalendarDateSelected(const reading::Date& date, RightPane* self) {
     if (!self) return;
-    self->dailyWorkspaceState_.selectedDateIso = reading::formatIsoDate(date);
+    self->setCurrentDailyDateIso(reading::formatIsoDate(date));
     self->refreshDailyWorkspace(true);
 }
 
@@ -4638,6 +5044,7 @@ void RightPane::onDailyNewPlan(Fl_Widget* /*w*/, void* data) {
     self->dailyWorkspaceState_.readingPlanSource = DailyReadingPlanSource::Editable;
     self->dailyWorkspaceState_.readingPlanId = createdId;
     self->dailyWorkspaceState_.swordReadingPlanModule.clear();
+    self->dailyWorkspaceState_.readingPlanSelectedDateIso.clear();
     self->populateReadingPlanChoices();
     self->refreshDailyWorkspace(true);
 }
@@ -4694,32 +5101,105 @@ void RightPane::onDailyDeletePlan(Fl_Widget* /*w*/, void* data) {
     }
 
     self->dailyWorkspaceState_.readingPlanId = 0;
+    self->dailyWorkspaceState_.readingPlanSelectedDateIso.clear();
     self->populateReadingPlanChoices();
     self->refreshDailyWorkspace(true);
 }
 
 void RightPane::onDailyToggleComplete(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
-    if (!self || !self->app_ ||
-        self->dailyWorkspaceState_.readingPlanSource != DailyReadingPlanSource::Editable ||
-        self->dailyWorkspaceState_.readingPlanId <= 0) {
+    if (!self || !self->app_) {
         return;
     }
 
-    ReadingPlan plan;
-    if (!self->app_->readingPlanManager().getPlan(self->dailyWorkspaceState_.readingPlanId,
-                                                  plan)) {
+    bool allCompleted = false;
+    const std::vector<std::string> selectedDates =
+        self->actionableSelectedReadingPlanDateIsos(&allCompleted);
+    if (selectedDates.empty()) {
         return;
     }
 
-    const ReadingPlanDay* day =
-        readingPlanDayForDate(plan, self->dailyWorkspaceState_.selectedDateIso);
-    if (!day) return;
+    const bool targetCompleted = !allCompleted;
+    bool ok = false;
+    if (self->dailyWorkspaceState_.readingPlanSource == DailyReadingPlanSource::SwordModule) {
+        if (self->dailyWorkspaceState_.swordReadingPlanModule.empty()) {
+            return;
+        }
+        ok = true;
+        for (const auto& dateIso : selectedDates) {
+            if (!self->app_->readingPlanManager().setSwordDayCompleted(
+                    self->dailyWorkspaceState_.swordReadingPlanModule,
+                    dateIso,
+                    targetCompleted)) {
+                ok = false;
+                break;
+            }
+        }
+    } else if (self->dailyWorkspaceState_.readingPlanId > 0) {
+        ok = true;
+        for (const auto& dateIso : selectedDates) {
+            if (!self->app_->readingPlanManager().setDayCompleted(
+                    self->dailyWorkspaceState_.readingPlanId,
+                    dateIso,
+                    targetCompleted)) {
+                ok = false;
+                break;
+            }
+        }
+    }
 
-    if (!self->app_->readingPlanManager().setDayCompleted(
-            self->dailyWorkspaceState_.readingPlanId,
-            self->dailyWorkspaceState_.selectedDateIso,
-            !day->completed)) {
+    if (!ok) {
+        fl_alert("Failed to update the reading-day status.");
+        return;
+    }
+
+    self->populateReadingPlanChoices();
+    self->refreshDailyWorkspace(true);
+}
+
+void RightPane::onDailyToggleCompleteThrough(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self || !self->app_) {
+        return;
+    }
+
+    bool allCompleted = false;
+    const std::vector<std::string> targetDates =
+        self->actionableReadingPlanDatesThroughCurrent(&allCompleted);
+    if (targetDates.empty()) {
+        return;
+    }
+
+    const bool targetCompleted = !allCompleted;
+    bool ok = false;
+    if (self->dailyWorkspaceState_.readingPlanSource == DailyReadingPlanSource::SwordModule) {
+        if (self->dailyWorkspaceState_.swordReadingPlanModule.empty()) {
+            return;
+        }
+        ok = true;
+        for (const auto& dateIso : targetDates) {
+            if (!self->app_->readingPlanManager().setSwordDayCompleted(
+                    self->dailyWorkspaceState_.swordReadingPlanModule,
+                    dateIso,
+                    targetCompleted)) {
+                ok = false;
+                break;
+            }
+        }
+    } else if (self->dailyWorkspaceState_.readingPlanId > 0) {
+        ok = true;
+        for (const auto& dateIso : targetDates) {
+            if (!self->app_->readingPlanManager().setDayCompleted(
+                    self->dailyWorkspaceState_.readingPlanId,
+                    dateIso,
+                    targetCompleted)) {
+                ok = false;
+                break;
+            }
+        }
+    }
+
+    if (!ok) {
         fl_alert("Failed to update the reading-day status.");
         return;
     }
@@ -4741,25 +5221,26 @@ void RightPane::onDailyReschedule(Fl_Widget* /*w*/, void* data) {
                                                   plan)) {
         return;
     }
-    if (!readingPlanDayForDate(plan, self->dailyWorkspaceState_.selectedDateIso)) {
+    if (!readingPlanDayForDate(plan, self->dailyWorkspaceState_.readingPlanSelectedDateIso)) {
         return;
     }
 
     ReadingPlanRescheduleRequest request;
-    if (!promptReadingPlanReschedule(self->dailyWorkspaceState_.selectedDateIso, request)) {
+    if (!promptReadingPlanReschedule(self->dailyWorkspaceState_.readingPlanSelectedDateIso,
+                                     request)) {
         return;
     }
 
     if (!self->app_->readingPlanManager().rescheduleDay(
             self->dailyWorkspaceState_.readingPlanId,
-            self->dailyWorkspaceState_.selectedDateIso,
+            self->dailyWorkspaceState_.readingPlanSelectedDateIso,
             request.targetDateIso,
             request.shiftLaterIncompleteDays)) {
         fl_alert("Failed to reschedule the reading day.");
         return;
     }
 
-    self->dailyWorkspaceState_.selectedDateIso = request.targetDateIso;
+    self->dailyWorkspaceState_.readingPlanSelectedDateIso = request.targetDateIso;
     self->populateReadingPlanChoices();
     self->refreshDailyWorkspace(true);
 }

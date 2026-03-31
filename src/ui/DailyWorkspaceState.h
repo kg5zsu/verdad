@@ -23,6 +23,7 @@ struct DailyWorkspaceState {
     int readingPlanId = 0;
     std::string swordReadingPlanModule;
     std::string selectedDateIso;
+    std::string readingPlanSelectedDateIso;
     bool calendarVisible = false;
 };
 

@@ -2,6 +2,7 @@
 #define VERDAD_READING_PLAN_MANAGER_H
 
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 struct sqlite3;
@@ -51,6 +52,13 @@ public:
     bool deletePlan(int planId);
 
     bool setDayCompleted(int planId, const std::string& dateIso, bool completed);
+    bool setSwordDayCompleted(const std::string& moduleName,
+                              const std::string& dateIso,
+                              bool completed);
+    bool swordDayCompleted(const std::string& moduleName,
+                           const std::string& dateIso) const;
+    std::unordered_set<std::string> swordCompletedDates(
+        const std::string& moduleName) const;
     bool rescheduleDay(int planId,
                        const std::string& fromDateIso,
                        const std::string& toDateIso,
