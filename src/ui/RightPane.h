@@ -251,6 +251,7 @@ private:
     std::vector<std::string> dictionaryChoiceModules_;
     std::vector<std::string> dictionaryChoiceLabels_;
     std::shared_ptr<const std::vector<std::string>> dictionaryKeys_;
+    std::unordered_map<std::string, int> dictionaryKeyIndices_;
     std::string dictionaryKeysModule_;
     std::string currentDictionary_;
     std::string currentDictKey_;

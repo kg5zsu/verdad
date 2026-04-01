@@ -166,19 +166,35 @@ set(HEADERS
 # --- Executable ---
 add_executable(verdad ${SOURCES} ${HEADERS})
 
+add_executable(verdad-bench
+    src/bench_main.cpp
+    src/app/PlatformPaths.cpp
+    src/sword/SwordManager.cpp
+    src/sword/SwordPaths.cpp
+    src/ui/HtmlWidget.cpp
+)
+
 if(WIN32)
     set_target_properties(verdad PROPERTIES WIN32_EXECUTABLE TRUE)
     # Prevent windows.h from defining min/max macros that conflict with std::min/std::max
     target_compile_definitions(verdad PRIVATE NOMINMAX)
+    target_compile_definitions(verdad-bench PRIVATE NOMINMAX)
     # Static SWORD on Windows has unresolved refs to curl, zlib, and bzip2;
     # link them explicitly via the vcpkg-provided static packages.
     find_package(CURL REQUIRED)
     find_package(ZLIB REQUIRED)
     find_package(BZip2 REQUIRED)
     target_link_libraries(verdad PRIVATE CURL::libcurl ZLIB::ZLIB BZip2::BZip2)
+    target_link_libraries(verdad-bench PRIVATE CURL::libcurl ZLIB::ZLIB BZip2::BZip2)
 endif()
 
 target_include_directories(verdad PRIVATE
+    ${CMAKE_BINARY_DIR}/generated
+    ${CMAKE_SOURCE_DIR}/src
+    ${SWORD_INCLUDE_DIRS}
+)
+
+target_include_directories(verdad-bench PRIVATE
     ${CMAKE_BINARY_DIR}/generated
     ${CMAKE_SOURCE_DIR}/src
     ${SWORD_INCLUDE_DIRS}
@@ -193,6 +209,15 @@ target_link_libraries(verdad PRIVATE
     Threads::Threads
 )
 
+target_link_libraries(verdad-bench PRIVATE
+    fltk::images
+    ${SWORD_LIBRARIES}
+    litehtml
+    Threads::Threads
+)
+
+target_compile_definitions(verdad-bench PRIVATE VERDAD_NO_APP_FONT_LOOKUP)
+
 if(APPLE)
     target_link_libraries(verdad PRIVATE
         "-framework Cocoa"
@@ -201,8 +226,15 @@ if(APPLE)
         # SWORD static library has external references to these macOS system libraries.
         z bz2 curl
     )
+    target_link_libraries(verdad-bench PRIVATE
+        "-framework Cocoa"
+        "-framework Carbon"
+        "-framework ApplicationServices"
+        z bz2 curl
+    )
 elseif(WIN32)
     target_link_libraries(verdad PRIVATE shell32)
+    target_link_libraries(verdad-bench PRIVATE shell32)
 endif()
 
 configure_file(

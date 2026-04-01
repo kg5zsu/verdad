@@ -6,6 +6,7 @@
 #include <functional>
 #include <limits>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class Fl_Double_Window;
@@ -29,6 +30,7 @@ public:
     void setSelectedValue(const std::string& value);
     void setDisplayedValue(const std::string& value);
     std::string selectedValue() const;
+    std::string matchedValue(const std::string& value) const;
 
     void setNoMatchesLabel(const std::string& label);
     void setShowAllWhenFilterEmpty(bool showAll);
@@ -49,6 +51,9 @@ private:
     size_t maxVisibleItems_ = std::numeric_limits<size_t>::max();
     std::function<void()> ensureItemsCallback_;
     std::vector<std::string> popupItems_;
+    const std::vector<std::string>* indexedItems_ = nullptr;
+    std::vector<std::string> normalizedItems_;
+    std::unordered_map<std::string, size_t> exactItemIndex_;
     Fl_Double_Window* popupWindow_ = nullptr;
     Fl_Hold_Browser* popupBrowser_ = nullptr;
 
@@ -58,6 +63,8 @@ private:
     void clearMenu();
     void destroyPopup();
     void ensureItemsLoaded();
+    void ensureItemIndex();
+    void rebuildItemIndex();
     void ensurePopupCreated();
     void refreshPopupContents(const std::string& filter);
     void updatePopupGeometry();

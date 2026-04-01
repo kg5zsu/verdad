@@ -2395,6 +2395,12 @@ void RightPane::showDictionaryEntryInternal(const std::string& moduleName,
     if (moduleChanged) {
         setDictionaryModule(moduleName);
     }
+    if (dictionaryKeyInput_) {
+        std::string matched = dictionaryKeyInput_->matchedValue(currentDictKey_);
+        if (!matched.empty()) {
+            currentDictKey_ = matched;
+        }
+    }
 
     perf::StepTimer step;
     std::string resolvedKey;
@@ -2525,6 +2531,7 @@ void RightPane::setDictionaryModule(const std::string& moduleName,
         populateDictionaryKeyChoices();
     } else {
         dictionaryKeys_.reset();
+        dictionaryKeyIndices_.clear();
         dictionaryKeysModule_.clear();
         if (dictionaryKeyInput_) {
             dictionaryKeyInput_->setItems({});
@@ -3375,6 +3382,7 @@ void RightPane::populateDictionaryModules(bool eagerKeyLoad) {
             populateDictionaryKeyChoices();
         } else {
             dictionaryKeys_.reset();
+            dictionaryKeyIndices_.clear();
             dictionaryKeysModule_.clear();
             if (dictionaryKeyInput_) {
                 dictionaryKeyInput_->setItems({});
@@ -3383,6 +3391,7 @@ void RightPane::populateDictionaryModules(bool eagerKeyLoad) {
         }
     } else {
         dictionaryKeys_.reset();
+        dictionaryKeyIndices_.clear();
         dictionaryKeysModule_.clear();
         currentDictionary_.clear();
         currentDictKey_.clear();
@@ -3403,6 +3412,7 @@ void RightPane::populateDictionaryKeyChoices() {
 
     if (currentDictionary_.empty()) {
         dictionaryKeys_.reset();
+        dictionaryKeyIndices_.clear();
         dictionaryKeysModule_.clear();
         dictionaryKeyInput_->setItems({});
         dictionaryKeyInput_->setDisplayedValue(currentDictKey_);
@@ -3418,6 +3428,13 @@ void RightPane::ensureDictionaryKeysLoaded() {
     if (dictionaryKeysModule_ == currentDictionary_ && dictionaryKeys_) return;
 
     dictionaryKeys_ = app_->swordManager().getDictionaryKeys(currentDictionary_);
+    dictionaryKeyIndices_.clear();
+    if (dictionaryKeys_) {
+        dictionaryKeyIndices_.reserve(dictionaryKeys_->size());
+        for (size_t i = 0; i < dictionaryKeys_->size(); ++i) {
+            dictionaryKeyIndices_.emplace((*dictionaryKeys_)[i], static_cast<int>(i));
+        }
+    }
     dictionaryKeysModule_ = currentDictionary_;
     dictionaryKeyInput_->setItemsView(dictionaryKeys_.get());
     updateDictionaryNavigationChrome();
@@ -3448,19 +3465,19 @@ int RightPane::currentDictionaryKeyIndex() const {
         return -1;
     }
 
-    auto it = std::find(dictionaryKeys_->begin(), dictionaryKeys_->end(),
-                        currentDictKey_);
-    if (it == dictionaryKeys_->end()) {
-        std::string selected = dictionaryKeyInput_
-            ? dictionaryKeyInput_->selectedValue()
-            : "";
-        if (!selected.empty()) {
-            it = std::find(dictionaryKeys_->begin(), dictionaryKeys_->end(),
-                           selected);
-        }
+    auto it = dictionaryKeyIndices_.find(currentDictKey_);
+    if (it != dictionaryKeyIndices_.end()) {
+        return it->second;
     }
-    if (it == dictionaryKeys_->end()) return -1;
-    return static_cast<int>(it - dictionaryKeys_->begin());
+
+    std::string selected = dictionaryKeyInput_
+        ? dictionaryKeyInput_->selectedValue()
+        : "";
+    if (selected.empty()) return -1;
+
+    it = dictionaryKeyIndices_.find(selected);
+    if (it == dictionaryKeyIndices_.end()) return -1;
+    return it->second;
 }
 
 void RightPane::showAdjacentDictionaryEntry(int delta) {
@@ -5311,14 +5328,17 @@ void RightPane::onDictionaryModuleChange(Fl_Widget* /*w*/, void* data) {
         ? self->dictionaryKeyInput_->value()
         : "";
     key = trimCopy(key);
+    if (self->dictionaryKeyInput_) {
+        std::string matched = self->dictionaryKeyInput_->matchedValue(key);
+        if (!matched.empty()) {
+            key = matched;
+        }
+    }
     if (isDailyDevotion) {
-        if (!key.empty() && self->dictionaryKeys_) {
-            auto it = std::find(self->dictionaryKeys_->begin(),
-                                self->dictionaryKeys_->end(),
-                                key);
-            if (it == self->dictionaryKeys_->end()) {
-                key.clear();
-            }
+        if (!key.empty() && self->dictionaryKeys_ &&
+            self->dictionaryKeyIndices_.find(key) ==
+                self->dictionaryKeyIndices_.end()) {
+            key.clear();
         }
     } else if (key.empty()) {
         key = self->currentDictKey_;
@@ -5339,6 +5359,10 @@ void RightPane::onDictionaryKeyInput(Fl_Widget* /*w*/, void* data) {
                           ? self->dictionaryKeyInput_->value()
                           : "";
     if (key.empty()) return;
+    std::string matched = self->dictionaryKeyInput_->matchedValue(key);
+    if (!matched.empty()) {
+        key = matched;
+    }
 
     if (self->currentDictionary_.empty()) {
         selectFirstDictionaryModule(self->dictionaryChoice_,

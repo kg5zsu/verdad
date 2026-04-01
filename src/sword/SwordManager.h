@@ -111,6 +111,19 @@ class SwordManager {
 public:
     using VerseDecorationCallback = std::function<std::string(const std::string& verseRef)>;
 
+    struct PreparedChapterVerse {
+        int verse = 0;
+        bool startsParagraph = false;
+    };
+
+    struct PreparedChapter {
+        std::string moduleName;
+        std::string book;
+        int chapter = 0;
+        std::string chapterHeadingHtml;
+        std::vector<PreparedChapterVerse> verses;
+    };
+
     SwordManager();
     ~SwordManager();
 
@@ -173,6 +186,19 @@ public:
                                bool paragraphMode = false,
                                int selectedVerse = 0,
                                VerseDecorationCallback verseDecorator = {});
+
+    /// Prepare width-independent chapter structure for reuse across rerenders.
+    std::shared_ptr<const PreparedChapter> prepareChapterText(
+        const std::string& moduleName,
+        const std::string& book,
+        int chapter);
+
+    /// Render chapter HTML from a prepared chapter structure.
+    std::string renderPreparedChapterText(
+        const PreparedChapter& prepared,
+        bool paragraphMode = false,
+        int selectedVerse = 0,
+        VerseDecorationCallback verseDecorator = {});
 
     /// Get rendered XHTML for parallel Bibles showing the same chapter
     /// @param moduleNames    List of modules to show in parallel
@@ -341,6 +367,9 @@ public:
     std::map<std::string, std::map<std::string, std::string>>
         getEntryAttributes(const std::string& moduleName);
 
+    /// Clear in-memory render caches used for chapter/commentary HTML generation.
+    void clearRenderCaches();
+
 private:
     struct PostProcessCacheEntry {
         std::string value;
@@ -348,6 +377,10 @@ private:
     };
     struct VerseHtmlCacheEntry {
         std::string value;
+        std::list<std::string>::iterator lruIt;
+    };
+    struct PreparedChapterCacheEntry {
+        std::shared_ptr<const PreparedChapter> value;
         std::list<std::string>::iterator lruIt;
     };
 
@@ -363,6 +396,9 @@ private:
     mutable std::unordered_map<std::string, VerseHtmlCacheEntry> commentaryVerseHtmlCache_;
     mutable std::list<std::string> commentaryVerseHtmlLru_;
     static constexpr size_t kCommentaryVerseHtmlCacheLimit = 4096;
+    mutable std::unordered_map<std::string, PreparedChapterCacheEntry> preparedChapterCache_;
+    mutable std::list<std::string> preparedChapterLru_;
+    static constexpr size_t kPreparedChapterCacheLimit = 12;
     mutable std::unordered_map<
         std::string,
         std::shared_ptr<const std::vector<std::string>>> dictionaryKeyCache_;
@@ -385,6 +421,31 @@ private:
     /// Post-process SWORD XHTML output: strip visible Strong's/morph codes and
     /// wrap words with data-strong/data-morph attributes for hover (Mag) support.
     std::string postProcessHtml(const std::string& html) const;
+
+    void clearRenderCachesLocked();
+    bool tryGetVerseHtmlCacheLocked(const std::string& key,
+                                    std::string& valueOut) const;
+    void storeVerseHtmlCacheLocked(const std::string& key,
+                                   const std::string& value) const;
+    bool tryGetPreparedChapterCacheLocked(
+        const std::string& key,
+        std::shared_ptr<const PreparedChapter>& valueOut) const;
+    void storePreparedChapterCacheLocked(
+        const std::string& key,
+        std::shared_ptr<const PreparedChapter> value) const;
+    std::shared_ptr<const PreparedChapter> prepareChapterTextLocked(
+        sword::SWModule* mod,
+        const std::string& moduleName,
+        const std::string& book,
+        int chapter) const;
+    std::string renderPreparedChapterTextLocked(
+        const PreparedChapter& prepared,
+        bool paragraphMode,
+        int selectedVerse,
+        const VerseDecorationCallback& verseDecorator) const;
+    std::string getOrRenderVerseHtmlLocked(sword::SWModule* mod,
+                                           const std::string& moduleName,
+                                           const std::string& verseRef) const;
 };
 
 } // namespace verdad

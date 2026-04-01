@@ -337,6 +337,41 @@ sword::VerseKey* verseKeyForModule(sword::SWModule* mod) {
     return vk;
 }
 
+std::string chapterRenderCacheKey(const std::string& moduleName,
+                                  const std::string& book,
+                                  int chapter) {
+    std::string key;
+    key.reserve(moduleName.size() + book.size() + 24);
+    key += moduleName;
+    key += '|';
+    key += book;
+    key += '|';
+    appendInt(key, chapter);
+    return key;
+}
+
+bool verseStartsParagraphBoundary(std::string_view verseText) {
+    size_t pos = 0;
+    while (pos < verseText.size()) {
+        if (verseText[pos] == '<') {
+            size_t close = verseText.find('>', pos);
+            if (close == std::string_view::npos) break;
+            pos = close + 1;
+            continue;
+        }
+        unsigned char ch = static_cast<unsigned char>(verseText[pos]);
+        if (std::isspace(ch)) {
+            ++pos;
+            continue;
+        }
+        break;
+    }
+
+    return pos + 1 < verseText.size() &&
+           static_cast<unsigned char>(verseText[pos]) == 0xC2 &&
+           static_cast<unsigned char>(verseText[pos + 1]) == 0xB6;
+}
+
 class ScopedGlobalOptionOverride {
 public:
     ScopedGlobalOptionOverride(sword::SWMgr* mgr,
@@ -3227,17 +3262,242 @@ std::string commentaryEntryHtml(sword::SWModule* mod,
 SwordManager::SwordManager() = default;
 SwordManager::~SwordManager() = default;
 
+void SwordManager::clearRenderCachesLocked() {
+    postProcessCache_.clear();
+    postProcessLru_.clear();
+    verseHtmlCache_.clear();
+    verseHtmlLru_.clear();
+    commentaryVerseHtmlCache_.clear();
+    commentaryVerseHtmlLru_.clear();
+    preparedChapterCache_.clear();
+    preparedChapterLru_.clear();
+}
+
+void SwordManager::clearRenderCaches() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    clearRenderCachesLocked();
+}
+
+bool SwordManager::tryGetVerseHtmlCacheLocked(const std::string& key,
+                                              std::string& valueOut) const {
+    auto it = verseHtmlCache_.find(key);
+    if (it == verseHtmlCache_.end()) return false;
+
+    verseHtmlLru_.splice(verseHtmlLru_.begin(), verseHtmlLru_, it->second.lruIt);
+    valueOut = it->second.value;
+    return true;
+}
+
+void SwordManager::storeVerseHtmlCacheLocked(const std::string& key,
+                                             const std::string& value) const {
+    auto it = verseHtmlCache_.find(key);
+    if (it != verseHtmlCache_.end()) {
+        it->second.value = value;
+        verseHtmlLru_.splice(verseHtmlLru_.begin(), verseHtmlLru_, it->second.lruIt);
+        return;
+    }
+
+    verseHtmlLru_.push_front(key);
+    verseHtmlCache_.emplace(key, VerseHtmlCacheEntry{value, verseHtmlLru_.begin()});
+
+    if (verseHtmlCache_.size() > kVerseHtmlCacheLimit) {
+        const std::string& evictKey = verseHtmlLru_.back();
+        verseHtmlCache_.erase(evictKey);
+        verseHtmlLru_.pop_back();
+    }
+}
+
+bool SwordManager::tryGetPreparedChapterCacheLocked(
+    const std::string& key,
+    std::shared_ptr<const PreparedChapter>& valueOut) const {
+    auto it = preparedChapterCache_.find(key);
+    if (it == preparedChapterCache_.end()) return false;
+
+    preparedChapterLru_.splice(preparedChapterLru_.begin(),
+                               preparedChapterLru_,
+                               it->second.lruIt);
+    valueOut = it->second.value;
+    return true;
+}
+
+void SwordManager::storePreparedChapterCacheLocked(
+    const std::string& key,
+    std::shared_ptr<const PreparedChapter> value) const {
+    auto it = preparedChapterCache_.find(key);
+    if (it != preparedChapterCache_.end()) {
+        it->second.value = std::move(value);
+        preparedChapterLru_.splice(preparedChapterLru_.begin(),
+                                   preparedChapterLru_,
+                                   it->second.lruIt);
+        return;
+    }
+
+    preparedChapterLru_.push_front(key);
+    preparedChapterCache_.emplace(key,
+                                  PreparedChapterCacheEntry{
+                                      std::move(value),
+                                      preparedChapterLru_.begin(),
+                                  });
+
+    if (preparedChapterCache_.size() > kPreparedChapterCacheLimit) {
+        const std::string& evictKey = preparedChapterLru_.back();
+        preparedChapterCache_.erase(evictKey);
+        preparedChapterLru_.pop_back();
+    }
+}
+
+std::string SwordManager::getOrRenderVerseHtmlLocked(sword::SWModule* mod,
+                                                     const std::string& moduleName,
+                                                     const std::string& verseRef) const {
+    if (!mod) return "";
+
+    const std::string cacheKey = moduleName + "|" + verseRef;
+    std::string verseText;
+    if (tryGetVerseHtmlCacheLocked(cacheKey, verseText)) {
+        return verseText;
+    }
+
+    mod->setKey(verseRef.c_str());
+    if (mod->popError()) return "";
+
+    verseText = std::string(mod->renderText().c_str());
+    if (verseText.empty()) return "";
+
+    verseText = postProcessHtml(verseText);
+    storeVerseHtmlCacheLocked(cacheKey, verseText);
+    return verseText;
+}
+
+std::shared_ptr<const SwordManager::PreparedChapter>
+SwordManager::prepareChapterTextLocked(sword::SWModule* mod,
+                                       const std::string& moduleName,
+                                       const std::string& book,
+                                       int chapter) const {
+    if (!mod) return {};
+
+    const std::string cacheKey = chapterRenderCacheKey(moduleName, book, chapter);
+    std::shared_ptr<const PreparedChapter> cached;
+    if (tryGetPreparedChapterCacheLocked(cacheKey, cached)) {
+        return cached;
+    }
+
+    sword::VerseKey* vk = verseKeyForModule(mod);
+    if (!vk) return {};
+
+    auto prepared = std::make_shared<PreparedChapter>();
+    prepared->moduleName = moduleName;
+    prepared->book = book;
+    prepared->chapter = chapter;
+
+    const std::string ref = book + " " + std::to_string(chapter) + ":1";
+    vk->setText(ref.c_str());
+
+    prepared->chapterHeadingHtml = renderedChapterHeadingLocked(mod, book, chapter);
+    vk->setText(ref.c_str());
+
+    const char currentTestament = vk->getTestament();
+    const char currentBook = vk->getBook();
+    const int currentChapter = vk->getChapter();
+    while (!mod->popError() &&
+           sameBookChapter(vk, currentTestament, currentBook, currentChapter)) {
+        const int verse = vk->getVerse();
+        const std::string verseRef = book + " " + std::to_string(chapter) +
+                                     ":" + std::to_string(verse);
+        const std::string cacheKey = moduleName + "|" + verseRef;
+        std::string verseText;
+        if (!tryGetVerseHtmlCacheLocked(cacheKey, verseText)) {
+            verseText = std::string(mod->renderText().c_str());
+            if (!verseText.empty()) {
+                verseText = postProcessHtml(verseText);
+                storeVerseHtmlCacheLocked(cacheKey, verseText);
+            }
+        }
+
+        if (!verseText.empty()) {
+            prepared->verses.push_back(PreparedChapterVerse{
+                verse,
+                verseStartsParagraphBoundary(verseText),
+            });
+        }
+
+        (*mod)++;
+    }
+
+    storePreparedChapterCacheLocked(cacheKey, prepared);
+    return prepared;
+}
+
+std::string SwordManager::renderPreparedChapterTextLocked(
+    const PreparedChapter& prepared,
+    bool paragraphMode,
+    int selectedVerse,
+    const VerseDecorationCallback& verseDecorator) const {
+    sword::SWModule* mod = getModule(prepared.moduleName);
+    if (!mod) {
+        return "<p><i>Module not found: " +
+               htmlEscapeAttr(prepared.moduleName) + "</i></p>";
+    }
+
+    const char* verseTag = paragraphMode ? "span" : "div";
+    std::string html;
+    html.reserve(prepared.chapterHeadingHtml.size() +
+                 prepared.verses.size() * 96 + 128);
+    html += "<div class=\"chapter\">\n";
+
+    if (prepared.chapterHeadingHtml.empty()) {
+        html += "<div class=\"chapter-heading\">CHAPTER ";
+        appendInt(html, prepared.chapter);
+        html += ".</div>\n";
+    } else {
+        html += prepared.chapterHeadingHtml;
+    }
+
+    for (const auto& verseInfo : prepared.verses) {
+        if (paragraphMode && verseInfo.verse > 1 && verseInfo.startsParagraph) {
+            html += "<br><br>\n";
+        }
+
+        std::string verseClass = "verse";
+        if (selectedVerse > 0 && verseInfo.verse == selectedVerse) {
+            verseClass += " verse-selected";
+        }
+
+        html += "<";
+        html += verseTag;
+        html += " class=\"";
+        html += verseClass;
+        html += "\" id=\"v";
+        appendInt(html, verseInfo.verse);
+        html += "\">";
+        html += "<a class=\"versenum-link\" href=\"verse:";
+        appendInt(html, verseInfo.verse);
+        html += "\"><sup class=\"versenum\">";
+        appendInt(html, verseInfo.verse);
+        html += "</sup></a> ";
+
+        const std::string verseRef = prepared.book + " " +
+                                     std::to_string(prepared.chapter) + ":" +
+                                     std::to_string(verseInfo.verse);
+        html += getOrRenderVerseHtmlLocked(mod, prepared.moduleName, verseRef);
+        if (verseDecorator) {
+            html += verseDecorator(verseRef);
+        }
+
+        html += "</";
+        html += verseTag;
+        html += ">\n";
+    }
+
+    html += "</div>\n";
+    return html;
+}
+
 bool SwordManager::initialize() {
     std::lock_guard<std::mutex> lock(mutex_);
     try {
         mgr_.reset();
         bundledSysConfig_.reset();
-        postProcessCache_.clear();
-        postProcessLru_.clear();
-        verseHtmlCache_.clear();
-        verseHtmlLru_.clear();
-        commentaryVerseHtmlCache_.clear();
-        commentaryVerseHtmlLru_.clear();
+        clearRenderCachesLocked();
         dictionaryKeyCache_.clear();
 
         // Create SWORD manager with XHTML markup filter
@@ -3564,141 +3824,49 @@ std::string SwordManager::getChapterText(const std::string& moduleName,
                                           bool paragraphMode,
                                           int selectedVerse,
                                           VerseDecorationCallback verseDecorator) {
+    perf::ScopeTimer timer("SwordManager::getChapterText");
     std::lock_guard<std::mutex> lock(mutex_);
     sword::SWModule* mod = getModule(moduleName);
     if (!mod) return "<p><i>Module not found: " + htmlEscapeAttr(moduleName) + "</i></p>";
 
-    sword::VerseKey* vk = dynamic_cast<sword::VerseKey*>(mod->getKey());
-    if (!vk) {
-        // Clone a verse key
-        sword::VerseKey tempKey;
-        mod->setKey(tempKey);
-        vk = dynamic_cast<sword::VerseKey*>(mod->getKey());
-    }
-    if (!vk) return "<p><i>Cannot create verse key</i></p>";
+    perf::StepTimer step;
+    auto prepared = prepareChapterTextLocked(mod, moduleName, book, chapter);
+    perf::logf("SwordManager::getChapterText prepare %s %s %d: %.3f ms",
+               moduleName.c_str(), book.c_str(), chapter, step.elapsedMs());
+    if (!prepared) return "<p><i>Cannot create verse key</i></p>";
 
-    std::ostringstream html;
-    html << "<div class=\"chapter\">\n";
+    step.reset();
+    std::string html = renderPreparedChapterTextLocked(*prepared,
+                                                       paragraphMode,
+                                                       selectedVerse,
+                                                       verseDecorator);
+    perf::logf("SwordManager::getChapterText renderPrepared %s %s %d: %.3f ms",
+               moduleName.c_str(), book.c_str(), chapter, step.elapsedMs());
+    return html;
+}
 
-    // Set to the beginning of the chapter
-    std::string ref = book + " " + std::to_string(chapter) + ":1";
-    vk->setText(ref.c_str());
+std::shared_ptr<const SwordManager::PreparedChapter>
+SwordManager::prepareChapterText(const std::string& moduleName,
+                                 const std::string& book,
+                                 int chapter) {
+    perf::ScopeTimer timer("SwordManager::prepareChapterText");
+    std::lock_guard<std::mutex> lock(mutex_);
+    sword::SWModule* mod = getModule(moduleName);
+    if (!mod) return {};
+    return prepareChapterTextLocked(mod, moduleName, book, chapter);
+}
 
-    std::string chapterHeadingHtml =
-        renderedChapterHeadingLocked(mod, book, chapter);
-    vk->setText(ref.c_str());
-
-    const char currentTestament = vk->getTestament();
-    const char currentBook = vk->getBook();
-    const int currentChapter = vk->getChapter();
-    if (chapterHeadingHtml.empty()) {
-        html << "<div class=\"chapter-heading\">CHAPTER "
-             << chapter << ".</div>\n";
-    } else {
-        html << chapterHeadingHtml;
-    }
-
-    // Choose element tag based on display mode:
-    // verse-per-line (default) uses <div>, paragraph mode uses <span>
-    const char* verseTag = paragraphMode ? "span" : "div";
-
-    auto tryGetVerseHtmlCache =
-        [this](const std::string& key, std::string& valueOut) -> bool {
-        auto it = verseHtmlCache_.find(key);
-        if (it == verseHtmlCache_.end()) return false;
-
-        verseHtmlLru_.splice(verseHtmlLru_.begin(),
-                             verseHtmlLru_,
-                             it->second.lruIt);
-        valueOut = it->second.value;
-        return true;
-    };
-
-    auto storeVerseHtmlCache =
-        [this](const std::string& key, const std::string& value) {
-        auto it = verseHtmlCache_.find(key);
-        if (it != verseHtmlCache_.end()) {
-            it->second.value = value;
-            verseHtmlLru_.splice(verseHtmlLru_.begin(),
-                                 verseHtmlLru_,
-                                 it->second.lruIt);
-            return;
-        }
-
-        verseHtmlLru_.push_front(key);
-        verseHtmlCache_.emplace(key, VerseHtmlCacheEntry{
-            value, verseHtmlLru_.begin()
-        });
-
-        if (verseHtmlCache_.size() > kVerseHtmlCacheLimit) {
-            const std::string& evictKey = verseHtmlLru_.back();
-            verseHtmlCache_.erase(evictKey);
-            verseHtmlLru_.pop_back();
-        }
-    };
-
-    while (!mod->popError() &&
-           sameBookChapter(vk, currentTestament, currentBook, currentChapter)) {
-        int verse = vk->getVerse();
-        std::string verseRef = book + " " + std::to_string(chapter) +
-                               ":" + std::to_string(verse);
-        std::string cacheKey = moduleName + "|" + verseRef;
-        std::string verseText;
-
-        if (!tryGetVerseHtmlCache(cacheKey, verseText)) {
-            verseText = std::string(mod->renderText().c_str());
-            if (!verseText.empty()) {
-                verseText = postProcessHtml(verseText);
-                storeVerseHtmlCache(cacheKey, verseText);
-            }
-        }
-
-        if (!verseText.empty()) {
-            std::string verseClass = "verse";
-            if (selectedVerse > 0 && verse == selectedVerse) {
-                verseClass += " verse-selected";
-            }
-            // In paragraph mode, a verse whose first visible content is ¶ (U+00B6,
-            // UTF-8: 0xC2 0xB6) marks a paragraph boundary — whether the pilcrow is
-            // at position 0 or after an opening HTML tag (e.g. <span class="wordsOfJesus">).
-            // Emit a line break before the verse span so the paragraph starts on its own line.
-            if (paragraphMode && verse > 1) {
-                size_t pos = 0;
-                // Skip any leading HTML tags and whitespace.
-                while (pos < verseText.size()) {
-                    if (verseText[pos] == '<') {
-                        size_t close = verseText.find('>', pos);
-                        if (close == std::string::npos) break;
-                        pos = close + 1;
-                    } else if (verseText[pos] == ' ' || verseText[pos] == '\t' ||
-                               verseText[pos] == '\n' || verseText[pos] == '\r') {
-                        ++pos;
-                    } else {
-                        break;
-                    }
-                }
-                if (pos + 1 < verseText.size() &&
-                    (unsigned char)verseText[pos]   == 0xC2 &&
-                    (unsigned char)verseText[pos+1] == 0xB6) {
-                    html << "<br><br>\n";
-                }
-            }
-            html << "<" << verseTag << " class=\"" << verseClass
-                 << "\" id=\"v" << verse << "\">";
-            html << "<a class=\"versenum-link\" href=\"verse:" << verse << "\">"
-                 << "<sup class=\"versenum\">" << verse << "</sup></a> ";
-            html << verseText;
-            if (verseDecorator) {
-                html << verseDecorator(verseRef);
-            }
-            html << "</" << verseTag << ">\n";
-        }
-
-        (*mod)++;  // Advance to next verse
-    }
-
-    html << "</div>\n";
-    return html.str();
+std::string SwordManager::renderPreparedChapterText(
+    const PreparedChapter& prepared,
+    bool paragraphMode,
+    int selectedVerse,
+    VerseDecorationCallback verseDecorator) {
+    perf::ScopeTimer timer("SwordManager::renderPreparedChapterText");
+    std::lock_guard<std::mutex> lock(mutex_);
+    return renderPreparedChapterTextLocked(prepared,
+                                           paragraphMode,
+                                           selectedVerse,
+                                           verseDecorator);
 }
 
 std::string SwordManager::getParallelText(
@@ -3767,41 +3935,6 @@ std::string SwordManager::getParallelText(
     }
     const double headingMs = step.elapsedMs();
     step.reset();
-
-    auto tryGetVerseHtmlCache =
-        [this](const std::string& key, std::string& valueOut) -> bool {
-        auto it = verseHtmlCache_.find(key);
-        if (it == verseHtmlCache_.end()) return false;
-
-        verseHtmlLru_.splice(verseHtmlLru_.begin(),
-                             verseHtmlLru_,
-                             it->second.lruIt);
-        valueOut = it->second.value;
-        return true;
-    };
-
-    auto storeVerseHtmlCache =
-        [this](const std::string& key, const std::string& value) {
-        auto it = verseHtmlCache_.find(key);
-        if (it != verseHtmlCache_.end()) {
-            it->second.value = value;
-            verseHtmlLru_.splice(verseHtmlLru_.begin(),
-                                 verseHtmlLru_,
-                                 it->second.lruIt);
-            return;
-        }
-
-        verseHtmlLru_.push_front(key);
-        verseHtmlCache_.emplace(key, VerseHtmlCacheEntry{
-            value, verseHtmlLru_.begin()
-        });
-
-        if (verseHtmlCache_.size() > kVerseHtmlCacheLimit) {
-            const std::string& evictKey = verseHtmlLru_.back();
-            verseHtmlCache_.erase(evictKey);
-            verseHtmlLru_.pop_back();
-        }
-    };
 
     struct ParallelColumnInfo {
         std::string moduleName;
@@ -3876,7 +4009,7 @@ std::string SwordManager::getParallelText(
                 if (!column.mod->popError()) {
                     std::string cacheKey = column.moduleName + "|" + verseRef;
                     std::string verseText;
-                    if (!tryGetVerseHtmlCache(cacheKey, verseText)) {
+                    if (!tryGetVerseHtmlCacheLocked(cacheKey, verseText)) {
                         ++cacheMisses;
                         perf::StepTimer renderStep;
                         verseText = std::string(column.mod->renderText().c_str());
@@ -3886,7 +4019,7 @@ std::string SwordManager::getParallelText(
                             perf::StepTimer postProcessStep;
                             verseText = postProcessHtml(verseText);
                             postProcessMs += postProcessStep.elapsedMs();
-                            storeVerseHtmlCache(cacheKey, verseText);
+                            storeVerseHtmlCacheLocked(cacheKey, verseText);
                         }
                     } else {
                         ++cacheHits;
@@ -4168,9 +4301,8 @@ bool SwordManager::setRawEntry(const std::string& moduleName,
     }
     bool ok = !mod->popError();
     if (ok) {
+        clearRenderCachesLocked();
         dictionaryKeyCache_.erase(moduleName);
-        commentaryVerseHtmlCache_.clear();
-        commentaryVerseHtmlLru_.clear();
     }
     return ok;
 }
@@ -4187,9 +4319,8 @@ bool SwordManager::deleteEntry(const std::string& moduleName,
     mod->deleteEntry();
     bool ok = !mod->popError();
     if (ok) {
+        clearRenderCachesLocked();
         dictionaryKeyCache_.erase(moduleName);
-        commentaryVerseHtmlCache_.clear();
-        commentaryVerseHtmlLru_.clear();
     }
     return ok;
 }

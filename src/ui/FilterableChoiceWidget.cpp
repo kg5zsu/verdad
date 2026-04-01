@@ -91,11 +91,6 @@ constexpr int kPopupMaxRows = 10;
 constexpr int kPopupMinWidth = 120;
 constexpr int kPopupWidthPadding = 24;
 
-char lowerAsciiChar(char c) {
-    return static_cast<char>(
-        std::tolower(static_cast<unsigned char>(c)));
-}
-
 std::string_view trimView(std::string_view text) {
     size_t start = 0;
     while (start < text.size() &&
@@ -112,26 +107,26 @@ std::string_view trimView(std::string_view text) {
     return text.substr(start, end - start);
 }
 
-bool equalsNoCase(std::string_view left, std::string_view right) {
-    if (left.size() != right.size()) return false;
+std::string normalizeMatchText(std::string_view text) {
+    std::string_view trimmed = trimView(text);
+    if (trimmed.empty()) return "";
 
-    for (size_t i = 0; i < left.size(); ++i) {
-        if (lowerAsciiChar(left[i]) != lowerAsciiChar(right[i])) {
-            return false;
-        }
+    std::string lowered(trimmed.size() * 4 + 4, '\0');
+    int loweredLen = fl_utf_tolower(
+        reinterpret_cast<const unsigned char*>(trimmed.data()),
+        static_cast<int>(trimmed.size()),
+        lowered.data());
+    if (loweredLen <= 0) {
+        std::string fallback(trimmed);
+        std::transform(fallback.begin(), fallback.end(), fallback.begin(),
+                       [](unsigned char c) {
+                           return static_cast<char>(std::tolower(c));
+                       });
+        return fallback;
     }
-    return true;
-}
 
-bool containsNoCase(std::string_view haystack, std::string_view needle) {
-    if (needle.empty()) return true;
-
-    auto it = std::search(haystack.begin(), haystack.end(),
-                          needle.begin(), needle.end(),
-                          [](char left, char right) {
-                              return lowerAsciiChar(left) == lowerAsciiChar(right);
-                          });
-    return it != haystack.end();
+    lowered.resize(static_cast<size_t>(loweredLen));
+    return lowered;
 }
 
 std::string browserLineLabel(const std::string& label) {
@@ -233,6 +228,7 @@ void FilterableChoiceWidget::resize(int X, int Y, int W, int H) {
 void FilterableChoiceWidget::setItems(const std::vector<std::string>& items) {
     ownedItems_ = items;
     items_ = &ownedItems_;
+    rebuildItemIndex();
     if (!selectedItem_.empty() && exactItemMatch(selectedItem_).empty()) {
         selectedItem_.clear();
     }
@@ -241,6 +237,7 @@ void FilterableChoiceWidget::setItems(const std::vector<std::string>& items) {
 
 void FilterableChoiceWidget::setItemsView(const std::vector<std::string>* items) {
     items_ = items ? items : &ownedItems_;
+    rebuildItemIndex();
     if (!selectedItem_.empty() && exactItemMatch(selectedItem_).empty()) {
         selectedItem_.clear();
     }
@@ -268,6 +265,10 @@ std::string FilterableChoiceWidget::selectedValue() const {
     std::string exact = exactItemMatch(typed);
     if (!exact.empty()) return exact;
     return selectedItem_;
+}
+
+std::string FilterableChoiceWidget::matchedValue(const std::string& value) const {
+    return exactItemMatch(value);
 }
 
 void FilterableChoiceWidget::setNoMatchesLabel(const std::string& label) {
@@ -326,6 +327,32 @@ void FilterableChoiceWidget::ensureItemsLoaded() {
     if (items().empty() && ensureItemsCallback_) {
         ensureItemsCallback_();
     }
+    ensureItemIndex();
+}
+
+void FilterableChoiceWidget::ensureItemIndex() {
+    if (indexedItems_ == items_ && normalizedItems_.size() == items().size()) {
+        return;
+    }
+    rebuildItemIndex();
+}
+
+void FilterableChoiceWidget::rebuildItemIndex() {
+    indexedItems_ = items_;
+    normalizedItems_.clear();
+    exactItemIndex_.clear();
+
+    const auto& sourceItems = items();
+    normalizedItems_.reserve(sourceItems.size());
+    exactItemIndex_.reserve(sourceItems.size());
+    for (size_t i = 0; i < sourceItems.size(); ++i) {
+        std::string normalized = normalizeMatchText(sourceItems[i]);
+        normalizedItems_.push_back(normalized);
+        if (!normalized.empty() &&
+            exactItemIndex_.find(normalized) == exactItemIndex_.end()) {
+            exactItemIndex_.emplace(std::move(normalized), i);
+        }
+    }
 }
 
 void FilterableChoiceWidget::ensurePopupCreated() {
@@ -357,7 +384,8 @@ void FilterableChoiceWidget::refreshPopupContents(const std::string& filter) {
     popupBrowser_->clear();
     popupItems_.clear();
 
-    std::string_view normalizedFilter = trimView(filter);
+    ensureItemIndex();
+    std::string normalizedFilter = normalizeMatchText(filter);
     if (normalizedFilter.empty() && !showAllWhenFilterEmpty_) {
         if (!emptyFilterPrompt_.empty()) {
             popupBrowser_->add(browserLineLabel(emptyFilterPrompt_).c_str());
@@ -368,12 +396,13 @@ void FilterableChoiceWidget::refreshPopupContents(const std::string& filter) {
         return;
     }
 
-    for (const auto& item : items()) {
+    const auto& sourceItems = items();
+    for (size_t i = 0; i < sourceItems.size(); ++i) {
         if (normalizedFilter.empty() ||
-            containsNoCase(item, normalizedFilter)) {
+            normalizedItems_[i].find(normalizedFilter) != std::string::npos) {
             if (popupItems_.size() >= maxVisibleItems_) break;
-            popupItems_.push_back(item);
-            popupBrowser_->add(browserLineLabel(item).c_str());
+            popupItems_.push_back(sourceItems[i]);
+            popupBrowser_->add(browserLineLabel(sourceItems[i]).c_str());
         }
     }
 
@@ -404,15 +433,20 @@ void FilterableChoiceWidget::refreshPopupContents(const std::string& filter) {
 }
 
 std::string FilterableChoiceWidget::exactItemMatch(const std::string& value) const {
-    std::string_view wanted = trimView(value);
+    auto* self = const_cast<FilterableChoiceWidget*>(this);
+    self->ensureItemIndex();
+
+    std::string wanted = normalizeMatchText(value);
     if (wanted.empty()) return "";
 
-    for (const auto& item : items()) {
-        if (equalsNoCase(item, wanted)) {
-            return item;
-        }
+    auto it = exactItemIndex_.find(wanted);
+    if (it == exactItemIndex_.end()) return "";
+
+    const auto& sourceItems = items();
+    if (it->second >= sourceItems.size()) {
+        return "";
     }
-    return "";
+    return sourceItems[it->second];
 }
 
 void FilterableChoiceWidget::updatePopupGeometry() {

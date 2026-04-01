@@ -11,9 +11,10 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 #include <cctype>
+#include <cstring>
 #include <limits>
+#include <list>
 #include <memory>
 #include <sstream>
 #include <string_view>
@@ -23,17 +24,123 @@ namespace verdad {
 namespace {
 
 constexpr int kScrollbarExtent = 16;
-constexpr size_t kTextWidthCacheLimit = 1024;
-constexpr size_t kTextWidthCacheDirectLimit = 896;
-constexpr size_t kTextWidthCacheMaxTokenBytes = 32;
-constexpr size_t kTextWidthProbationLimit = 512;
+constexpr size_t kSharedTextWidthCacheLimit = 4096;
+constexpr size_t kSharedTextWidthCacheByteLimit = 768 * 1024;
+constexpr size_t kTextWidthCacheMaxTokenBytes = 160;
 
 bool isTextWidthCacheable(std::string_view text) {
-    if (text.empty() || text.size() > kTextWidthCacheMaxTokenBytes) return false;
-    for (unsigned char c : text) {
-        if (c & 0x80) return false;
+    return !text.empty() && text.size() <= kTextWidthCacheMaxTokenBytes;
+}
+
+struct SharedTextWidthCacheKey {
+    const void* fontKey = nullptr;
+    std::string token;
+};
+
+struct SharedTextWidthCacheEntry {
+    litehtml::pixel_t value = 0;
+    size_t approxBytes = 0;
+    std::list<SharedTextWidthCacheKey>::iterator lruIt;
+};
+
+class SharedTextWidthCache {
+public:
+    using FontCacheMap =
+        std::map<std::string, SharedTextWidthCacheEntry, std::less<>>;
+
+    bool lookup(const void* fontKey,
+                std::string_view token,
+                litehtml::pixel_t& valueOut) {
+        auto bucketIt = entries_.find(fontKey);
+        if (bucketIt == entries_.end()) return false;
+
+        auto entryIt = bucketIt->second.find(token);
+        if (entryIt == bucketIt->second.end()) return false;
+
+        lru_.splice(lru_.begin(), lru_, entryIt->second.lruIt);
+        valueOut = entryIt->second.value;
+        return true;
     }
-    return true;
+
+    bool store(const void* fontKey,
+               std::string_view token,
+               litehtml::pixel_t value) {
+        if (!fontKey || !isTextWidthCacheable(token)) return false;
+
+        FontCacheMap& bucket = entries_[fontKey];
+        auto entryIt = bucket.find(token);
+        if (entryIt != bucket.end()) {
+            entryIt->second.value = value;
+            lru_.splice(lru_.begin(), lru_, entryIt->second.lruIt);
+            return true;
+        }
+
+        SharedTextWidthCacheKey key;
+        key.fontKey = fontKey;
+        key.token.assign(token.data(), token.size());
+
+        lru_.push_front(std::move(key));
+        auto lruIt = lru_.begin();
+
+        SharedTextWidthCacheEntry entry;
+        entry.value = value;
+        entry.approxBytes =
+            sizeof(SharedTextWidthCacheEntry) + lruIt->token.capacity();
+        entry.lruIt = lruIt;
+
+        auto [insertedIt, inserted] =
+            bucket.emplace(lruIt->token, std::move(entry));
+        if (!inserted) {
+            lru_.pop_front();
+            return false;
+        }
+
+        byteSize_ += insertedIt->second.approxBytes;
+        trim();
+        return true;
+    }
+
+    size_t entryCount() const {
+        size_t count = 0;
+        for (const auto& bucket : entries_) {
+            count += bucket.second.size();
+        }
+        return count;
+    }
+
+    size_t byteSize() const { return byteSize_; }
+
+private:
+    void trim() {
+        while (!lru_.empty() &&
+               (entryCount() > kSharedTextWidthCacheLimit ||
+                byteSize_ > kSharedTextWidthCacheByteLimit)) {
+            const SharedTextWidthCacheKey& evictKey = lru_.back();
+            auto bucketIt = entries_.find(evictKey.fontKey);
+            if (bucketIt != entries_.end()) {
+                auto entryIt = bucketIt->second.find(evictKey.token);
+                if (entryIt != bucketIt->second.end()) {
+                    if (byteSize_ >= entryIt->second.approxBytes) {
+                        byteSize_ -= entryIt->second.approxBytes;
+                    } else {
+                        byteSize_ = 0;
+                    }
+                    bucketIt->second.erase(entryIt);
+                    if (bucketIt->second.empty()) entries_.erase(bucketIt);
+                }
+            }
+            lru_.pop_back();
+        }
+    }
+
+    std::unordered_map<const void*, FontCacheMap> entries_;
+    std::list<SharedTextWidthCacheKey> lru_;
+    size_t byteSize_ = 0;
+};
+
+SharedTextWidthCache& sharedTextWidthCache() {
+    static SharedTextWidthCache cache;
+    return cache;
 }
 
 std::string trimCopy(const std::string& text) {
@@ -1276,15 +1383,10 @@ void HtmlWidget::setHtml(const std::string& html, const std::string& baseUrl) {
     clearSelection();
     textFragments_.clear();
     activeFltkFont_ = nullptr;
-    textWidthCache_.clear();
-    textWidthProbation_.clear();
-    textWidthProbationOrder_.clear();
-    textWidthCacheEntries_ = 0;
     textWidthCacheHits_ = 0;
     textWidthCacheMisses_ = 0;
     textWidthCacheStores_ = 0;
     textWidthCacheStoreSkips_ = 0;
-    textWidthCachePromotions_ = 0;
 
     // Wrap in basic HTML if not already
     std::string fullHtml = html;
@@ -1319,14 +1421,13 @@ void HtmlWidget::setHtml(const std::string& html, const std::string& baseUrl) {
     step.reset();
     updateScrollbar(true);
     perf::logf("HtmlWidget::setHtml updateScrollbar: %.3f ms", step.elapsedMs());
-    perf::logf("HtmlWidget::setHtml textWidthCache: hits=%zu misses=%zu stores=%zu promotions=%zu skips=%zu entries=%zu probation=%zu",
+    perf::logf("HtmlWidget::setHtml textWidthCache: hits=%zu misses=%zu stores=%zu skips=%zu sharedEntries=%zu sharedBytes=%zu",
                textWidthCacheHits_,
                textWidthCacheMisses_,
                textWidthCacheStores_,
-               textWidthCachePromotions_,
                textWidthCacheStoreSkips_,
-               textWidthCacheEntries_,
-               textWidthProbation_.size());
+               sharedTextWidthCache().entryCount(),
+               sharedTextWidthCache().byteSize());
     redraw();
 }
 
@@ -1604,15 +1705,10 @@ HtmlWidget::Snapshot HtmlWidget::takeSnapshot() {
     clearSelection();
     textFragments_.clear();
     activeFltkFont_ = nullptr;
-    textWidthCache_.clear();
-    textWidthProbation_.clear();
-    textWidthProbationOrder_.clear();
-    textWidthCacheEntries_ = 0;
     textWidthCacheHits_ = 0;
     textWidthCacheMisses_ = 0;
     textWidthCacheStores_ = 0;
     textWidthCacheStoreSkips_ = 0;
-    textWidthCachePromotions_ = 0;
     updateScrollbar();
 
     return snapshot;
@@ -1779,6 +1875,51 @@ void HtmlWidget::renderDocument() {
     contentHeight_ = std::max(0, static_cast<int>(doc_->height()));
 }
 
+void HtmlWidget::applyScrollbarState(bool needV, bool needH) {
+    if (!scrollbar_) return;
+
+    if (needV) scrollbar_->show();
+    else scrollbar_->hide();
+
+    if (allowHorizontalScroll_ && hScrollbar_) {
+        if (needH) hScrollbar_->show();
+        else hScrollbar_->hide();
+    } else if (hScrollbar_) {
+        hScrollbar_->hide();
+        needH = false;
+    }
+
+    int viewW = viewportWidth();
+    int viewH = viewportHeight();
+
+    if (scrollbar_->visible()) {
+        scrollbar_->resize(x() + w() - kScrollbarExtent, y(),
+                           kScrollbarExtent, viewH);
+        scrollbar_->linesize(20);
+        scrollbar_->value(scrollY_, viewH, 0, std::max(viewH, contentHeight_));
+    } else {
+        scrollY_ = 0;
+    }
+
+    if (allowHorizontalScroll_ && hScrollbar_ && hScrollbar_->visible()) {
+        hScrollbar_->resize(x(), y() + h() - kScrollbarExtent,
+                            viewW, kScrollbarExtent);
+        hScrollbar_->linesize(20);
+        hScrollbar_->value(scrollX_, viewW, 0, std::max(viewW, contentWidth_));
+    } else {
+        scrollX_ = 0;
+    }
+
+    scrollX_ = std::clamp(scrollX_, 0, std::max(0, contentWidth_ - viewW));
+    scrollY_ = std::clamp(scrollY_, 0, std::max(0, contentHeight_ - viewH));
+    if (scrollbar_->visible()) {
+        scrollbar_->value(scrollY_, viewH, 0, std::max(viewH, contentHeight_));
+    }
+    if (allowHorizontalScroll_ && hScrollbar_ && hScrollbar_->visible()) {
+        hScrollbar_->value(scrollX_, viewW, 0, std::max(viewW, contentWidth_));
+    }
+}
+
 void HtmlWidget::updateScrollbar(bool layoutFresh) {
     perf::ScopeTimer timer("HtmlWidget::updateScrollbar");
     if (!doc_) {
@@ -1819,37 +1960,7 @@ void HtmlWidget::updateScrollbar(bool layoutFresh) {
         renderDocument();
     }
 
-    applyVisibility(needV, needH);
-
-    int viewW = viewportWidth();
-    int viewH = viewportHeight();
-
-    if (scrollbar_->visible()) {
-        scrollbar_->resize(x() + w() - kScrollbarExtent, y(),
-                           kScrollbarExtent, viewH);
-        scrollbar_->linesize(20);
-        scrollbar_->value(scrollY_, viewH, 0, std::max(viewH, contentHeight_));
-    } else {
-        scrollY_ = 0;
-    }
-
-    if (allowHorizontalScroll_ && hScrollbar_ && hScrollbar_->visible()) {
-        hScrollbar_->resize(x(), y() + h() - kScrollbarExtent,
-                            viewW, kScrollbarExtent);
-        hScrollbar_->linesize(20);
-        hScrollbar_->value(scrollX_, viewW, 0, std::max(viewW, contentWidth_));
-    } else {
-        scrollX_ = 0;
-    }
-
-    scrollX_ = std::clamp(scrollX_, 0, std::max(0, contentWidth_ - viewW));
-    scrollY_ = std::clamp(scrollY_, 0, std::max(0, contentHeight_ - viewH));
-    if (scrollbar_->visible()) {
-        scrollbar_->value(scrollY_, viewH, 0, std::max(viewH, contentHeight_));
-    }
-    if (allowHorizontalScroll_ && hScrollbar_ && hScrollbar_->visible()) {
-        hScrollbar_->value(scrollX_, viewW, 0, std::max(viewW, contentWidth_));
-    }
+    applyScrollbarState(needV, needH);
 }
 
 void HtmlWidget::scrollbarCallback(Fl_Widget* w, void* data) {
@@ -2297,6 +2408,29 @@ void HtmlWidget::resize(int X, int Y, int W, int H) {
     }
 
     if (doc_) {
+        const bool desiredVerticalVisible = contentHeight_ > viewportHeight();
+        const bool currentVerticalVisible =
+            scrollbar_ && scrollbar_->visible();
+        const int widthWithCurrentSb =
+            std::max(10, W - (currentVerticalVisible ? kScrollbarExtent : 0));
+        const int widthWithDesiredSb =
+            std::max(10,
+                     W - (desiredVerticalVisible ? kScrollbarExtent : 0));
+
+        if (!allowHorizontalScroll_ &&
+            lastRenderWidth_ > 0 &&
+            (lastRenderWidth_ == widthWithDesiredSb ||
+             (lastRenderWidth_ == widthWithCurrentSb &&
+              desiredVerticalVisible == currentVerticalVisible))) {
+            if (reflowScheduled_) {
+                Fl::remove_timeout(dispatchDeferredReflow, this);
+                reflowScheduled_ = false;
+            }
+            applyScrollbarState(desiredVerticalVisible, false);
+            redraw();
+            return;
+        }
+
         // Coalesce many resize events while dragging splitters.
         if (reflowScheduled_) {
             Fl::remove_timeout(dispatchDeferredReflow, this);
@@ -2380,13 +2514,12 @@ litehtml::pixel_t HtmlWidget::text_width(const char* text, litehtml::uint_ptr hF
     const bool cacheable = isTextWidthCacheable(token);
 
     if (cacheable) {
-        auto fontCacheIt = textWidthCache_.find(cachedFont.get());
-        if (fontCacheIt != textWidthCache_.end()) {
-            auto valueIt = fontCacheIt->second.find(token);
-            if (valueIt != fontCacheIt->second.end()) {
-                ++textWidthCacheHits_;
-                return valueIt->second;
-            }
+        litehtml::pixel_t cachedWidth = 0;
+        if (sharedTextWidthCache().lookup(static_cast<const void*>(cachedFont.get()),
+                                          token,
+                                          cachedWidth)) {
+            ++textWidthCacheHits_;
+            return cachedWidth;
         }
         ++textWidthCacheMisses_;
     }
@@ -2395,41 +2528,10 @@ litehtml::pixel_t HtmlWidget::text_width(const char* text, litehtml::uint_ptr hF
     litehtml::pixel_t width = static_cast<litehtml::pixel_t>(fl_width(safeText));
 
     if (cacheable) {
-        if (textWidthCacheEntries_ < kTextWidthCacheDirectLimit) {
-            auto& fontCache = textWidthCache_[cachedFont.get()];
-            auto [valueIt, inserted] = fontCache.emplace(token, width);
-            if (inserted) {
-                ++textWidthCacheEntries_;
-                ++textWidthCacheStores_;
-            } else {
-                valueIt->second = width;
-            }
-        } else if (textWidthCacheEntries_ < kTextWidthCacheLimit) {
-            const auto probationIt = textWidthProbation_.find(std::string(token));
-            if (probationIt != textWidthProbation_.end()) {
-                textWidthProbation_.erase(probationIt);
-                auto& fontCache = textWidthCache_[cachedFont.get()];
-                auto [valueIt, inserted] = fontCache.emplace(token, width);
-                if (inserted) {
-                    ++textWidthCacheEntries_;
-                    ++textWidthCacheStores_;
-                    ++textWidthCachePromotions_;
-                } else {
-                    valueIt->second = width;
-                }
-            } else {
-                if (textWidthProbation_.size() >= kTextWidthProbationLimit) {
-                    while (!textWidthProbationOrder_.empty()) {
-                        std::string expired = std::move(textWidthProbationOrder_.front());
-                        textWidthProbationOrder_.pop_front();
-                        if (textWidthProbation_.erase(expired) != 0) {
-                            break;
-                        }
-                    }
-                }
-                textWidthProbationOrder_.emplace_back(token);
-                textWidthProbation_.emplace(textWidthProbationOrder_.back());
-            }
+        if (sharedTextWidthCache().store(static_cast<const void*>(cachedFont.get()),
+                                         token,
+                                         width)) {
+            ++textWidthCacheStores_;
         } else {
             ++textWidthCacheStoreSkips_;
         }
@@ -2788,6 +2890,7 @@ Fl_Font HtmlWidget::mapFont(const char* faceName, int weight, bool italic) {
     std::string face(faceName);
     Fl_Font base = FL_HELVETICA;
 
+#ifndef VERDAD_NO_APP_FONT_LOOKUP
     // Try resolving via VerdadApp's system font lookup first.
     // The faceName may be a comma-separated CSS font-family list.
     auto* app = VerdadApp::instance();
@@ -2810,6 +2913,7 @@ Fl_Font HtmlWidget::mapFont(const char* faceName, int weight, bool italic) {
             }
         }
     }
+#endif
 
     // Fallback: map generic family names
     if (face.find("serif") != std::string::npos &&
