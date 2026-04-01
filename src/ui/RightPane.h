@@ -7,6 +7,9 @@
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Choice.H>
 #include <FL/Fl_Button.H>
+#include <FL/Fl_Hold_Browser.H>
+#include <FL/Fl_Input.H>
+#include <FL/Fl_Multiline_Input.H>
 #include <FL/Fl_Tree.H>
 #include <FL/Enumerations.H>
 #include <memory>
@@ -292,10 +295,25 @@ private:
     Fl_Box* dailyMonthLabel_;
     MonthCalendarWidget* dailyCalendarWidget_;
     HtmlWidget* dailyHtml_;
+    Fl_Group* dailyPlanEditorGroup_;
+    Fl_Input* dailyPlanNameInput_;
+    Fl_Input* dailyPlanStartDateInput_;
+    Fl_Multiline_Input* dailyPlanDescriptionInput_;
+    Fl_Hold_Browser* dailyPlanDayBrowser_;
+    Fl_Input* dailyPlanDayDateInput_;
+    Fl_Input* dailyPlanDayTitleInput_;
+    Fl_Multiline_Input* dailyPlanDayPassagesInput_;
+    Fl_Button* dailyPlanAddDayButton_;
+    Fl_Button* dailyPlanDuplicateDayButton_;
+    Fl_Button* dailyPlanRemoveDayButton_;
+    Fl_Button* dailyPlanSaveButton_;
+    Fl_Button* dailyPlanCancelButton_;
     std::vector<std::string> dailyDevotionalModules_;
     std::vector<std::string> dailyDevotionalLabels_;
     std::vector<DailyReadingPlanChoiceItem> dailyReadingPlanChoices_;
     DailyWorkspaceState dailyWorkspaceState_;
+    ReadingPlan dailyPlanEditorWorkingPlan_;
+    bool dailyPlanEditorDirty_ = false;
 
     // Studypad tab (global, not tied to study tabs)
     Fl_Group* documentsGroup_;
@@ -370,6 +388,18 @@ private:
     bool swordReadingPlanHasContentForDate(const std::string& moduleName,
                                            const std::string& dateIso) const;
     std::string dailyDevotionalHeadingLabel(const std::string& moduleName) const;
+    void enterDailyPlanEditMode();
+    void exitDailyPlanEditMode(bool discardChanges);
+    void loadDailyPlanEditor();
+    void rebuildDailyPlanDayBrowser();
+    void loadDailyPlanEditorSelection();
+    void updateDailyPlanEditorState();
+    void updateDailyPlanEditorSummaryFields();
+    void applyDailyPlanEditorSummaryFields();
+    void applyDailyPlanEditorSelectionFields();
+    bool validateDailyPlanEditorPlan(ReadingPlan& out, std::string& errorMessage);
+    bool maybeDiscardDailyPlanEditorChanges();
+    int selectedDailyPlanEditorIndex() const;
     void showDailyDevotionEntry(const std::string& moduleName,
                                 const std::string& dateIso);
     void showReadingPlanDay(int planId, const std::string& dateIso);
@@ -429,6 +459,13 @@ private:
     static void onDailyToggleComplete(Fl_Widget* w, void* data);
     static void onDailyToggleCompleteThrough(Fl_Widget* w, void* data);
     static void onDailyReschedule(Fl_Widget* w, void* data);
+    static void onDailyPlanEditorSelection(Fl_Widget* w, void* data);
+    static void onDailyPlanEditorFieldChanged(Fl_Widget* w, void* data);
+    static void onDailyPlanAddDay(Fl_Widget* w, void* data);
+    static void onDailyPlanDuplicateDay(Fl_Widget* w, void* data);
+    static void onDailyPlanRemoveDay(Fl_Widget* w, void* data);
+    static void onDailyPlanSave(Fl_Widget* w, void* data);
+    static void onDailyPlanCancel(Fl_Widget* w, void* data);
     static void onDocumentChoiceChange(Fl_Widget* w, void* data);
     static void onDocumentNew(Fl_Widget* w, void* data);
     static void onDocumentSave(Fl_Widget* w, void* data);

@@ -1,357 +1,112 @@
 #include "ui/ReadingPlanEditorDialog.h"
 
+#include "app/VerdadApp.h"
 #include "reading/DateUtils.h"
+#include "reading/ReadingPlanGenerator.h"
+#include "reading/ReadingPlanUtils.h"
+#include "sword/SwordManager.h"
+#include "ui/BiblePane.h"
+#include "ui/MainWindow.h"
 
 #include <FL/Fl.H>
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Button.H>
+#include <FL/Fl_Choice.H>
 #include <FL/Fl_Double_Window.H>
-#include <FL/Fl_Hold_Browser.H>
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Multiline_Input.H>
 #include <FL/Fl_Return_Button.H>
 #include <FL/fl_ask.H>
 
-#include <algorithm>
-#include <cctype>
+#include <regex>
 #include <sstream>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace verdad {
 namespace {
 
-std::string trimCopy(const std::string& text) {
-    size_t start = 0;
-    while (start < text.size() &&
-           std::isspace(static_cast<unsigned char>(text[start]))) {
-        ++start;
+bool parseNonNegativeInt(const std::string& text, int& out) {
+    std::string trimmed = reading::trimCopy(text);
+    if (trimmed.empty()) {
+        out = 0;
+        return true;
     }
 
-    size_t end = text.size();
-    while (end > start &&
-           std::isspace(static_cast<unsigned char>(text[end - 1]))) {
-        --end;
+    try {
+        out = std::stoi(trimmed);
+    } catch (...) {
+        return false;
     }
-
-    return text.substr(start, end - start);
+    return out >= 0;
 }
 
-std::vector<std::string> splitLines(const std::string& text) {
-    std::vector<std::string> lines;
-    std::istringstream stream(text);
-    std::string line;
-    while (std::getline(stream, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        line = trimCopy(line);
-        if (!line.empty()) lines.push_back(line);
-    }
-    return lines;
-}
+bool parseCustomBookRuleLine(const std::string& line,
+                             std::string& bookOut,
+                             int& repeatCountOut) {
+    static const std::regex kPattern(
+        R"(^\s*(.+?)(?:\s*(?:x|\*)\s*(\d+))?\s*$)",
+        std::regex::icase);
 
-std::string joinPassages(const std::vector<ReadingPlanPassage>& passages,
-                         const char* separator) {
-    std::ostringstream out;
-    for (size_t i = 0; i < passages.size(); ++i) {
-        if (i) out << separator;
-        out << passages[i].reference;
-    }
-    return out.str();
-}
-
-std::string formatDayLabel(const ReadingPlanDay& day) {
-    std::ostringstream label;
-    label << day.dateIso;
-    if (!trimCopy(day.title).empty()) {
-        label << "  |  " << day.title;
-    }
-    if (!day.passages.empty()) {
-        label << "  |  " << joinPassages(day.passages, "; ");
-    } else {
-        label << "  |  (No passages)";
-    }
-    return label.str();
-}
-
-bool compareDaysByDate(const ReadingPlanDay& lhs, const ReadingPlanDay& rhs) {
-    if (lhs.dateIso != rhs.dateIso) return lhs.dateIso < rhs.dateIso;
-    if (lhs.title != rhs.title) return lhs.title < rhs.title;
-    return joinPassages(lhs.passages, ";") < joinPassages(rhs.passages, ";");
-}
-
-void normalizePlanDays(std::vector<ReadingPlanDay>& days) {
-    for (auto& day : days) {
-        day.dateIso = trimCopy(day.dateIso);
-        day.title = trimCopy(day.title);
-
-        std::vector<ReadingPlanPassage> cleaned;
-        for (auto passage : day.passages) {
-            passage.reference = trimCopy(passage.reference);
-            if (!passage.reference.empty()) {
-                passage.id = 0;
-                cleaned.push_back(std::move(passage));
-            }
-        }
-        day.passages = std::move(cleaned);
-        day.id = 0;
+    std::smatch match;
+    if (!std::regex_match(line, match, kPattern)) {
+        return false;
     }
 
-    days.erase(std::remove_if(days.begin(), days.end(),
-                              [](const ReadingPlanDay& day) {
-                                  return day.dateIso.empty();
-                              }),
-               days.end());
-    std::sort(days.begin(), days.end(), compareDaysByDate);
-
-    std::vector<ReadingPlanDay> merged;
-    for (auto& day : days) {
-        if (!merged.empty() && merged.back().dateIso == day.dateIso) {
-            if (merged.back().title.empty()) merged.back().title = day.title;
-            merged.back().completed = merged.back().completed || day.completed;
-            merged.back().passages.insert(merged.back().passages.end(),
-                                          day.passages.begin(),
-                                          day.passages.end());
-        } else {
-            merged.push_back(std::move(day));
-        }
-    }
-    days = std::move(merged);
-}
-
-bool editPlanDay(ReadingPlanDay& day, bool creating) {
-    const int dialogW = 560;
-    const int dialogH = 360;
-    Fl_Double_Window dialog(dialogW, dialogH,
-                            creating ? "Add Reading Day" : "Edit Reading Day");
-    dialog.set_modal();
-
-    Fl_Box dateLabel(16, 18, 96, 24, "Date");
-    dateLabel.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-    Fl_Input dateInput(120, 16, dialogW - 136, 26);
-    dateInput.value(day.dateIso.c_str());
-    dateInput.tooltip("YYYY-MM-DD");
-
-    Fl_Box titleLabel(16, 54, 96, 24, "Title");
-    titleLabel.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-    Fl_Input titleInput(120, 52, dialogW - 136, 26);
-    titleInput.value(day.title.c_str());
-
-    Fl_Box passagesLabel(16, 92, 160, 24, "Passages");
-    passagesLabel.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-    Fl_Multiline_Input passagesInput(16, 118, dialogW - 32, 176);
-    passagesInput.tooltip("Enter one Bible reference per line");
-    passagesInput.value(joinPassages(day.passages, "\n").c_str());
-
-    Fl_Button cancelButton(dialogW - 184, dialogH - 42, 76, 28, "Cancel");
-    Fl_Return_Button okButton(dialogW - 96, dialogH - 42, 76, 28, "OK");
-
-    bool accepted = false;
-    cancelButton.callback([](Fl_Widget*, void* data) {
-        static_cast<Fl_Window*>(data)->hide();
-    }, &dialog);
-    okButton.callback([](Fl_Widget*, void* data) {
-        bool* acceptedPtr = static_cast<bool*>(data);
-        *acceptedPtr = true;
-    }, &accepted);
-
-    dialog.end();
-    dialog.hotspot(&okButton);
-    dialog.show();
-
-    while (dialog.shown()) {
-        Fl::wait();
-        if (!accepted) continue;
-
-        ReadingPlanDay updated = day;
-        updated.dateIso = trimCopy(dateInput.value() ? dateInput.value() : "");
-        updated.title = trimCopy(titleInput.value() ? titleInput.value() : "");
-        updated.passages.clear();
-        for (const auto& ref : splitLines(passagesInput.value() ? passagesInput.value() : "")) {
-            updated.passages.push_back(ReadingPlanPassage{0, ref});
-        }
-
-        if (!reading::isIsoDateInRange(updated.dateIso)) {
-            fl_alert("Enter a valid date in YYYY-MM-DD format.");
-            accepted = false;
-            continue;
-        }
-        if (updated.passages.empty()) {
-            fl_alert("Add at least one passage for this day.");
-            accepted = false;
-            continue;
-        }
-
-        day = std::move(updated);
-        dialog.hide();
-    }
-
-    return accepted;
-}
-
-bool promptShiftAllDays(std::vector<ReadingPlanDay>& days) {
-    Fl_Double_Window dialog(320, 138, "Bulk Shift Dates");
-    dialog.set_modal();
-
-    Fl_Box help(16, 16, 288, 30, "Shift every reading day by this many days.");
-    help.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
-    Fl_Box deltaLabel(16, 58, 70, 24, "Delta");
-    deltaLabel.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-    Fl_Input deltaInput(88, 56, 80, 26);
-    deltaInput.value("1");
-
-    Fl_Button cancelButton(144, 96, 76, 28, "Cancel");
-    Fl_Return_Button okButton(228, 96, 76, 28, "OK");
-
-    bool accepted = false;
-    cancelButton.callback([](Fl_Widget*, void* data) {
-        static_cast<Fl_Window*>(data)->hide();
-    }, &dialog);
-    okButton.callback([](Fl_Widget*, void* data) {
-        *static_cast<bool*>(data) = true;
-    }, &accepted);
-
-    dialog.end();
-    dialog.hotspot(&okButton);
-    dialog.show();
-
-    while (dialog.shown()) {
-        Fl::wait();
-        if (!accepted) continue;
-
-        int delta = 0;
+    bookOut = reading::trimCopy(match[1].str());
+    repeatCountOut = 1;
+    if (match.size() > 2 && match[2].matched) {
         try {
-            delta = std::stoi(trimCopy(deltaInput.value() ? deltaInput.value() : "0"));
+            repeatCountOut = std::stoi(match[2].str());
         } catch (...) {
-            fl_alert("Enter a whole number of days.");
-            accepted = false;
-            continue;
+            return false;
         }
-
-        for (auto& day : days) {
-            reading::Date current{};
-            if (!reading::parseIsoDate(day.dateIso, current)) continue;
-            day.dateIso = reading::formatIsoDate(reading::addDays(current, delta));
-        }
-        normalizePlanDays(days);
-        dialog.hide();
     }
 
-    return accepted;
+    return !bookOut.empty() && repeatCountOut > 0;
 }
 
-bool promptGenerateStarter(std::vector<ReadingPlanDay>& days,
-                           std::string& startDateIso) {
-    const int dialogW = 560;
-    const int dialogH = 360;
-    Fl_Double_Window dialog(dialogW, dialogH, "Generate Starter Schedule");
-    dialog.set_modal();
-
-    Fl_Box startLabel(16, 16, 96, 24, "Start date");
-    startLabel.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-    Fl_Input startInput(116, 14, 120, 26);
-    if (reading::isIsoDateInRange(startDateIso)) {
-        startInput.value(startDateIso.c_str());
-    } else {
-        startInput.value(reading::formatIsoDate(reading::today()).c_str());
+std::string resolvePreferredBibleModule(VerdadApp* app) {
+    if (!app) return "";
+    if (app->mainWindow() && app->mainWindow()->biblePane()) {
+        std::string current = reading::trimCopy(app->mainWindow()->biblePane()->currentModule());
+        if (!current.empty()) return current;
     }
 
-    Fl_Box prefixLabel(250, 16, 96, 24, "Title prefix");
-    prefixLabel.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-    Fl_Input prefixInput(342, 14, dialogW - 358, 26);
-    prefixInput.value("Day");
-
-    Fl_Box help(16, 54, dialogW - 32, 40,
-                "Enter one passage per line. The helper will create explicit dated days "
-                "that you can edit afterwards.");
-    help.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
-
-    Fl_Multiline_Input passagesInput(16, 98, dialogW - 32, 212);
-    passagesInput.tooltip("One reference per line");
-
-    Fl_Button cancelButton(dialogW - 184, dialogH - 42, 76, 28, "Cancel");
-    Fl_Return_Button okButton(dialogW - 96, dialogH - 42, 76, 28, "OK");
-
-    bool accepted = false;
-    cancelButton.callback([](Fl_Widget*, void* data) {
-        static_cast<Fl_Window*>(data)->hide();
-    }, &dialog);
-    okButton.callback([](Fl_Widget*, void* data) {
-        *static_cast<bool*>(data) = true;
-    }, &accepted);
-
-    dialog.end();
-    dialog.hotspot(&okButton);
-    dialog.show();
-
-    while (dialog.shown()) {
-        Fl::wait();
-        if (!accepted) continue;
-
-        std::string generatedStart = trimCopy(startInput.value() ? startInput.value() : "");
-        if (!reading::isIsoDateInRange(generatedStart)) {
-            fl_alert("Enter a valid start date in YYYY-MM-DD format.");
-            accepted = false;
-            continue;
-        }
-
-        std::vector<std::string> passages = splitLines(
-            passagesInput.value() ? passagesInput.value() : "");
-        if (passages.empty()) {
-            fl_alert("Enter at least one passage.");
-            accepted = false;
-            continue;
-        }
-
-        int replaceChoice = 1;
-        if (!days.empty()) {
-            replaceChoice = fl_choice("Replace the current days or append the generated starter schedule?",
-                                      "Cancel",
-                                      "Replace",
-                                      "Append");
-            if (replaceChoice == 0) {
-                accepted = false;
-                continue;
-            }
-        }
-
-        std::vector<ReadingPlanDay> generated;
-        reading::Date startDate{};
-        reading::parseIsoDate(generatedStart, startDate);
-        const std::string prefix = trimCopy(prefixInput.value() ? prefixInput.value() : "");
-        for (size_t i = 0; i < passages.size(); ++i) {
-            ReadingPlanDay day;
-            day.dateIso = reading::formatIsoDate(
-                reading::addDays(startDate, static_cast<int>(i)));
-            if (!prefix.empty()) {
-                day.title = prefix + " " + std::to_string(i + 1);
-            }
-            day.passages.push_back(ReadingPlanPassage{0, passages[i]});
-            generated.push_back(std::move(day));
-        }
-
-        if (replaceChoice == 1 || days.empty()) {
-            days = std::move(generated);
-        } else {
-            days.insert(days.end(), generated.begin(), generated.end());
-        }
-        normalizePlanDays(days);
-        startDateIso = generatedStart;
-        dialog.hide();
-    }
-
-    return accepted;
+    auto modules = app->swordManager().getBibleModules();
+    return modules.empty() ? std::string() : modules.front().name;
 }
 
-class ReadingPlanEditorController {
+std::string timeframeLabel(ReadingPlanTimeframeKind kind, int value, const std::string& endDate) {
+    switch (kind) {
+    case ReadingPlanTimeframeKind::Days:
+        return std::to_string(value) + " day" + (value == 1 ? "" : "s");
+    case ReadingPlanTimeframeKind::Weeks:
+        return std::to_string(value) + " week" + (value == 1 ? "" : "s");
+    case ReadingPlanTimeframeKind::Months:
+        return std::to_string(value) + " month" + (value == 1 ? "" : "s");
+    case ReadingPlanTimeframeKind::OneYear:
+        return "1 year";
+    case ReadingPlanTimeframeKind::TwoYears:
+        return "2 years";
+    case ReadingPlanTimeframeKind::Custom:
+        return endDate.empty() ? "Custom range" : ("Through " + endDate);
+    }
+    return "";
+}
+
+class ReadingPlanCreationController {
 public:
-    ReadingPlanEditorController(ReadingPlan& plan, bool creating)
-        : dialog_(900, 620, creating ? "New Reading Plan" : "Edit Reading Plan")
-        , workingPlan_(plan)
-        , creating_(creating) {
+    ReadingPlanCreationController(VerdadApp* app, ReadingPlan& plan)
+        : app_(app)
+        , dialog_(780, 640, "New Reading Plan")
+        , workingPlan_(plan) {
         dialog_.set_modal();
+        moduleName_ = resolvePreferredBibleModule(app_);
         buildUi();
-        loadFromPlan();
+        loadDefaults();
+        updateControls();
+        updateSummary();
     }
 
     bool open() {
@@ -365,72 +120,127 @@ public:
     const ReadingPlan& plan() const { return workingPlan_; }
 
 private:
+    VerdadApp* app_ = nullptr;
     Fl_Double_Window dialog_;
     ReadingPlan workingPlan_;
-    bool creating_ = false;
+    std::string moduleName_;
     bool accepted_ = false;
 
     Fl_Input* nameInput_ = nullptr;
-    Fl_Multiline_Input* descriptionInput_ = nullptr;
     Fl_Input* colorInput_ = nullptr;
     Fl_Input* startDateInput_ = nullptr;
-    Fl_Hold_Browser* dayBrowser_ = nullptr;
+    Fl_Multiline_Input* descriptionInput_ = nullptr;
+    Fl_Choice* timeframeChoice_ = nullptr;
+    Fl_Input* timeframeValueInput_ = nullptr;
+    Fl_Input* endDateInput_ = nullptr;
+    Fl_Choice* splitChoice_ = nullptr;
+    Fl_Input* wholeBibleCountInput_ = nullptr;
+    Fl_Input* oldTestamentCountInput_ = nullptr;
+    Fl_Input* newTestamentCountInput_ = nullptr;
+    Fl_Multiline_Input* customBooksInput_ = nullptr;
+    Fl_Box* sourceModuleBox_ = nullptr;
     Fl_Box* summaryBox_ = nullptr;
-    Fl_Button* editDayButton_ = nullptr;
-    Fl_Button* duplicateDayButton_ = nullptr;
-    Fl_Button* removeDayButton_ = nullptr;
-    Fl_Button* moveEarlierButton_ = nullptr;
-    Fl_Button* moveLaterButton_ = nullptr;
 
     void buildUi() {
         const int margin = 14;
-        const int labelW = 82;
+        const int labelW = 90;
+        const int rowH = 26;
 
-        Fl_Box* nameLabel = new Fl_Box(margin, 16, labelW, 24, "Name");
+        auto* nameLabel = new Fl_Box(margin, 16, labelW, 24, "Name");
         nameLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-        nameInput_ = new Fl_Input(margin + labelW, 14, 320, 26);
+        nameInput_ = new Fl_Input(margin + labelW, 14, 340, rowH);
 
-        Fl_Box* colorLabel = new Fl_Box(430, 16, 54, 24, "Color");
+        auto* colorLabel = new Fl_Box(460, 16, 42, 24, "Color");
         colorLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-        colorInput_ = new Fl_Input(486, 14, 100, 26);
+        colorInput_ = new Fl_Input(506, 14, 92, rowH);
         colorInput_->tooltip("Optional hex color, for example #5d8aa8");
 
-        Fl_Box* startLabel = new Fl_Box(604, 16, 70, 24, "Start");
+        auto* startLabel = new Fl_Box(610, 16, 44, 24, "Start");
         startLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-        startDateInput_ = new Fl_Input(676, 14, 120, 26);
+        startDateInput_ = new Fl_Input(656, 14, 110, rowH);
         startDateInput_->tooltip("YYYY-MM-DD");
 
-        Fl_Box* descriptionLabel = new Fl_Box(margin, 52, labelW, 24, "Notes");
-        descriptionLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-        descriptionInput_ = new Fl_Multiline_Input(margin + labelW, 50, 700, 64);
+        auto* notesLabel = new Fl_Box(margin, 52, labelW, 24, "Notes");
+        notesLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        descriptionInput_ = new Fl_Multiline_Input(margin + labelW, 50, 662, 68);
 
-        dayBrowser_ = new Fl_Hold_Browser(margin, 128, 610, 410);
-        dayBrowser_->callback(onDaySelected, this);
+        auto* timeframeLabelBox = new Fl_Box(margin, 132, 110, 24, "Time frame");
+        timeframeLabelBox->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        timeframeChoice_ = new Fl_Choice(126, 130, 168, rowH);
+        timeframeChoice_->add("Days");
+        timeframeChoice_->add("Weeks");
+        timeframeChoice_->add("Months");
+        timeframeChoice_->add("One year");
+        timeframeChoice_->add("Two years");
+        timeframeChoice_->add("Custom");
+        timeframeChoice_->callback(onControlChanged, this);
 
-        Fl_Button* addDayButton = new Fl_Button(640, 128, 120, 28, "Add Day");
-        addDayButton->callback(onAddDay, this);
-        editDayButton_ = new Fl_Button(640, 164, 120, 28, "Edit Day");
-        editDayButton_->callback(onEditDay, this);
-        duplicateDayButton_ = new Fl_Button(640, 200, 120, 28, "Duplicate");
-        duplicateDayButton_->callback(onDuplicateDay, this);
-        removeDayButton_ = new Fl_Button(640, 236, 120, 28, "Remove");
-        removeDayButton_->callback(onRemoveDay, this);
-        moveEarlierButton_ = new Fl_Button(640, 284, 120, 28, "Move Earlier");
-        moveEarlierButton_->callback(onMoveEarlier, this);
-        moveLaterButton_ = new Fl_Button(640, 320, 120, 28, "Move Later");
-        moveLaterButton_->callback(onMoveLater, this);
+        auto* amountLabel = new Fl_Box(306, 132, 54, 24, "Amount");
+        amountLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        timeframeValueInput_ = new Fl_Input(362, 130, 70, rowH);
+        timeframeValueInput_->callback(onControlChanged, this);
+        timeframeValueInput_->when(FL_WHEN_CHANGED);
 
-        Fl_Button* shiftButton = new Fl_Button(640, 372, 120, 28, "Bulk Shift");
-        shiftButton->callback(onBulkShift, this);
-        Fl_Button* generateButton = new Fl_Button(640, 408, 180, 28, "Generate Starter...");
-        generateButton->callback(onGenerateStarter, this);
+        auto* endLabel = new Fl_Box(446, 132, 58, 24, "End date");
+        endLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        endDateInput_ = new Fl_Input(508, 130, 110, rowH);
+        endDateInput_->tooltip("YYYY-MM-DD");
+        endDateInput_->callback(onControlChanged, this);
+        endDateInput_->when(FL_WHEN_CHANGED);
 
-        summaryBox_ = new Fl_Box(640, 456, 230, 82, "");
+        auto* splitLabel = new Fl_Box(632, 132, 40, 24, "Split");
+        splitLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        splitChoice_ = new Fl_Choice(676, 130, 90, rowH);
+        splitChoice_->add("Chapter");
+        splitChoice_->add("Verse");
+        splitChoice_->callback(onControlChanged, this);
+
+        auto* sourceLabel = new Fl_Box(margin, 166, 100, 24, "Bible source");
+        sourceLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        sourceModuleBox_ = new Fl_Box(126, 166, 640, 24, "");
+        sourceModuleBox_->box(FL_DOWN_FRAME);
+        sourceModuleBox_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+
+        auto* rangeHelp = new Fl_Box(margin, 200, 752, 32,
+                                     "Use repeat counts to combine ranges. "
+                                     "For example, OT=1 and NT=2 will schedule the Old Testament once and the New Testament twice.");
+        rangeHelp->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
+
+        auto* wholeLabel = new Fl_Box(margin, 240, 110, 24, "Whole Bible");
+        wholeLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        wholeBibleCountInput_ = new Fl_Input(126, 238, 54, rowH);
+        wholeBibleCountInput_->callback(onControlChanged, this);
+        wholeBibleCountInput_->when(FL_WHEN_CHANGED);
+
+        auto* otLabel = new Fl_Box(202, 240, 100, 24, "Old Testament");
+        otLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        oldTestamentCountInput_ = new Fl_Input(304, 238, 54, rowH);
+        oldTestamentCountInput_->callback(onControlChanged, this);
+        oldTestamentCountInput_->when(FL_WHEN_CHANGED);
+
+        auto* ntLabel = new Fl_Box(382, 240, 104, 24, "New Testament");
+        ntLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        newTestamentCountInput_ = new Fl_Input(488, 238, 54, rowH);
+        newTestamentCountInput_->callback(onControlChanged, this);
+        newTestamentCountInput_->when(FL_WHEN_CHANGED);
+
+        auto* customLabel = new Fl_Box(margin, 278, 160, 24, "Custom books");
+        customLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        customBooksInput_ = new Fl_Multiline_Input(margin, 304, 466, 272);
+        customBooksInput_->tooltip("One book per line. Optional repeat suffix: John x5");
+        customBooksInput_->callback(onControlChanged, this);
+        customBooksInput_->when(FL_WHEN_CHANGED);
+
+        auto* customHelp = new Fl_Box(margin, 580, 466, 38,
+                                      "Custom book lines can use plain book names or a repeat suffix.\nExamples: John   or   Romans x3");
+        customHelp->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
+
+        summaryBox_ = new Fl_Box(500, 304, 266, 314, "");
         summaryBox_->box(FL_DOWN_FRAME);
         summaryBox_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
 
-        Fl_Button* cancelButton = new Fl_Button(dialog_.w() - 184, dialog_.h() - 42, 76, 28, "Cancel");
-        auto* okButton = new Fl_Return_Button(dialog_.w() - 96, dialog_.h() - 42, 76, 28, "OK");
+        auto* cancelButton = new Fl_Button(dialog_.w() - 184, dialog_.h() - 42, 76, 28, "Cancel");
+        auto* okButton = new Fl_Return_Button(dialog_.w() - 96, dialog_.h() - 42, 76, 28, "Create");
         cancelButton->callback(onCancel, this);
         okButton->callback(onAccept, this);
 
@@ -438,277 +248,230 @@ private:
         dialog_.hotspot(okButton);
     }
 
-    void loadFromPlan() {
+    void loadDefaults() {
         nameInput_->value(workingPlan_.summary.name.c_str());
-        descriptionInput_->value(workingPlan_.summary.description.c_str());
         colorInput_->value(workingPlan_.summary.color.c_str());
-        if (reading::isIsoDateInRange(workingPlan_.summary.startDateIso)) {
-            startDateInput_->value(workingPlan_.summary.startDateIso.c_str());
+        descriptionInput_->value(workingPlan_.summary.description.c_str());
+
+        std::string startDate = workingPlan_.summary.startDateIso;
+        if (!reading::isIsoDateInRange(startDate)) {
+            startDate = reading::formatIsoDate(reading::today());
+        }
+        startDateInput_->value(startDate.c_str());
+
+        timeframeChoice_->value(3);
+        timeframeValueInput_->value("30");
+        endDateInput_->value("");
+        splitChoice_->value(0);
+        wholeBibleCountInput_->value("1");
+        oldTestamentCountInput_->value("0");
+        newTestamentCountInput_->value("0");
+        customBooksInput_->value("");
+
+        if (moduleName_.empty()) {
+            sourceModuleBox_->copy_label("No Bible module available.");
         } else {
-            startDateInput_->value(reading::formatIsoDate(reading::today()).c_str());
-        }
-
-        normalizePlanDays(workingPlan_.days);
-        rebuildDayBrowser();
-        updateDayButtons();
-    }
-
-    void rebuildDayBrowser() {
-        if (!dayBrowser_) return;
-        const int previous = dayBrowser_->value();
-        dayBrowser_->clear();
-        for (const auto& day : workingPlan_.days) {
-            dayBrowser_->add(formatDayLabel(day).c_str());
-        }
-        if (!workingPlan_.days.empty()) {
-            int target = previous;
-            if (target <= 0 || target > dayBrowser_->size()) {
-                target = 1;
+            std::string sourceLabel = moduleName_;
+            const std::string description =
+                reading::trimCopy(app_->swordManager().getModuleDescription(moduleName_));
+            if (!description.empty() && description != moduleName_) {
+                sourceLabel += " - " + description;
             }
-            dayBrowser_->select(target);
+            sourceModuleBox_->copy_label(sourceLabel.c_str());
         }
-        updateSummary();
     }
 
-    int selectedDayIndex() const {
-        if (!dayBrowser_) return -1;
-        int line = dayBrowser_->value();
-        if (line <= 0 || line > static_cast<int>(workingPlan_.days.size())) return -1;
-        return line - 1;
+    ReadingPlanTimeframeKind timeframeKindFromChoice() const {
+        switch (timeframeChoice_ ? timeframeChoice_->value() : 3) {
+        case 0:
+            return ReadingPlanTimeframeKind::Days;
+        case 1:
+            return ReadingPlanTimeframeKind::Weeks;
+        case 2:
+            return ReadingPlanTimeframeKind::Months;
+        case 3:
+            return ReadingPlanTimeframeKind::OneYear;
+        case 4:
+            return ReadingPlanTimeframeKind::TwoYears;
+        case 5:
+            return ReadingPlanTimeframeKind::Custom;
+        default:
+            return ReadingPlanTimeframeKind::OneYear;
+        }
+    }
+
+    void updateControls() {
+        const ReadingPlanTimeframeKind kind = timeframeKindFromChoice();
+        const bool needsAmount =
+            kind == ReadingPlanTimeframeKind::Days ||
+            kind == ReadingPlanTimeframeKind::Weeks ||
+            kind == ReadingPlanTimeframeKind::Months;
+        const bool needsEndDate = kind == ReadingPlanTimeframeKind::Custom;
+
+        if (needsAmount) timeframeValueInput_->activate();
+        else timeframeValueInput_->deactivate();
+        if (needsEndDate) endDateInput_->activate();
+        else endDateInput_->deactivate();
     }
 
     void updateSummary() {
-        if (!summaryBox_) return;
+        int wholeBibleCount = 0;
+        int oldTestamentCount = 0;
+        int newTestamentCount = 0;
+        parseNonNegativeInt(wholeBibleCountInput_->value() ? wholeBibleCountInput_->value() : "",
+                            wholeBibleCount);
+        parseNonNegativeInt(oldTestamentCountInput_->value() ? oldTestamentCountInput_->value() : "",
+                            oldTestamentCount);
+        parseNonNegativeInt(newTestamentCountInput_->value() ? newTestamentCountInput_->value() : "",
+                            newTestamentCount);
 
-        size_t totalPassages = 0;
-        for (const auto& day : workingPlan_.days) {
-            totalPassages += day.passages.size();
+        int customRuleCount = 0;
+        for (const auto& line : reading::splitPlanLines(
+                 customBooksInput_->value() ? customBooksInput_->value() : "")) {
+            std::string book;
+            int repeat = 0;
+            if (parseCustomBookRuleLine(line, book, repeat)) {
+                ++customRuleCount;
+            }
         }
 
         std::ostringstream summary;
-        summary << "Days: " << workingPlan_.days.size()
-                << "\nPassages: " << totalPassages;
-        if (!workingPlan_.days.empty()) {
-            summary << "\nFirst: " << workingPlan_.days.front().dateIso
-                    << "\nLast: " << workingPlan_.days.back().dateIso;
-        }
+        summary << "Generator summary\n\n";
+        summary << "Starts: "
+                << (startDateInput_->value() ? startDateInput_->value() : "") << "\n";
+        summary << "Time frame: "
+                << timeframeLabel(timeframeKindFromChoice(),
+                                  parsePreviewAmount(),
+                                  endDateInput_->value() ? endDateInput_->value() : "")
+                << "\n";
+        summary << "Split by: " << ((splitChoice_ && splitChoice_->value() == 1) ? "Verse" : "Chapter") << "\n";
+        summary << "Whole Bible: " << wholeBibleCount << "\n";
+        summary << "Old Testament: " << oldTestamentCount << "\n";
+        summary << "New Testament: " << newTestamentCount << "\n";
+        summary << "Custom book lines: " << customRuleCount << "\n\n";
+        summary << "Custom book examples:\n";
+        summary << "John\n";
+        summary << "Romans x2\n";
+        summary << "1 Samuel x3";
         summaryBox_->copy_label(summary.str().c_str());
     }
 
-    void updateDayButtons() {
-        const int index = selectedDayIndex();
-        const bool hasSelection = index >= 0;
-        if (editDayButton_) hasSelection ? editDayButton_->activate() : editDayButton_->deactivate();
-        if (duplicateDayButton_) hasSelection ? duplicateDayButton_->activate() : duplicateDayButton_->deactivate();
-        if (removeDayButton_) hasSelection ? removeDayButton_->activate() : removeDayButton_->deactivate();
-        if (moveEarlierButton_) {
-            if (index > 0) moveEarlierButton_->activate();
-            else moveEarlierButton_->deactivate();
-        }
-        if (moveLaterButton_) {
-            if (index >= 0 && index + 1 < static_cast<int>(workingPlan_.days.size())) {
-                moveLaterButton_->activate();
-            } else {
-                moveLaterButton_->deactivate();
-            }
-        }
+    int parsePreviewAmount() const {
+        int value = 0;
+        parseNonNegativeInt(timeframeValueInput_->value() ? timeframeValueInput_->value() : "",
+                            value);
+        return value;
     }
 
-    void addDay() {
-        ReadingPlanDay day;
-        if (!workingPlan_.days.empty()) {
-            reading::Date last{};
-            if (reading::parseIsoDate(workingPlan_.days.back().dateIso, last)) {
-                day.dateIso = reading::formatIsoDate(reading::addDays(last, 1));
-            }
-        }
-        if (day.dateIso.empty()) {
-            std::string start = trimCopy(startDateInput_->value() ? startDateInput_->value() : "");
-            if (reading::isIsoDateInRange(start)) {
-                day.dateIso = start;
-            } else {
-                day.dateIso = reading::formatIsoDate(reading::today());
-            }
-        }
-        if (!editPlanDay(day, true)) return;
-        workingPlan_.days.push_back(std::move(day));
-        normalizePlanDays(workingPlan_.days);
-        rebuildDayBrowser();
-        updateDayButtons();
-    }
+    bool buildRequest(ReadingPlanGenerationRequest& request, std::string& errorMessage) const {
+        request.moduleName = moduleName_;
+        request.name = reading::trimCopy(nameInput_->value() ? nameInput_->value() : "");
+        request.description =
+            reading::trimCopy(descriptionInput_->value() ? descriptionInput_->value() : "");
+        request.color = reading::trimCopy(colorInput_->value() ? colorInput_->value() : "");
+        request.startDateIso =
+            reading::trimCopy(startDateInput_->value() ? startDateInput_->value() : "");
+        request.timeframeKind = timeframeKindFromChoice();
+        request.customEndDateIso =
+            reading::trimCopy(endDateInput_->value() ? endDateInput_->value() : "");
+        request.splitMode =
+            (splitChoice_ && splitChoice_->value() == 1)
+                ? ReadingPlanSplitMode::Verse
+                : ReadingPlanSplitMode::Chapter;
 
-    void editSelectedDay() {
-        int index = selectedDayIndex();
-        if (index < 0) return;
-        ReadingPlanDay edited = workingPlan_.days[static_cast<size_t>(index)];
-        if (!editPlanDay(edited, false)) return;
-        workingPlan_.days[static_cast<size_t>(index)] = std::move(edited);
-        normalizePlanDays(workingPlan_.days);
-        rebuildDayBrowser();
-        updateDayButtons();
-    }
-
-    void duplicateSelectedDay() {
-        int index = selectedDayIndex();
-        if (index < 0) return;
-        ReadingPlanDay copy = workingPlan_.days[static_cast<size_t>(index)];
-        copy.id = 0;
-        for (auto& passage : copy.passages) {
-            passage.id = 0;
-        }
-        reading::Date date{};
-        if (reading::parseIsoDate(copy.dateIso, date)) {
-            copy.dateIso = reading::formatIsoDate(reading::addDays(date, 1));
-        }
-        workingPlan_.days.push_back(std::move(copy));
-        normalizePlanDays(workingPlan_.days);
-        rebuildDayBrowser();
-        updateDayButtons();
-    }
-
-    void removeSelectedDay() {
-        int index = selectedDayIndex();
-        if (index < 0) return;
-        workingPlan_.days.erase(workingPlan_.days.begin() + index);
-        rebuildDayBrowser();
-        updateDayButtons();
-    }
-
-    void moveSelected(int delta) {
-        int index = selectedDayIndex();
-        int other = index + delta;
-        if (index < 0 || other < 0 ||
-            other >= static_cast<int>(workingPlan_.days.size())) {
-            return;
-        }
-
-        std::swap(workingPlan_.days[static_cast<size_t>(index)].dateIso,
-                  workingPlan_.days[static_cast<size_t>(other)].dateIso);
-        normalizePlanDays(workingPlan_.days);
-        rebuildDayBrowser();
-        if (dayBrowser_ && other >= 0 && other < dayBrowser_->size()) {
-            dayBrowser_->select(other + 1);
-        }
-        updateDayButtons();
-    }
-
-    bool validateAndStore() {
-        ReadingPlan updated = workingPlan_;
-        updated.summary.name = trimCopy(nameInput_->value() ? nameInput_->value() : "");
-        updated.summary.description =
-            trimCopy(descriptionInput_->value() ? descriptionInput_->value() : "");
-        updated.summary.color = trimCopy(colorInput_->value() ? colorInput_->value() : "");
-        updated.summary.startDateIso =
-            trimCopy(startDateInput_->value() ? startDateInput_->value() : "");
-
-        if (updated.summary.name.empty()) {
-            fl_alert("Enter a plan name.");
-            return false;
-        }
-        if (!updated.summary.startDateIso.empty() &&
-            !reading::isIsoDateInRange(updated.summary.startDateIso)) {
-            fl_alert("Enter a valid start date in YYYY-MM-DD format.");
-            return false;
-        }
-        if (updated.days.empty()) {
-            fl_alert("Add at least one reading day.");
+        if (!parseNonNegativeInt(timeframeValueInput_->value() ? timeframeValueInput_->value() : "",
+                                 request.timeframeValue)) {
+            errorMessage = "Enter a whole-number amount for the selected time frame.";
             return false;
         }
 
-        normalizePlanDays(updated.days);
-        for (const auto& day : updated.days) {
-            if (!reading::isIsoDateInRange(day.dateIso)) {
-                fl_alert("One of the reading days has an invalid date.");
+        int wholeBibleCount = 0;
+        int oldTestamentCount = 0;
+        int newTestamentCount = 0;
+        if (!parseNonNegativeInt(wholeBibleCountInput_->value() ? wholeBibleCountInput_->value() : "",
+                                 wholeBibleCount) ||
+            !parseNonNegativeInt(oldTestamentCountInput_->value() ? oldTestamentCountInput_->value() : "",
+                                 oldTestamentCount) ||
+            !parseNonNegativeInt(newTestamentCountInput_->value() ? newTestamentCountInput_->value() : "",
+                                 newTestamentCount)) {
+            errorMessage = "Range counts must be whole numbers.";
+            return false;
+        }
+
+        if (wholeBibleCount > 0) {
+            request.scopeRules.push_back(
+                ReadingPlanScopeRule{ReadingPlanScopeKind::WholeBible, wholeBibleCount, {}});
+        }
+        if (oldTestamentCount > 0) {
+            request.scopeRules.push_back(
+                ReadingPlanScopeRule{ReadingPlanScopeKind::OldTestament, oldTestamentCount, {}});
+        }
+        if (newTestamentCount > 0) {
+            request.scopeRules.push_back(
+                ReadingPlanScopeRule{ReadingPlanScopeKind::NewTestament, newTestamentCount, {}});
+        }
+
+        for (const auto& line : reading::splitPlanLines(
+                 customBooksInput_->value() ? customBooksInput_->value() : "")) {
+            std::string book;
+            int repeatCount = 0;
+            if (!parseCustomBookRuleLine(line, book, repeatCount)) {
+                errorMessage =
+                    "Custom book lines must be a book name with an optional xN suffix.";
                 return false;
             }
-            if (day.passages.empty()) {
-                fl_alert("Every reading day needs at least one passage.");
-                return false;
-            }
+            request.scopeRules.push_back(
+                ReadingPlanScopeRule{ReadingPlanScopeKind::Books, repeatCount, {book}});
         }
 
-        workingPlan_ = std::move(updated);
-        workingPlan_.summary.totalDays = static_cast<int>(workingPlan_.days.size());
-        workingPlan_.summary.completedDays = 0;
-        for (const auto& day : workingPlan_.days) {
-            if (day.completed) ++workingPlan_.summary.completedDays;
+        if (request.scopeRules.empty()) {
+            errorMessage = "Select at least one range to generate.";
+            return false;
         }
+
         return true;
     }
 
-    static void onDaySelected(Fl_Widget*, void* data) {
-        auto* self = static_cast<ReadingPlanEditorController*>(data);
-        if (!self) return;
-        self->updateDayButtons();
-    }
-
-    static void onAddDay(Fl_Widget*, void* data) {
-        auto* self = static_cast<ReadingPlanEditorController*>(data);
-        if (!self) return;
-        self->addDay();
-    }
-
-    static void onEditDay(Fl_Widget*, void* data) {
-        auto* self = static_cast<ReadingPlanEditorController*>(data);
-        if (!self) return;
-        self->editSelectedDay();
-    }
-
-    static void onDuplicateDay(Fl_Widget*, void* data) {
-        auto* self = static_cast<ReadingPlanEditorController*>(data);
-        if (!self) return;
-        self->duplicateSelectedDay();
-    }
-
-    static void onRemoveDay(Fl_Widget*, void* data) {
-        auto* self = static_cast<ReadingPlanEditorController*>(data);
-        if (!self) return;
-        self->removeSelectedDay();
-    }
-
-    static void onMoveEarlier(Fl_Widget*, void* data) {
-        auto* self = static_cast<ReadingPlanEditorController*>(data);
-        if (!self) return;
-        self->moveSelected(-1);
-    }
-
-    static void onMoveLater(Fl_Widget*, void* data) {
-        auto* self = static_cast<ReadingPlanEditorController*>(data);
-        if (!self) return;
-        self->moveSelected(1);
-    }
-
-    static void onBulkShift(Fl_Widget*, void* data) {
-        auto* self = static_cast<ReadingPlanEditorController*>(data);
-        if (!self) return;
-        if (promptShiftAllDays(self->workingPlan_.days)) {
-            self->rebuildDayBrowser();
-            self->updateDayButtons();
+    bool validateAndGenerate() {
+        if (moduleName_.empty()) {
+            fl_alert("No Bible module is available for reading-plan generation.");
+            return false;
         }
+
+        ReadingPlanGenerationRequest request;
+        std::string errorMessage;
+        if (!buildRequest(request, errorMessage)) {
+            fl_alert("%s", errorMessage.c_str());
+            return false;
+        }
+
+        ReadingPlan generated;
+        if (!generateReadingPlan(app_->swordManager(), request, generated, &errorMessage)) {
+            fl_alert("%s", errorMessage.c_str());
+            return false;
+        }
+
+        workingPlan_ = std::move(generated);
+        return true;
     }
 
-    static void onGenerateStarter(Fl_Widget*, void* data) {
-        auto* self = static_cast<ReadingPlanEditorController*>(data);
+    static void onControlChanged(Fl_Widget*, void* data) {
+        auto* self = static_cast<ReadingPlanCreationController*>(data);
         if (!self) return;
-        std::string startDate =
-            trimCopy(self->startDateInput_->value() ? self->startDateInput_->value() : "");
-        if (promptGenerateStarter(self->workingPlan_.days, startDate)) {
-            self->startDateInput_->value(startDate.c_str());
-            self->rebuildDayBrowser();
-            self->updateDayButtons();
-        }
+        self->updateControls();
+        self->updateSummary();
     }
 
     static void onCancel(Fl_Widget*, void* data) {
-        auto* self = static_cast<ReadingPlanEditorController*>(data);
+        auto* self = static_cast<ReadingPlanCreationController*>(data);
         if (!self) return;
         self->dialog_.hide();
     }
 
     static void onAccept(Fl_Widget*, void* data) {
-        auto* self = static_cast<ReadingPlanEditorController*>(data);
+        auto* self = static_cast<ReadingPlanCreationController*>(data);
         if (!self) return;
-        if (!self->validateAndStore()) return;
+        if (!self->validateAndGenerate()) return;
         self->accepted_ = true;
         self->dialog_.hide();
     }
@@ -716,8 +479,8 @@ private:
 
 } // namespace
 
-bool ReadingPlanEditorDialog::editPlan(ReadingPlan& plan, bool creating) {
-    ReadingPlanEditorController controller(plan, creating);
+bool ReadingPlanEditorDialog::createPlan(VerdadApp* app, ReadingPlan& plan) {
+    ReadingPlanCreationController controller(app, plan);
     if (!controller.open()) return false;
     plan = controller.plan();
     return true;

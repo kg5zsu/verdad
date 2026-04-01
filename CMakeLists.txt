@@ -101,7 +101,9 @@ set(SOURCES
     src/sword/SwordPaths.cpp
     src/search/SearchIndexer.cpp
     src/search/SmartSearch.cpp
+    src/reading/ReadingPlanGenerator.cpp
     src/reading/ReadingPlanManager.cpp
+    src/reading/ReadingPlanUtils.cpp
     src/tags/TagManager.cpp
     src/ui/MainWindow.cpp
     src/ui/BibleBookChoice.cpp
@@ -132,7 +134,9 @@ set(HEADERS
     src/search/SearchIndexer.h
     src/search/SmartSearch.h
     src/reading/DateUtils.h
+    src/reading/ReadingPlanGenerator.h
     src/reading/ReadingPlanManager.h
+    src/reading/ReadingPlanUtils.h
     src/tags/TagManager.h
     src/ui/MainWindow.h
     src/ui/BibleBookChoice.h

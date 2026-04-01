@@ -5,9 +5,11 @@
 
 namespace verdad {
 
+class VerdadApp;
+
 class ReadingPlanEditorDialog {
 public:
-    static bool editPlan(ReadingPlan& plan, bool creating);
+    static bool createPlan(VerdadApp* app, ReadingPlan& plan);
 };
 
 } // namespace verdad
