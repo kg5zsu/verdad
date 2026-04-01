@@ -9,10 +9,64 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <string_view>
 #include <utility>
 
 namespace verdad {
+
+class PopupListBrowser : public Fl_Hold_Browser {
+public:
+    PopupListBrowser(FilterableChoiceWidget* owner, int X, int Y, int W, int H)
+        : Fl_Hold_Browser(X, Y, W, H)
+        , owner_(owner) {}
+
+    int handle(int event) override {
+        if (event == FL_PUSH) {
+            const int button = Fl::event_button();
+            if (button == FL_LEFT_MOUSE || button == FL_MIDDLE_MOUSE) {
+                pressedLine_ = lineAtEvent();
+            } else {
+                pressedLine_ = 0;
+            }
+        }
+
+        const int button = (event == FL_RELEASE) ? Fl::event_button() : 0;
+        const int line = (event == FL_RELEASE) ? lineAtEvent() : 0;
+        const int handled = Fl_Hold_Browser::handle(event);
+
+        if (event == FL_RELEASE && owner_ &&
+            (button == FL_LEFT_MOUSE || button == FL_MIDDLE_MOUSE)) {
+            if (!owner_->popupVisible()) {
+                pressedLine_ = 0;
+                return 1;
+            }
+
+            int targetLine = line;
+            if (pressedLine_ > 0 && (targetLine <= 0 || targetLine == pressedLine_)) {
+                targetLine = pressedLine_;
+            }
+            if (targetLine <= 0) {
+                targetLine = value();
+            }
+
+            owner_->selectPopupLine(targetLine, true);
+            pressedLine_ = 0;
+            return 1;
+        }
+
+        return handled;
+    }
+
+private:
+    int lineAtEvent() {
+        void* item = find_item(Fl::event_y());
+        return item ? lineno(item) : 0;
+    }
+
+    FilterableChoiceWidget* owner_ = nullptr;
+    int pressedLine_ = 0;
+};
 
 class PopupListWindow : public Fl_Double_Window {
 public:
@@ -284,7 +338,7 @@ void FilterableChoiceWidget::ensurePopupCreated() {
     Fl_Group::current(hostWindow);
     popupWindow_ = new PopupListWindow(this, x(), y() + h() - 1, w(), 1);
     popupWindow_->begin();
-    popupBrowser_ = new Fl_Hold_Browser(0, 0, w(), 1);
+    popupBrowser_ = new PopupListBrowser(this, 0, 0, w(), 1);
     popupBrowser_->box(FL_DOWN_BOX);
     popupBrowser_->has_scrollbar(Fl_Browser_::VERTICAL);
     popupBrowser_->when(FL_WHEN_CHANGED);
@@ -619,6 +673,22 @@ int FilterableChoiceWidget::dispatchEvent(int event, Fl_Window* window) {
         }
     }
 
+    if (event == FL_PUSH && Fl::event_button() == FL_LEFT_MOUSE) {
+        const int rootX = Fl::event_x_root();
+        const int rootY = Fl::event_y_root();
+        FilterableChoiceWidget* target = widgetAtRootPoint(rootX, rootY);
+        if (target && target->input() &&
+            choice_popup::rootPointInsideWidget(target->input(), rootX, rootY) &&
+            Fl::focus() != target->input()) {
+            const char* currentValue = target->input()->value();
+            const int textLength = currentValue ? static_cast<int>(std::strlen(currentValue)) : 0;
+            target->input()->take_focus();
+            target->input()->insert_position(textLength, 0);
+            target->input()->redraw();
+            return 1;
+        }
+    }
+
     if ((event == FL_KEYBOARD || event == FL_SHORTCUT) &&
         openWidget && openWidget->popupVisible() && openWidget->ownsFocus()) {
         const int key = Fl::event_key();
@@ -682,9 +752,22 @@ int FilterableChoiceWidget::handleGlobalEvent(int event) {
         FilterableChoiceWidget* target = widgetAtRootPoint(rootX, rootY);
         if (!target || Fl::event_button() != FL_LEFT_MOUSE) return 0;
 
+        const bool hadFocus = target->ownsFocus();
+        const bool clickedMenuButton = target->menuButtonContainsRootPoint(rootX, rootY);
+        const bool clickedInput = choice_popup::rootPointInsideWidget(target->input(),
+                                                                      rootX,
+                                                                      rootY);
         target->showPopup();
-        if (target->menuButtonContainsRootPoint(rootX, rootY)) {
+        if (clickedMenuButton) {
             if (target->input()) target->input()->take_focus();
+            return 1;
+        }
+        if (clickedInput && !hadFocus && target->input()) {
+            const char* currentValue = target->input()->value();
+            const int textLength = currentValue ? static_cast<int>(std::strlen(currentValue)) : 0;
+            target->input()->take_focus();
+            target->input()->insert_position(textLength, 0);
+            target->input()->redraw();
             return 1;
         }
         return 0;

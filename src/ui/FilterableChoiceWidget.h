@@ -14,6 +14,7 @@ class Fl_Hold_Browser;
 namespace verdad {
 
 class PopupListWindow;
+class PopupListBrowser;
 
 class FilterableChoiceWidget : public Fl_Input_Choice {
 public:
@@ -36,6 +37,7 @@ public:
 
 private:
     friend class PopupListWindow;
+    friend class PopupListBrowser;
 
     std::vector<std::string> ownedItems_;
     const std::vector<std::string>* items_ = &ownedItems_;
