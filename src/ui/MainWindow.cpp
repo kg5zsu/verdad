@@ -64,6 +64,22 @@ std::string trimCopy(const std::string& s) {
     return s.substr(start, end - start);
 }
 
+void applyToggleButtonPressedColorRecursively(Fl_Widget* widget) {
+    if (!widget) return;
+
+    if (auto* button = dynamic_cast<Fl_Button*>(widget)) {
+        if (button->type() == FL_TOGGLE_BUTTON) {
+            button->selection_color(fl_darker(button->color()));
+        }
+    }
+
+    if (auto* group = dynamic_cast<Fl_Group*>(widget)) {
+        for (int i = 0; i < group->children(); ++i) {
+            applyToggleButtonPressedColorRecursively(group->child(i));
+        }
+    }
+}
+
 int configuredMaxCachedTabDocs() {
     static const int value = []() {
         const char* env = std::getenv("VERDAD_MAX_CACHED_TAB_DOCS");
@@ -1702,6 +1718,8 @@ void MainWindow::applyAppearanceSettings(Fl_Font appFont,
                 searchHelpWindow_, appFont, boldFont, clampedSize);
         }
     }
+
+    applyToggleButtonPressedColorRecursively(this);
 
     // Re-apply HTML CSS only when needed.
     if (!appearanceApplied_ || cssChanged) {
