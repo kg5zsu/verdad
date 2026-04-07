@@ -1780,6 +1780,341 @@ std::string collapseWhitespaceCopy(const std::string& text) {
     return trimCopy(out);
 }
 
+struct HtmlWordToken {
+    std::string text;
+    size_t start = 0;
+    size_t end = 0;
+};
+
+struct EntryPhraseMeta {
+    std::vector<std::string> words;
+    HoverMeta meta;
+};
+
+bool tryDecodeHtmlEntityChar(std::string_view html,
+                             size_t pos,
+                             char& decodedOut,
+                             size_t& consumedOut) {
+    if (pos >= html.size() || html[pos] != '&') return false;
+
+    if (pos + 5 <= html.size() &&
+        equalsNoCase(html[pos + 1], 'a') &&
+        equalsNoCase(html[pos + 2], 'm') &&
+        equalsNoCase(html[pos + 3], 'p') &&
+        html[pos + 4] == ';') {
+        decodedOut = '&';
+        consumedOut = 5;
+        return true;
+    }
+    if (pos + 4 <= html.size() &&
+        equalsNoCase(html[pos + 1], 'l') &&
+        equalsNoCase(html[pos + 2], 't') &&
+        html[pos + 3] == ';') {
+        decodedOut = '<';
+        consumedOut = 4;
+        return true;
+    }
+    if (pos + 4 <= html.size() &&
+        equalsNoCase(html[pos + 1], 'g') &&
+        equalsNoCase(html[pos + 2], 't') &&
+        html[pos + 3] == ';') {
+        decodedOut = '>';
+        consumedOut = 4;
+        return true;
+    }
+    if (pos + 6 <= html.size() &&
+        equalsNoCase(html[pos + 1], 'q') &&
+        equalsNoCase(html[pos + 2], 'u') &&
+        equalsNoCase(html[pos + 3], 'o') &&
+        equalsNoCase(html[pos + 4], 't') &&
+        html[pos + 5] == ';') {
+        decodedOut = '"';
+        consumedOut = 6;
+        return true;
+    }
+    if (pos + 6 <= html.size() &&
+        equalsNoCase(html[pos + 1], 'a') &&
+        equalsNoCase(html[pos + 2], 'p') &&
+        equalsNoCase(html[pos + 3], 'o') &&
+        equalsNoCase(html[pos + 4], 's') &&
+        html[pos + 5] == ';') {
+        decodedOut = '\'';
+        consumedOut = 6;
+        return true;
+    }
+    if (pos + 5 <= html.size() &&
+        html[pos + 1] == '#' &&
+        html[pos + 2] == '3' &&
+        html[pos + 3] == '9' &&
+        html[pos + 4] == ';') {
+        decodedOut = '\'';
+        consumedOut = 5;
+        return true;
+    }
+
+    return false;
+}
+
+std::vector<std::string> extractVisibleWords(const std::string& text) {
+    std::vector<std::string> words;
+    size_t i = 0;
+    while (i < text.size()) {
+        while (i < text.size() &&
+               !isWordByte(static_cast<unsigned char>(text[i]))) {
+            ++i;
+        }
+        if (i >= text.size()) break;
+
+        size_t start = i;
+        while (i < text.size() &&
+               isWordByte(static_cast<unsigned char>(text[i]))) {
+            ++i;
+        }
+
+        if (i > start) {
+            words.push_back(text.substr(start, i - start));
+        }
+    }
+    return words;
+}
+
+void extractEntryLemmaStrongs(const std::string& value, HoverMeta& meta) {
+    static const std::regex strongRe(
+        R"((?:^|[|,;\s:])([HGhg]?\d+[A-Za-z]?)(?=$|[|,;\s]))");
+
+    auto it = std::sregex_iterator(value.begin(), value.end(), strongRe);
+    auto end = std::sregex_iterator();
+    for (; it != end; ++it) {
+        addStrongToken(meta, (*it)[1].str());
+    }
+}
+
+std::vector<EntryPhraseMeta> collectMultiWordEntryPhraseMeta(sword::SWModule* mod) {
+    std::vector<EntryPhraseMeta> phrases;
+    if (!mod) return phrases;
+
+    auto& attrs = mod->getEntryAttributes();
+    auto wordIt = attrs.find("Word");
+    if (wordIt == attrs.end()) return phrases;
+
+    for (const auto& entry : wordIt->second) {
+        const auto& wordAttrs = entry.second;
+
+        auto textIt = wordAttrs.find("Text");
+        if (textIt == wordAttrs.end()) continue;
+
+        const std::string plainText =
+            collapseWhitespaceCopy(stripTags(textIt->second.c_str()));
+        std::vector<std::string> words = extractVisibleWords(plainText);
+        if (words.size() < 2) continue;
+
+        HoverMeta meta;
+        auto lemmaIt = wordAttrs.find("Lemma");
+        if (lemmaIt != wordAttrs.end()) {
+            extractEntryLemmaStrongs(lemmaIt->second.c_str(), meta);
+        }
+
+        auto morphIt = wordAttrs.find("Morph");
+        if (morphIt != wordAttrs.end()) {
+            addMorphToken(meta, morphIt->second.c_str());
+        }
+
+        if (meta.empty()) continue;
+        phrases.push_back(EntryPhraseMeta{std::move(words), std::move(meta)});
+    }
+
+    return phrases;
+}
+
+std::vector<HtmlWordToken> tokenizeRenderedHtmlWords(const std::string& html) {
+    std::vector<HtmlWordToken> words;
+    if (html.empty()) return words;
+
+    HtmlWordToken current;
+    bool inWord = false;
+    int hiddenMarkerDepth = 0;
+    size_t pendingStart = std::string::npos;
+
+    auto finishWord = [&](size_t htmlEnd) {
+        if (!inWord) return;
+        current.end = htmlEnd;
+        if (!current.text.empty() && current.end > current.start) {
+            words.push_back(current);
+        }
+        current = HtmlWordToken{};
+        inWord = false;
+        pendingStart = std::string::npos;
+    };
+
+    size_t pos = 0;
+    while (pos < html.size()) {
+        if (html[pos] == '<') {
+            size_t tagEnd = std::string::npos;
+            std::string tagName;
+            bool isClosing = false;
+            bool isSelfClosing = false;
+            if (!parseTag(html, pos, tagEnd, tagName, isClosing, isSelfClosing)) {
+                if (hiddenMarkerDepth > 0) {
+                    ++pos;
+                    continue;
+                }
+                finishWord(pos);
+                pendingStart = std::string::npos;
+                ++pos;
+                continue;
+            }
+
+            std::string rawTag = html.substr(pos, tagEnd - pos + 1);
+            if (hiddenMarkerDepth > 0) {
+                if (!isClosing && tagName == "span") {
+                    std::string cls;
+                    if (!isSelfClosing &&
+                        extractAttributeValue(rawTag, "class", cls) &&
+                        containsNoCase(cls, "verdad-inline-marker")) {
+                        ++hiddenMarkerDepth;
+                    }
+                } else if (isClosing && tagName == "span") {
+                    --hiddenMarkerDepth;
+                }
+                pos = tagEnd + 1;
+                continue;
+            }
+
+            if (!isClosing && tagName == "span") {
+                std::string cls;
+                if (extractAttributeValue(rawTag, "class", cls) &&
+                    containsNoCase(cls, "verdad-inline-marker")) {
+                    finishWord(pos);
+                    pendingStart = std::string::npos;
+                    if (!isSelfClosing) hiddenMarkerDepth = 1;
+                    pos = tagEnd + 1;
+                    continue;
+                }
+            }
+
+            if (!inWord) {
+                const bool hardBoundary =
+                    tagName == "br" ||
+                    tagName == "div" ||
+                    tagName == "p" ||
+                    tagName == "li" ||
+                    tagName == "table" ||
+                    tagName == "tr" ||
+                    tagName == "td" ||
+                    tagName == "th" ||
+                    tagName == "hr";
+                if (hardBoundary) {
+                    pendingStart = std::string::npos;
+                } else if (pendingStart == std::string::npos) {
+                    pendingStart = pos;
+                }
+            }
+
+            pos = tagEnd + 1;
+            continue;
+        }
+
+        if (hiddenMarkerDepth > 0) {
+            ++pos;
+            continue;
+        }
+
+        const size_t htmlStart = pos;
+        char decoded = 0;
+        size_t consumed = 0;
+        if (html[pos] == '&' &&
+            tryDecodeHtmlEntityChar(std::string_view(html), pos, decoded, consumed)) {
+            pos += consumed;
+        } else {
+            decoded = html[pos++];
+        }
+
+        if (isWordByte(static_cast<unsigned char>(decoded))) {
+            if (!inWord) {
+                current = HtmlWordToken{};
+                current.start =
+                    (pendingStart != std::string::npos) ? pendingStart : htmlStart;
+                inWord = true;
+            }
+            current.text.push_back(decoded);
+        } else {
+            finishWord(htmlStart);
+            pendingStart = std::string::npos;
+        }
+    }
+
+    finishWord(html.size());
+    return words;
+}
+
+std::string applyMultiWordEntryAttrsToRenderedHtml(const std::string& html,
+                                                   sword::SWModule* mod) {
+    if (!mod || html.empty()) return html;
+
+    const std::vector<EntryPhraseMeta> phrases = collectMultiWordEntryPhraseMeta(mod);
+    if (phrases.empty()) return html;
+
+    const std::vector<HtmlWordToken> htmlWords = tokenizeRenderedHtmlWords(html);
+    if (htmlWords.empty()) return html;
+
+    struct PendingWrap {
+        size_t start = 0;
+        size_t end = 0;
+        HoverMeta meta;
+    };
+
+    std::vector<PendingWrap> wraps;
+    size_t searchWordIndex = 0;
+    for (const auto& phrase : phrases) {
+        if (phrase.words.size() < 2 || phrase.meta.empty()) continue;
+
+        size_t matchIndex = std::string::npos;
+        for (size_t i = searchWordIndex;
+             i + phrase.words.size() <= htmlWords.size();
+             ++i) {
+            bool matched = true;
+            for (size_t j = 0; j < phrase.words.size(); ++j) {
+                if (htmlWords[i + j].text != phrase.words[j]) {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) {
+                matchIndex = i;
+                break;
+            }
+        }
+
+        if (matchIndex == std::string::npos) continue;
+
+        for (size_t j = 0; j < phrase.words.size(); ++j) {
+            wraps.push_back(PendingWrap{
+                htmlWords[matchIndex + j].start,
+                htmlWords[matchIndex + j].end,
+                phrase.meta,
+            });
+        }
+        searchWordIndex = matchIndex + phrase.words.size();
+    }
+
+    if (wraps.empty()) return html;
+
+    std::sort(wraps.begin(), wraps.end(),
+              [](const PendingWrap& lhs, const PendingWrap& rhs) {
+                  if (lhs.start != rhs.start) return lhs.start > rhs.start;
+                  return lhs.end > rhs.end;
+              });
+
+    std::string out = html;
+    for (const auto& wrap : wraps) {
+        if (wrap.end <= wrap.start || wrap.end > out.size()) continue;
+        out.insert(wrap.end, "</span>");
+        out.insert(wrap.start, buildWordSpanOpenTag(wrap.meta));
+    }
+
+    return out;
+}
+
 std::string summarizeDailyDevotionHtml(const std::string& html) {
     static const std::regex headingRe(
         R"(<h[1-4][^>]*>\s*(.*?)\s*</h[1-4]>)",
@@ -3364,6 +3699,7 @@ std::string SwordManager::getOrRenderVerseHtmlLocked(sword::SWModule* mod,
     if (verseText.empty()) return "";
 
     verseText = postProcessHtml(verseText);
+    verseText = applyMultiWordEntryAttrsToRenderedHtml(verseText, mod);
     storeVerseHtmlCacheLocked(cacheKey, verseText);
     return verseText;
 }
@@ -3409,6 +3745,7 @@ SwordManager::prepareChapterTextLocked(sword::SWModule* mod,
             verseText = std::string(mod->renderText().c_str());
             if (!verseText.empty()) {
                 verseText = postProcessHtml(verseText);
+                verseText = applyMultiWordEntryAttrsToRenderedHtml(verseText, mod);
                 storeVerseHtmlCacheLocked(cacheKey, verseText);
             }
         }
@@ -3734,6 +4071,7 @@ std::string SwordManager::getVerseText(const std::string& moduleName,
     }
 
     text = postProcessHtml(text);
+    text = applyMultiWordEntryAttrsToRenderedHtml(text, mod);
 
     VerseRef ref;
     try {
@@ -4018,6 +4356,8 @@ std::string SwordManager::getParallelText(
                         if (!verseText.empty()) {
                             perf::StepTimer postProcessStep;
                             verseText = postProcessHtml(verseText);
+                            verseText = applyMultiWordEntryAttrsToRenderedHtml(verseText,
+                                                                               column.mod);
                             postProcessMs += postProcessStep.elapsedMs();
                             storeVerseHtmlCacheLocked(cacheKey, verseText);
                         }
