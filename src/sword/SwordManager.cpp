@@ -3322,6 +3322,150 @@ std::string wrapWordWrapperTextForMarkerLayout(const std::string& html) {
     return out;
 }
 
+size_t trailingPunctuationTokenLength(std::string_view text, size_t pos) {
+    if (pos >= text.size()) return 0;
+
+    const unsigned char ch = static_cast<unsigned char>(text[pos]);
+    switch (ch) {
+    case '.':
+    case ',':
+    case ';':
+    case ':':
+    case '!':
+    case '?':
+    case ')':
+    case ']':
+    case '}':
+    case '"':
+    case '\'':
+        return 1;
+    case 0xE2:
+        if (pos + 3 <= text.size() &&
+            static_cast<unsigned char>(text[pos + 1]) == 0x80) {
+            const unsigned char third =
+                static_cast<unsigned char>(text[pos + 2]);
+            if (third == 0x99 || // right single quotation mark
+                third == 0x9D || // right double quotation mark
+                third == 0xA6) { // ellipsis
+                return 3;
+            }
+        }
+        break;
+    case '&': {
+        static constexpr std::string_view kEntities[] = {
+            "&quot;",
+            "&apos;",
+            "&rsquo;",
+            "&rdquo;",
+            "&hellip;",
+            "&#34;",
+            "&#39;",
+            "&#8217;",
+            "&#8221;",
+            "&#8230;",
+        };
+        for (std::string_view entity : kEntities) {
+            if (pos + entity.size() > text.size()) continue;
+
+            bool match = true;
+            for (size_t i = 0; i < entity.size(); ++i) {
+                if (!equalsNoCase(text[pos + i], entity[i])) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) return entity.size();
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    return 0;
+}
+
+std::string attachTrailingPunctuationToWordWrappers(const std::string& html) {
+    if (html.empty()) return html;
+
+    // Keep immediately-adjacent closing punctuation inside the same word
+    // wrapper so litehtml does not wrap it onto a line by itself.
+    std::string out;
+    out.reserve(html.size() + html.size() / 32);
+
+    size_t pos = 0;
+    while (pos < html.size()) {
+        if (html[pos] != '<') {
+            out.push_back(html[pos]);
+            ++pos;
+            continue;
+        }
+
+        size_t tagEnd = std::string::npos;
+        std::string tagName;
+        bool isClosing = false;
+        bool isSelfClosing = false;
+        if (!parseTag(html, pos, tagEnd, tagName, isClosing, isSelfClosing)) {
+            out.push_back(html[pos]);
+            ++pos;
+            continue;
+        }
+
+        if (isClosing || isSelfClosing || tagName != "span") {
+            out.append(html, pos, tagEnd - pos + 1);
+            pos = tagEnd + 1;
+            continue;
+        }
+
+        const std::string openTag = html.substr(pos, tagEnd - pos + 1);
+        std::string cls;
+        if (!extractAttributeValue(openTag, "class", cls) ||
+            !classListHasToken(cls, "w")) {
+            out += openTag;
+            pos = tagEnd + 1;
+            continue;
+        }
+
+        size_t wrapperEnd = std::string::npos;
+        if (!findGeneratedMarkerSpanEnd(html, pos, html.size(), wrapperEnd) ||
+            wrapperEnd < tagEnd + 8) {
+            out += openTag;
+            pos = tagEnd + 1;
+            continue;
+        }
+
+        size_t punctuationEnd = wrapperEnd;
+        while (true) {
+            const size_t tokenLen =
+                trailingPunctuationTokenLength(html, punctuationEnd);
+            if (tokenLen == 0) break;
+            punctuationEnd += tokenLen;
+        }
+
+        if (punctuationEnd == wrapperEnd) {
+            out.append(html, pos, wrapperEnd - pos);
+            pos = wrapperEnd;
+            continue;
+        }
+
+        size_t insertPos = wrapperEnd - 7; // before </span>
+        const size_t innerStart = tagEnd + 1;
+        const size_t innerLen = insertPos - innerStart;
+        const std::string inner = html.substr(innerStart, innerLen);
+        const size_t markerPos = findFirstTopLevelMarkerSpan(inner);
+        if (markerPos != std::string::npos) {
+            insertPos = innerStart + markerPos;
+        }
+
+        out.append(html, pos, insertPos - pos);
+        out.append(html, wrapperEnd, punctuationEnd - wrapperEnd);
+        out.append(html, insertPos, wrapperEnd - insertPos);
+        pos = punctuationEnd;
+    }
+
+    return out;
+}
+
 void removeGeneratedMarkerSpansFromTarget(std::string& out,
                                           OutputTarget& target,
                                           const char* markerClass) {
@@ -6588,6 +6732,7 @@ std::string SwordManager::postProcessHtml(const std::string& html) const {
         pos = tagEnd + 1;
     }
 
+    out = attachTrailingPunctuationToWordWrappers(out);
     cacheStore(html, out);
     if (perf::enabled()) {
         double ms = std::chrono::duration<double, std::milli>(
