@@ -1,5 +1,6 @@
 #include "reading/ReadingPlanManager.h"
 #include "reading/DateUtils.h"
+#include "reading/ReadingPlanUtils.h"
 
 #include <sqlite3.h>
 
@@ -232,6 +233,11 @@ int findSequenceForDate(const std::vector<ReadingPlanDay>& days,
         if (day.dateIso == dateIso) return day.sequenceNumber;
     }
     return -1;
+}
+
+std::string canonicalEditablePlanStartDateIso(const std::string& displayStartDateIso,
+                                              int totalDays) {
+    return reading::genericReadingPlanTemplateStartDateIso(displayStartDateIso, totalDays);
 }
 
 bool setPlanStartDate(sqlite3* db,
@@ -983,7 +989,12 @@ bool ReadingPlanManager::rescheduleDay(int planId,
     std::string newStartDateIso = plan.summary.startDateIso;
 
     if (sequenceNumber == 1) {
-        newStartDateIso = toDateIso;
+        reading::Date currentStart{};
+        if (!reading::parseIsoDate(newStartDateIso, currentStart)) {
+            rollbackTransaction(db_);
+            return false;
+        }
+        newStartDateIso = reading::formatIsoDate(reading::addDays(currentStart, dayDelta));
         for (auto& offset : offsets) {
             reading::Date current{};
             if (!reading::parseIsoDate(offset.dateIso, current)) continue;
@@ -1006,7 +1017,10 @@ bool ReadingPlanManager::rescheduleDay(int planId,
         }
     }
 
-    offsets = compactOffsets(newStartDateIso, offsets);
+    const std::string newCanonicalStartDateIso =
+        canonicalEditablePlanStartDateIso(newStartDateIso,
+                                          static_cast<int>(plan.days.size()));
+    offsets = compactOffsets(newCanonicalStartDateIso, offsets);
 
     if (ok) ok = setPlanStartDate(db_, planId, newStartDateIso);
     if (ok) {
@@ -1236,12 +1250,14 @@ bool ReadingPlanManager::loadPlanDays(sqlite3* db,
     ok = loadPlanOffsets(db, planId, offsets);
     if (!ok) return false;
 
-    const bool hasLegacyScheduledDates = std::any_of(
+    const std::string canonicalStartDateIso =
+        canonicalEditablePlanStartDateIso(startDateIso, static_cast<int>(rawDays.size()));
+    const bool hasStoredTemplateDates = std::any_of(
         rawDays.begin(), rawDays.end(),
         [](const ReadingPlanDay& day) { return reading::isIsoDateInRange(day.dateIso); });
     const bool useDerivedSchedule =
-        reading::isIsoDateInRange(startDateIso) &&
-        (!offsets.empty() || !hasLegacyScheduledDates);
+        reading::isIsoDateInRange(canonicalStartDateIso) &&
+        (!offsets.empty() || !hasStoredTemplateDates);
 
     out.clear();
     out.reserve(rawDays.size());
@@ -1250,7 +1266,12 @@ bool ReadingPlanManager::loadPlanDays(sqlite3* db,
             day.sequenceNumber = static_cast<int>(out.size()) + 1;
         }
         if (useDerivedSchedule) {
-            day.dateIso = effectiveDateForSequence(startDateIso, offsets, day.sequenceNumber);
+            day.dateIso =
+                effectiveDateForSequence(canonicalStartDateIso, offsets, day.sequenceNumber);
+        } else if (!reading::isIsoDateInRange(day.dateIso) &&
+                   reading::isIsoDateInRange(canonicalStartDateIso)) {
+            day.dateIso =
+                effectiveDateForSequence(canonicalStartDateIso, offsets, day.sequenceNumber);
         }
         out.push_back(std::move(day));
     }
@@ -1275,7 +1296,16 @@ bool ReadingPlanManager::replacePlanDays(sqlite3* db,
     )SQL";
 
     std::vector<ReadingPlanDay> orderedDays = sortedDays(days);
-    std::vector<ScheduleOffset> offsets = buildOffsetsFromDays(startDateIso, orderedDays);
+    const std::string canonicalStartDateIso =
+        canonicalEditablePlanStartDateIso(startDateIso, static_cast<int>(orderedDays.size()));
+    if (!orderedDays.empty() && !reading::isIsoDateInRange(canonicalStartDateIso)) {
+        return false;
+    }
+    const std::vector<std::string> defaultTemplateDates =
+        reading::buildGenericReadingPlanTemplateDates(startDateIso,
+                                                      static_cast<int>(orderedDays.size()));
+    std::vector<ScheduleOffset> offsets =
+        buildOffsetsFromDays(canonicalStartDateIso, orderedDays);
 
     sqlite3_stmt* deleteStmt = nullptr;
     sqlite3_stmt* dayStmt = nullptr;
@@ -1295,7 +1325,11 @@ bool ReadingPlanManager::replacePlanDays(sqlite3* db,
         sqlite3_clear_bindings(dayStmt);
         ok = sqlite3_bind_int(dayStmt, 1, planId) == SQLITE_OK;
         if (ok) ok = sqlite3_bind_int(dayStmt, 2, sequenceNumber) == SQLITE_OK;
-        if (ok) ok = bindText(dayStmt, 3, "__seq_" + std::to_string(sequenceNumber));
+        std::string storedDateIso =
+            reading::isIsoDateInRange(day.dateIso)
+                ? day.dateIso
+                : (i < defaultTemplateDates.size() ? defaultTemplateDates[i] : std::string());
+        if (ok) ok = bindText(dayStmt, 3, storedDateIso);
         if (ok) ok = bindText(dayStmt, 4, day.title);
         if (ok) ok = sqlite3_bind_int(dayStmt, 5, day.completed ? 1 : 0) == SQLITE_OK;
         if (ok) ok = sqlite3_step(dayStmt) == SQLITE_DONE;

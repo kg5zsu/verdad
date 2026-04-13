@@ -17,12 +17,12 @@
 #include "app/PerfTrace.h"
 
 #include <FL/Fl.H>
-#include <FL/Fl_Hold_Browser.H>
 #include <FL/Fl_Native_File_Chooser.H>
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Multiline_Input.H>
 #include <FL/Fl_Return_Button.H>
 #include <FL/Fl_Round_Button.H>
+#include <FL/Fl_Scroll.H>
 #include <FL/Fl_SVG_Image.H>
 #include <FL/fl_ask.H>
 
@@ -63,6 +63,154 @@ constexpr int kDailyCalendarDrawerH = 252;
 constexpr int kDailyActionButtonW = 112;
 constexpr int kDailyReadingPlanBottomMinH = 180;
 constexpr int kDailyReadingPlanBottomMaxH = 260;
+
+int isoDayDifference(const std::string& fromDateIso,
+                     const std::string& toDateIso) {
+    reading::Date fromDate{};
+    reading::Date toDate{};
+    if (!reading::parseIsoDate(fromDateIso, fromDate) ||
+        !reading::parseIsoDate(toDateIso, toDate)) {
+        return 0;
+    }
+
+    std::tm fromTm = reading::toTm(fromDate);
+    std::tm toTm = reading::toTm(toDate);
+    return static_cast<int>(
+        std::difftime(std::mktime(&toTm), std::mktime(&fromTm)) / (60 * 60 * 24));
+}
+
+std::vector<std::string> splitReadingPlanCellText(const std::string& text) {
+    std::vector<std::string> values;
+    std::string current;
+    auto flushCurrent = [&]() {
+        std::string trimmed = reading::trimCopy(current);
+        if (!trimmed.empty()) values.push_back(std::move(trimmed));
+        current.clear();
+    };
+
+    for (char ch : text) {
+        if (ch == ';' || ch == '\n' || ch == '\r') {
+            flushCurrent();
+        } else {
+            current.push_back(ch);
+        }
+    }
+    flushCurrent();
+    return values;
+}
+
+std::string lowerTrimmedAscii(const std::string& text) {
+    std::string normalized = reading::trimCopy(text);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char ch) {
+                       return static_cast<char>(std::tolower(ch));
+                   });
+    return normalized;
+}
+
+int monthNumberFromName(const std::string& text) {
+    static const std::pair<const char*, int> kMonthNames[] = {
+        {"january", 1}, {"jan", 1},
+        {"february", 2}, {"feb", 2},
+        {"march", 3}, {"mar", 3},
+        {"april", 4}, {"apr", 4},
+        {"may", 5},
+        {"june", 6}, {"jun", 6},
+        {"july", 7}, {"jul", 7},
+        {"august", 8}, {"aug", 8},
+        {"september", 9}, {"sep", 9}, {"sept", 9},
+        {"october", 10}, {"oct", 10},
+        {"november", 11}, {"nov", 11},
+        {"december", 12}, {"dec", 12}
+    };
+
+    std::string normalized = reading::trimCopy(text);
+    while (!normalized.empty() &&
+           (normalized.back() == '.' || normalized.back() == ':' ||
+            normalized.back() == '-' || normalized.back() == ',')) {
+        normalized.pop_back();
+    }
+    normalized = lowerTrimmedAscii(normalized);
+    for (const auto& month : kMonthNames) {
+        if (normalized == month.first) return month.second;
+    }
+    return 0;
+}
+
+bool isMonthNameOnlyLine(const std::string& text) {
+    return monthNumberFromName(text) > 0;
+}
+
+std::string stripReadingPlanPasteDayPrefix(const std::string& text,
+                                           int expectedDayOfMonth) {
+    const std::string trimmed = reading::trimCopy(text);
+    if (trimmed.empty()) return "";
+
+    static const std::regex kDayWordPattern(
+        R"(^day\s+\d{1,3}(?:\s*[:.)-])?\s+(.+)$)",
+        std::regex::icase);
+    static const std::regex kPunctuatedNumberPattern(
+        R"(^\d{1,3}\s*[:.)-]\s*(.+)$)",
+        std::regex::icase);
+    static const std::regex kWideSpacingNumberPattern(
+        R"(^\d{1,3}[ \t]{2,}(.+)$)",
+        std::regex::icase);
+    static const std::regex kLargeNumberPattern(
+        R"(^(\d{1,3})\s+(.+)$)",
+        std::regex::icase);
+
+    std::smatch match;
+    if (std::regex_match(trimmed, match, kDayWordPattern) && match.size() > 1) {
+        return reading::trimCopy(match[1].str());
+    }
+    if (std::regex_match(trimmed, match, kPunctuatedNumberPattern) && match.size() > 1) {
+        return reading::trimCopy(match[1].str());
+    }
+    if (std::regex_match(trimmed, match, kWideSpacingNumberPattern) && match.size() > 1) {
+        return reading::trimCopy(match[1].str());
+    }
+    if (std::regex_match(trimmed, match, kLargeNumberPattern) && match.size() > 2) {
+        try {
+            const int value = std::stoi(match[1].str());
+            if ((expectedDayOfMonth > 0 && value == expectedDayOfMonth) || value > 4) {
+                return reading::trimCopy(match[2].str());
+            }
+        } catch (...) {
+        }
+    }
+
+    return trimmed;
+}
+
+class ReadingPlanDayInput : public Fl_Input {
+public:
+    using MultilinePasteHandler = std::function<void(const std::string&)>;
+
+    ReadingPlanDayInput(int X, int Y, int W, int H, const char* label = nullptr)
+        : Fl_Input(X, Y, W, H, label) {}
+
+    void setMultilinePasteHandler(MultilinePasteHandler handler) {
+        multilinePasteHandler_ = std::move(handler);
+    }
+
+    int handle(int event) override {
+        if (event == FL_PASTE && multilinePasteHandler_) {
+            const char* text = Fl::event_text();
+            const int length = Fl::event_length();
+            if (text && length > 0) {
+                std::string pastedText(text, static_cast<size_t>(length));
+                if (pastedText.find_first_of("\r\n") != std::string::npos) {
+                    multilinePasteHandler_(pastedText);
+                    return 1;
+                }
+            }
+        }
+        return Fl_Input::handle(event);
+    }
+
+private:
+    MultilinePasteHandler multilinePasteHandler_;
+};
 
 std::string escapeCssString(const std::string& text) {
     std::string out;
@@ -814,12 +962,147 @@ std::string joinHtmlItems(const std::vector<std::string>& items,
     return html.str();
 }
 
-const ReadingPlanDay* readingPlanDayForDate(const ReadingPlan& plan,
-                                            const std::string& dateIso) {
+struct EditableReadingPlanDisplayDay {
+    const ReadingPlanDay* day = nullptr;
+    std::string actualDateIso;
+    std::string canonicalDateIso;
+    int instanceStartYear = 0;
+};
+
+const ReadingPlanDay* firstTemplateReadingPlanDay(const ReadingPlan& plan) {
     for (const auto& day : plan.days) {
-        if (day.dateIso == dateIso) return &day;
+        if (reading::isIsoDateInRange(day.dateIso)) return &day;
     }
     return nullptr;
+}
+
+std::vector<int> editableReadingPlanCandidateStartYears(const ReadingPlan& plan,
+                                                        int targetYear) {
+    reading::Date anchorStart{};
+    if (!reading::parseIsoDate(plan.summary.startDateIso, anchorStart)) return {};
+
+    const int cycleYears =
+        reading::genericReadingPlanCycleYears(static_cast<int>(plan.days.size()));
+    const int approxStep = cycleYears > 0
+        ? (targetYear - anchorStart.year) / cycleYears
+        : 0;
+
+    std::vector<int> years;
+    years.reserve(7);
+    for (int delta = -3; delta <= 3; ++delta) {
+        years.push_back(anchorStart.year + ((approxStep + delta) * cycleYears));
+    }
+    std::sort(years.begin(), years.end());
+    years.erase(std::unique(years.begin(), years.end()), years.end());
+    return years;
+}
+
+bool actualReadingPlanDateForDay(const ReadingPlan& plan,
+                                 const ReadingPlanDay& day,
+                                 int instanceStartYear,
+                                 std::string& actualDateIsoOut) {
+    const ReadingPlanDay* templateStartDay = firstTemplateReadingPlanDay(plan);
+    if (!templateStartDay) return false;
+
+    reading::Date templateStart{};
+    reading::Date templateDate{};
+    if (!reading::parseIsoDate(templateStartDay->dateIso, templateStart) ||
+        !reading::parseIsoDate(day.dateIso, templateDate)) {
+        return false;
+    }
+
+    const reading::Date actualDate{
+        instanceStartYear + (templateDate.year - templateStart.year),
+        templateDate.month,
+        templateDate.day,
+    };
+    const std::string actualDateIso = reading::formatIsoDate(actualDate);
+    reading::Date verified{};
+    if (!reading::parseIsoDate(actualDateIso, verified)) return false;
+
+    actualDateIsoOut = actualDateIso;
+    return true;
+}
+
+EditableReadingPlanDisplayDay readingPlanDisplayDayForDate(const ReadingPlan& plan,
+                                                           const std::string& actualDateIso) {
+    reading::Date actualDate{};
+    if (!reading::parseIsoDate(actualDateIso, actualDate)) return {};
+
+    for (int instanceStartYear :
+         editableReadingPlanCandidateStartYears(plan, actualDate.year)) {
+        for (const auto& day : plan.days) {
+            std::string mappedActualDateIso;
+            if (!actualReadingPlanDateForDay(plan, day, instanceStartYear, mappedActualDateIso)) {
+                continue;
+            }
+            if (mappedActualDateIso == actualDateIso) {
+                return EditableReadingPlanDisplayDay{
+                    &day,
+                    mappedActualDateIso,
+                    day.dateIso,
+                    instanceStartYear,
+                };
+            }
+        }
+    }
+    return {};
+}
+
+std::vector<EditableReadingPlanDisplayDay> readingPlanDisplayDaysForInstance(
+    const ReadingPlan& plan,
+    int instanceStartYear) {
+    std::vector<EditableReadingPlanDisplayDay> days;
+    days.reserve(plan.days.size());
+    for (const auto& day : plan.days) {
+        std::string actualDateIso;
+        if (!actualReadingPlanDateForDay(plan, day, instanceStartYear, actualDateIso)) {
+            continue;
+        }
+        days.push_back(EditableReadingPlanDisplayDay{
+            &day,
+            actualDateIso,
+            day.dateIso,
+            instanceStartYear,
+        });
+    }
+    return days;
+}
+
+std::vector<EditableReadingPlanDisplayDay> readingPlanDisplayDaysForMonth(
+    const ReadingPlan& plan,
+    int year,
+    int month) {
+    std::vector<EditableReadingPlanDisplayDay> matches;
+    std::unordered_set<std::string> seenDates;
+    for (int instanceStartYear : editableReadingPlanCandidateStartYears(plan, year)) {
+        for (const auto& displayDay : readingPlanDisplayDaysForInstance(plan, instanceStartYear)) {
+            reading::Date actualDate{};
+            if (!reading::parseIsoDate(displayDay.actualDateIso, actualDate) ||
+                actualDate.year != year || actualDate.month != month ||
+                !seenDates.insert(displayDay.actualDateIso).second) {
+                continue;
+            }
+            matches.push_back(displayDay);
+        }
+    }
+
+    std::sort(matches.begin(), matches.end(),
+              [](const EditableReadingPlanDisplayDay& lhs,
+                 const EditableReadingPlanDisplayDay& rhs) {
+                  return lhs.actualDateIso < rhs.actualDateIso;
+              });
+    return matches;
+}
+
+const ReadingPlanDay* readingPlanDayForDate(const ReadingPlan& plan,
+                                            const std::string& dateIso,
+                                            std::string* canonicalDateIsoOut = nullptr,
+                                            int* instanceStartYearOut = nullptr) {
+    EditableReadingPlanDisplayDay displayDay = readingPlanDisplayDayForDate(plan, dateIso);
+    if (canonicalDateIsoOut) *canonicalDateIsoOut = displayDay.canonicalDateIso;
+    if (instanceStartYearOut) *instanceStartYearOut = displayDay.instanceStartYear;
+    return displayDay.day;
 }
 
 std::string buildReadingPlanDayHtml(const ReadingPlan& plan,
@@ -1304,15 +1587,12 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     , dailyPlanNameInput_(nullptr)
     , dailyPlanStartDateInput_(nullptr)
     , dailyPlanDescriptionInput_(nullptr)
-    , dailyPlanDayBrowser_(nullptr)
-    , dailyPlanDayDateInput_(nullptr)
-    , dailyPlanDayTitleInput_(nullptr)
-    , dailyPlanDayPassagesInput_(nullptr)
-    , dailyPlanAddDayButton_(nullptr)
-    , dailyPlanDuplicateDayButton_(nullptr)
-    , dailyPlanRemoveDayButton_(nullptr)
+    , dailyPlanDayHelpBox_(nullptr)
+    , dailyPlanDayScroll_(nullptr)
+    , dailyPlanDayListGroup_(nullptr)
     , dailyPlanSaveButton_(nullptr)
     , dailyPlanCancelButton_(nullptr)
+    , dailyPlanDayRows_()
     , dailyWorkspaceState_()
     , dailyPlanEditorWorkingPlan_()
     , dailyPlanEditorDirty_(false)
@@ -1568,31 +1848,13 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     dailyPlanStartDateInput_->when(FL_WHEN_CHANGED);
     dailyPlanStartDateInput_->callback(onDailyPlanEditorFieldChanged, this);
 
-    dailyPlanAddDayButton_ = new Fl_Button(dailyPlanEditorGroup_->x() + 458,
-                                           dailyPlanEditorGroup_->y(),
-                                           48,
-                                           24,
-                                           "Add");
-    dailyPlanAddDayButton_->callback(onDailyPlanAddDay, this);
-    dailyPlanDuplicateDayButton_ = new Fl_Button(dailyPlanEditorGroup_->x() + 510,
-                                                 dailyPlanEditorGroup_->y(),
-                                                 72,
-                                                 24,
-                                                 "Duplicate");
-    dailyPlanDuplicateDayButton_->callback(onDailyPlanDuplicateDay, this);
-    dailyPlanRemoveDayButton_ = new Fl_Button(dailyPlanEditorGroup_->x() + 586,
-                                              dailyPlanEditorGroup_->y(),
-                                              64,
-                                              24,
-                                              "Remove");
-    dailyPlanRemoveDayButton_->callback(onDailyPlanRemoveDay, this);
     dailyPlanSaveButton_ = new Fl_Button(dailyPlanEditorGroup_->x() + 654,
                                          dailyPlanEditorGroup_->y(),
-                                         42,
+                                         46,
                                          24,
                                          "Save");
     dailyPlanSaveButton_->callback(onDailyPlanSave, this);
-    dailyPlanCancelButton_ = new Fl_Button(dailyPlanEditorGroup_->x() + 700,
+    dailyPlanCancelButton_ = new Fl_Button(dailyPlanEditorGroup_->x() + 704,
                                            dailyPlanEditorGroup_->y(),
                                            58,
                                            24,
@@ -1612,51 +1874,28 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     dailyPlanDescriptionInput_->when(FL_WHEN_CHANGED);
     dailyPlanDescriptionInput_->callback(onDailyPlanEditorFieldChanged, this);
 
-    dailyPlanDayBrowser_ = new Fl_Hold_Browser(dailyPlanEditorGroup_->x(),
-                                               dailyPlanEditorGroup_->y() + 88,
-                                               352,
-                                               std::max(80, dailyPlanEditorGroup_->h() - 92));
-    dailyPlanDayBrowser_->callback(onDailyPlanEditorSelection, this);
+    dailyPlanDayHelpBox_ = new Fl_Box(dailyPlanEditorGroup_->x(),
+                                      dailyPlanEditorGroup_->y() + 88,
+                                      dailyPlanEditorGroup_->w(),
+                                      32,
+                                      "");
+    dailyPlanDayHelpBox_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
 
-    auto* dailyPlanDayDateLabel = new Fl_Box(dailyPlanEditorGroup_->x() + 364,
-                                             dailyPlanEditorGroup_->y() + 88,
-                                             42,
-                                             24,
-                                             "Date");
-    dailyPlanDayDateLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-    dailyPlanDayDateInput_ = new Fl_Input(dailyPlanEditorGroup_->x() + 410,
-                                          dailyPlanEditorGroup_->y() + 88,
-                                          110,
-                                          24);
-    dailyPlanDayDateInput_->tooltip("YYYY-MM-DD");
-    dailyPlanDayDateInput_->when(FL_WHEN_CHANGED);
-    dailyPlanDayDateInput_->callback(onDailyPlanEditorFieldChanged, this);
-
-    auto* dailyPlanDayTitleLabel = new Fl_Box(dailyPlanEditorGroup_->x() + 530,
-                                              dailyPlanEditorGroup_->y() + 88,
-                                              34,
-                                              24,
-                                              "Title");
-    dailyPlanDayTitleLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-    dailyPlanDayTitleInput_ = new Fl_Input(dailyPlanEditorGroup_->x() + 568,
-                                           dailyPlanEditorGroup_->y() + 88,
-                                           std::max(120, dailyPlanEditorGroup_->w() - 568),
-                                           24);
-    dailyPlanDayTitleInput_->when(FL_WHEN_CHANGED);
-    dailyPlanDayTitleInput_->callback(onDailyPlanEditorFieldChanged, this);
-
-    auto* dailyPlanPassagesLabel = new Fl_Box(dailyPlanEditorGroup_->x() + 364,
-                                              dailyPlanEditorGroup_->y() + 120,
-                                              320,
-                                              24,
-                                              "Passages (one reference per line)");
-    dailyPlanPassagesLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
-    dailyPlanDayPassagesInput_ = new Fl_Multiline_Input(dailyPlanEditorGroup_->x() + 364,
-                                                        dailyPlanEditorGroup_->y() + 144,
-                                                        std::max(120, dailyPlanEditorGroup_->w() - 364),
-                                                        std::max(80, dailyPlanEditorGroup_->h() - 148));
-    dailyPlanDayPassagesInput_->when(FL_WHEN_CHANGED);
-    dailyPlanDayPassagesInput_->callback(onDailyPlanEditorFieldChanged, this);
+    dailyPlanDayScroll_ = new Fl_Scroll(dailyPlanEditorGroup_->x(),
+                                        dailyPlanEditorGroup_->y() + 120,
+                                        dailyPlanEditorGroup_->w(),
+                                        std::max(80, dailyPlanEditorGroup_->h() - 124));
+    dailyPlanDayScroll_->box(FL_DOWN_FRAME);
+    dailyPlanDayScroll_->type(Fl_Scroll::VERTICAL_ALWAYS);
+    dailyPlanDayScroll_->scrollbar_size(14);
+    dailyPlanDayScroll_->begin();
+    dailyPlanDayListGroup_ = new Fl_Group(dailyPlanDayScroll_->x(),
+                                          dailyPlanDayScroll_->y(),
+                                          dailyPlanDayScroll_->w(),
+                                          dailyPlanDayScroll_->h());
+    dailyPlanDayListGroup_->box(FL_NO_BOX);
+    dailyPlanDayListGroup_->end();
+    dailyPlanDayScroll_->end();
     dailyPlanEditorGroup_->end();
     dailyPlanEditorGroup_->hide();
     devotionsPlansGroup_->end();
@@ -2038,40 +2277,25 @@ void RightPane::layoutTopTabContents(int tabsX, int tabsY, int tabsW, int tabsH)
                        contentW,
                        dailyHtmlH);
     if (dailyPlanEditorGroup_ && dailyPlanNameInput_ && dailyPlanStartDateInput_ &&
-        dailyPlanDescriptionInput_ && dailyPlanDayBrowser_ && dailyPlanDayDateInput_ &&
-        dailyPlanDayTitleInput_ && dailyPlanDayPassagesInput_ && dailyPlanAddDayButton_ &&
-        dailyPlanDuplicateDayButton_ && dailyPlanRemoveDayButton_ &&
-        dailyPlanSaveButton_ && dailyPlanCancelButton_) {
+        dailyPlanDescriptionInput_ && dailyPlanDayHelpBox_ && dailyPlanDayScroll_ &&
+        dailyPlanDayListGroup_ && dailyPlanSaveButton_ && dailyPlanCancelButton_) {
         const int editorY = dailyRow2Y + rowH + 8;
         const int editorH = std::max(120, (panelY + panelH) - editorY - 2);
         dailyPlanEditorGroup_->resize(contentX, editorY, contentW, editorH);
 
         dailyPlanNameInput_->resize(contentX + 50, editorY, 238, 24);
         dailyPlanStartDateInput_->resize(contentX + 340, editorY, 110, 24);
-        int editorButtonsX = contentX + contentW - 288;
-        dailyPlanAddDayButton_->resize(editorButtonsX, editorY, 48, 24);
-        dailyPlanDuplicateDayButton_->resize(editorButtonsX + 52, editorY, 72, 24);
-        dailyPlanRemoveDayButton_->resize(editorButtonsX + 128, editorY, 64, 24);
-        dailyPlanSaveButton_->resize(editorButtonsX + 196, editorY, 42, 24);
-        dailyPlanCancelButton_->resize(editorButtonsX + 242, editorY, 58, 24);
+        int editorButtonsX = contentX + contentW - 108;
+        dailyPlanSaveButton_->resize(editorButtonsX, editorY, 46, 24);
+        dailyPlanCancelButton_->resize(editorButtonsX + 50, editorY, 58, 24);
 
         dailyPlanDescriptionInput_->resize(contentX + 50, editorY + 30, contentW - 50, 48);
-
-        const int browserY = editorY + 88;
-        const int browserW = std::clamp(contentW / 2, 280, 380);
-        const int browserH = std::max(80, editorH - 92);
-        dailyPlanDayBrowser_->resize(contentX, browserY, browserW, browserH);
-
-        const int detailX = contentX + browserW + 12;
-        const int detailW = std::max(120, contentW - browserW - 12);
-        dailyPlanDayDateInput_->resize(detailX + 46, browserY, 110, 24);
-        dailyPlanDayTitleInput_->resize(detailX + 204, browserY,
-                                        std::max(120, detailW - 204),
-                                        24);
-        dailyPlanDayPassagesInput_->resize(detailX,
-                                           browserY + 56,
-                                           detailW,
-                                           std::max(80, browserH - 56));
+        dailyPlanDayHelpBox_->resize(contentX, editorY + 84, contentW, 32);
+        dailyPlanDayScroll_->resize(contentX,
+                                    editorY + 116,
+                                    contentW,
+                                    std::max(80, editorH - 120));
+        layoutDailyPlanEditorDayRows();
     }
 
     int docsButtonsW = studypadToolbarButtonsWidth();
@@ -2129,11 +2353,8 @@ void RightPane::resize(int X, int Y, int W, int H) {
         !dailyNextMonthButton_ || !dailyMonthLabel_ || !dailyCalendarWidget_ ||
         !dailyHtml_ || !dailyPlanEditorGroup_ || !dailyPlanNameInput_ ||
         !dailyPlanStartDateInput_ || !dailyPlanDescriptionInput_ ||
-        !dailyPlanDayBrowser_ || !dailyPlanDayDateInput_ ||
-        !dailyPlanDayTitleInput_ || !dailyPlanDayPassagesInput_ ||
-        !dailyPlanAddDayButton_ || !dailyPlanDuplicateDayButton_ ||
-        !dailyPlanRemoveDayButton_ || !dailyPlanSaveButton_ ||
-        !dailyPlanCancelButton_ ||
+        !dailyPlanDayHelpBox_ || !dailyPlanDayScroll_ || !dailyPlanDayListGroup_ ||
+        !dailyPlanSaveButton_ || !dailyPlanCancelButton_ ||
         !documentsGroup_ || !documentChoice_ || !documentsEditor_ || !dictionaryPaneGroup_ ||
         !dictionaryBackButton_ || !dictionaryKeyInput_ || !dictionaryForwardButton_ ||
         !dictionaryChoice_ || !dictionaryHtml_ ||
@@ -3751,9 +3972,13 @@ std::vector<std::string> RightPane::actionableSelectedReadingPlanDateIsos(
         }
 
         for (const auto& dateIso : selectedDateIsos) {
-            const ReadingPlanDay* day = readingPlanDayForDate(plan, dateIso);
-            if (!day) continue;
-            actionable.push_back(dateIso);
+            std::string canonicalDateIso;
+            const ReadingPlanDay* day = readingPlanDayForDate(plan,
+                                                              dateIso,
+                                                              &canonicalDateIso,
+                                                              nullptr);
+            if (!day || canonicalDateIso.empty()) continue;
+            actionable.push_back(canonicalDateIso);
             anyCompletedState = true;
             everyCompleted = everyCompleted && day->completed;
         }
@@ -3800,11 +4025,23 @@ std::vector<std::string> RightPane::actionableReadingPlanDatesThroughCurrent(
             return actionable;
         }
 
-        for (const auto& day : plan.days) {
-            if (day.dateIso > currentDateIso) break;
-            actionable.push_back(day.dateIso);
+        int instanceStartYear = 0;
+        const ReadingPlanDay* currentDay = readingPlanDayForDate(plan,
+                                                                 currentDateIso,
+                                                                 nullptr,
+                                                                 &instanceStartYear);
+        if (!currentDay) {
+            return actionable;
+        }
+
+        for (const auto& displayDay : readingPlanDisplayDaysForInstance(plan, instanceStartYear)) {
+            if (!displayDay.day ||
+                displayDay.day->sequenceNumber > currentDay->sequenceNumber) {
+                break;
+            }
+            actionable.push_back(displayDay.canonicalDateIso);
             anyCompletedState = true;
-            everyCompleted = everyCompleted && day.completed;
+            everyCompleted = everyCompleted && displayDay.day->completed;
         }
     }
 
@@ -3833,15 +4070,40 @@ std::string RightPane::defaultEditableReadingPlanDateIso(int planId) const {
         return todayIso;
     }
 
-    for (const auto& day : plan.days) {
-        if (!day.completed && day.dateIso >= todayIso) {
-            return day.dateIso;
+    std::vector<EditableReadingPlanDisplayDay> displayDays;
+    for (int instanceStartYear : editableReadingPlanCandidateStartYears(plan,
+                                                                        reading::today().year)) {
+        std::vector<EditableReadingPlanDisplayDay> instanceDays =
+            readingPlanDisplayDaysForInstance(plan, instanceStartYear);
+        displayDays.insert(displayDays.end(), instanceDays.begin(), instanceDays.end());
+    }
+    if (displayDays.empty()) return todayIso;
+
+    std::sort(displayDays.begin(), displayDays.end(),
+              [](const EditableReadingPlanDisplayDay& lhs,
+                 const EditableReadingPlanDisplayDay& rhs) {
+                  return lhs.actualDateIso < rhs.actualDateIso;
+              });
+    displayDays.erase(std::unique(displayDays.begin(),
+                                  displayDays.end(),
+                                  [](const EditableReadingPlanDisplayDay& lhs,
+                                     const EditableReadingPlanDisplayDay& rhs) {
+                                      return lhs.actualDateIso == rhs.actualDateIso;
+                                  }),
+                      displayDays.end());
+
+    for (const auto& displayDay : displayDays) {
+        if (displayDay.day && !displayDay.day->completed &&
+            displayDay.actualDateIso >= todayIso) {
+            return displayDay.actualDateIso;
         }
     }
-    for (const auto& day : plan.days) {
-        if (!day.completed) return day.dateIso;
+    for (const auto& displayDay : displayDays) {
+        if (displayDay.day && !displayDay.day->completed) {
+            return displayDay.actualDateIso;
+        }
     }
-    return plan.days.back().dateIso;
+    return displayDays.back().actualDateIso;
 }
 
 std::string RightPane::defaultSwordReadingPlanDateIso(const std::string& moduleName) const {
@@ -3990,18 +4252,19 @@ void RightPane::updateDailyCalendarMeta() {
     } else if (dailyWorkspaceState_.readingPlanId > 0) {
         ReadingPlan plan;
         if (app_->readingPlanManager().getPlan(dailyWorkspaceState_.readingPlanId, plan)) {
-            for (const auto& day : plan.days) {
+            for (const auto& displayDay : readingPlanDisplayDaysForMonth(plan,
+                                                                         month.year,
+                                                                         month.month)) {
+                if (!displayDay.day) continue;
                 reading::Date date{};
-                if (!reading::parseIsoDate(day.dateIso, date)) continue;
-                if (date.year != month.year || date.month != month.month) continue;
-
+                if (!reading::parseIsoDate(displayDay.actualDateIso, date)) continue;
                 CalendarDayMeta dayMeta;
-                dayMeta.summary = readingPlanDayCalendarSummary(app_, day);
+                dayMeta.summary = readingPlanDayCalendarSummary(app_, *displayDay.day);
                 dayMeta.hasContent = true;
-                dayMeta.completed = day.completed;
-                dayMeta.overdue = !day.completed &&
+                dayMeta.completed = displayDay.day->completed;
+                dayMeta.overdue = !displayDay.day->completed &&
                                   reading::compareDates(date, today) < 0;
-                meta.emplace(day.dateIso, std::move(dayMeta));
+                meta.emplace(displayDay.actualDateIso, std::move(dayMeta));
             }
         }
     }
@@ -4189,8 +4452,6 @@ void RightPane::updateDailyWorkspaceControls() {
         else dailyRescheduleButton_->deactivate();
     }
 
-    updateDailyPlanEditorState();
-
     if (tabs_) {
         layoutTopTabContents(tabs_->x(), tabs_->y(), tabs_->w(), tabs_->h());
     }
@@ -4214,13 +4475,14 @@ std::string RightPane::dailyDevotionalHeadingLabel(const std::string& moduleName
     return moduleName + ": " + description;
 }
 
-int RightPane::selectedDailyPlanEditorIndex() const {
-    if (!dailyPlanDayBrowser_) return -1;
-    int line = dailyPlanDayBrowser_->value();
-    if (line <= 0 || line > static_cast<int>(dailyPlanEditorWorkingPlan_.days.size())) {
-        return -1;
+int RightPane::dailyPlanEditorDayIndexForWidget(const Fl_Widget* widget) const {
+    if (!widget) return -1;
+    for (size_t i = 0; i < dailyPlanDayRows_.size(); ++i) {
+        if (dailyPlanDayRows_[i].input == widget) {
+            return static_cast<int>(i);
+        }
     }
-    return line - 1;
+    return -1;
 }
 
 void RightPane::applyDailyPlanEditorSummaryFields() {
@@ -4240,94 +4502,183 @@ void RightPane::updateDailyPlanEditorSummaryFields() {
     dailyPlanDescriptionInput_->value(dailyPlanEditorWorkingPlan_.summary.description.c_str());
 }
 
-void RightPane::applyDailyPlanEditorSelectionFields() {
-    int index = selectedDailyPlanEditorIndex();
+void RightPane::shiftDailyPlanEditorDates(const std::string& previousStartDateIso,
+                                          const std::string& newStartDateIso) {
+    (void)previousStartDateIso;
+    if (!reading::isIsoDateInRange(newStartDateIso) ||
+        dailyPlanEditorWorkingPlan_.days.empty()) {
+        return;
+    }
+
+    const std::vector<std::string> templateDates =
+        reading::buildGenericReadingPlanTemplateDates(
+            newStartDateIso,
+            static_cast<int>(dailyPlanEditorWorkingPlan_.days.size()));
+    if (templateDates.size() != dailyPlanEditorWorkingPlan_.days.size()) {
+        return;
+    }
+
+    for (size_t i = 0; i < dailyPlanEditorWorkingPlan_.days.size(); ++i) {
+        dailyPlanEditorWorkingPlan_.days[i].dateIso = templateDates[i];
+    }
+}
+
+void RightPane::applyDailyPlanEditorDayCell(int index) {
     if (index < 0 ||
-        !dailyPlanDayDateInput_ || !dailyPlanDayTitleInput_ || !dailyPlanDayPassagesInput_) {
+        index >= static_cast<int>(dailyPlanEditorWorkingPlan_.days.size()) ||
+        index >= static_cast<int>(dailyPlanDayRows_.size()) ||
+        !dailyPlanDayRows_[static_cast<size_t>(index)].input) {
         return;
     }
 
     ReadingPlanDay& day = dailyPlanEditorWorkingPlan_.days[static_cast<size_t>(index)];
-    day.dateIso = reading::trimCopy(
-        dailyPlanDayDateInput_->value() ? dailyPlanDayDateInput_->value() : "");
-    day.title = reading::trimCopy(
-        dailyPlanDayTitleInput_->value() ? dailyPlanDayTitleInput_->value() : "");
     day.passages.clear();
-    for (const auto& ref : reading::splitPlanLines(
-             dailyPlanDayPassagesInput_->value() ? dailyPlanDayPassagesInput_->value() : "")) {
+    const char* value = dailyPlanDayRows_[static_cast<size_t>(index)].input->value();
+    for (const auto& ref : splitReadingPlanCellText(value ? value : "")) {
         day.passages.push_back(ReadingPlanPassage{0, ref});
     }
 }
 
-void RightPane::loadDailyPlanEditorSelection() {
-    if (!dailyPlanDayDateInput_ || !dailyPlanDayTitleInput_ || !dailyPlanDayPassagesInput_) return;
+void RightPane::applyDailyPlanEditorDayCells() {
+    const int count = std::min(static_cast<int>(dailyPlanEditorWorkingPlan_.days.size()),
+                               static_cast<int>(dailyPlanDayRows_.size()));
+    for (int i = 0; i < count; ++i) {
+        applyDailyPlanEditorDayCell(i);
+    }
+}
 
-    int index = selectedDailyPlanEditorIndex();
-    if (index < 0) {
-        dailyPlanDayDateInput_->value("");
-        dailyPlanDayTitleInput_->value("");
-        dailyPlanDayPassagesInput_->value("");
-        updateDailyPlanEditorState();
+void RightPane::applyDailyPlanEditorDistributedPaste(int startIndex,
+                                                     const std::string& pastedText) {
+    if (startIndex < 0 ||
+        startIndex >= static_cast<int>(dailyPlanEditorWorkingPlan_.days.size())) {
         return;
     }
 
-    const ReadingPlanDay& day = dailyPlanEditorWorkingPlan_.days[static_cast<size_t>(index)];
-    dailyPlanDayDateInput_->value(day.dateIso.c_str());
-    dailyPlanDayTitleInput_->value(day.title.c_str());
-    dailyPlanDayPassagesInput_->value(reading::joinPlanPassages(day.passages, "\n").c_str());
-    dailyWorkspaceState_.readingPlanSelectedDateIso = day.dateIso;
-    updateDailyPlanEditorState();
-}
+    const int maxRows = std::min(static_cast<int>(dailyPlanEditorWorkingPlan_.days.size()),
+                                 static_cast<int>(dailyPlanDayRows_.size()));
+    int writeIndex = startIndex;
+    int activeMonth = 0;
+    std::istringstream stream(pastedText);
+    std::string rawLine;
+    while (std::getline(stream, rawLine)) {
+        if (!rawLine.empty() && rawLine.back() == '\r') rawLine.pop_back();
+        std::string trimmed = reading::trimCopy(rawLine);
+        if (trimmed.empty()) continue;
 
-void RightPane::rebuildDailyPlanDayBrowser() {
-    if (!dailyPlanDayBrowser_) return;
-
-    int selectedIndex = selectedDailyPlanEditorIndex();
-    dailyPlanDayBrowser_->clear();
-    for (const auto& day : dailyPlanEditorWorkingPlan_.days) {
-        dailyPlanDayBrowser_->add(reading::formatReadingPlanDayLabel(day).c_str());
-    }
-
-    if (!dailyPlanEditorWorkingPlan_.days.empty()) {
-        if (selectedIndex < 0 ||
-            selectedIndex >= static_cast<int>(dailyPlanEditorWorkingPlan_.days.size())) {
-            selectedIndex = std::min<int>(
-                static_cast<int>(dailyPlanEditorWorkingPlan_.days.size()) - 1, 0);
+        const int lineMonth = monthNumberFromName(trimmed);
+        if (lineMonth > 0) {
+            activeMonth = lineMonth;
+            continue;
         }
-        dailyPlanDayBrowser_->select(selectedIndex + 1);
+
+        if (writeIndex < 0 || writeIndex >= maxRows) break;
+        if (!dailyPlanDayRows_[static_cast<size_t>(writeIndex)].input) break;
+
+        reading::Date targetDate{};
+        int targetMonth = 0;
+        int targetDayOfMonth = 0;
+        if (reading::parseIsoDate(
+                dailyPlanEditorWorkingPlan_.days[static_cast<size_t>(writeIndex)].dateIso,
+                targetDate)) {
+            targetMonth = targetDate.month;
+            targetDayOfMonth = targetDate.day;
+        }
+
+        if (activeMonth > 0 && targetMonth > 0 && targetMonth != activeMonth) {
+            continue;
+        }
+
+        std::string cleaned = stripReadingPlanPasteDayPrefix(trimmed, targetDayOfMonth);
+        cleaned = reading::trimCopy(cleaned);
+        if (cleaned.empty() || isMonthNameOnlyLine(cleaned)) continue;
+
+        dailyPlanDayRows_[static_cast<size_t>(writeIndex)].input->value(cleaned.c_str());
+        applyDailyPlanEditorDayCell(writeIndex);
+        ++writeIndex;
     }
 
-    loadDailyPlanEditorSelection();
+    dailyPlanEditorDirty_ = true;
 }
 
-void RightPane::updateDailyPlanEditorState() {
-    const bool hasSelection = selectedDailyPlanEditorIndex() >= 0;
-    if (dailyPlanDuplicateDayButton_) {
-        hasSelection ? dailyPlanDuplicateDayButton_->activate()
-                     : dailyPlanDuplicateDayButton_->deactivate();
+void RightPane::layoutDailyPlanEditorDayRows() {
+    if (!dailyPlanDayScroll_ || !dailyPlanDayListGroup_) return;
+
+    const int padding = 8;
+    const int rowH = 28;
+    const int rowGap = 6;
+    const int dayDigits = std::max(
+        1,
+        static_cast<int>(
+            std::to_string(std::max<size_t>(1, dailyPlanDayRows_.size())).size()));
+    const int labelW = std::clamp(44 + (dayDigits * 10), 60, 88);
+    const int contentX = dailyPlanDayScroll_->x();
+    const int contentY = dailyPlanDayScroll_->y();
+    const int contentW = std::max(240, dailyPlanDayScroll_->w() - 20);
+
+    int rowY = contentY + padding;
+    for (auto& row : dailyPlanDayRows_) {
+        if (!row.label || !row.input) continue;
+        row.label->resize(contentX + padding, rowY + 4, labelW - padding, 20);
+        const int inputX = contentX + labelW;
+        const int inputW = std::max(120, (contentX + contentW) - inputX - padding);
+        row.input->resize(inputX, rowY, inputW, 24);
+        rowY += rowH + rowGap;
     }
-    if (dailyPlanRemoveDayButton_) {
-        hasSelection ? dailyPlanRemoveDayButton_->activate()
-                     : dailyPlanRemoveDayButton_->deactivate();
+
+    const int contentH = std::max(dailyPlanDayScroll_->h(), rowY - contentY + padding);
+    dailyPlanDayListGroup_->resize(contentX, contentY, contentW, contentH);
+}
+
+void RightPane::rebuildDailyPlanDayRows() {
+    if (!dailyPlanDayListGroup_ || !dailyPlanDayHelpBox_) return;
+
+    while (dailyPlanDayListGroup_->children() > 0) {
+        Fl_Widget* child = dailyPlanDayListGroup_->child(0);
+        dailyPlanDayListGroup_->remove(*child);
+        delete child;
     }
-    if (dailyPlanDayDateInput_) {
-        if (hasSelection) dailyPlanDayDateInput_->activate();
-        else dailyPlanDayDateInput_->deactivate();
+    dailyPlanDayRows_.clear();
+
+    const size_t dayCount = dailyPlanEditorWorkingPlan_.days.size();
+    std::ostringstream help;
+    help << "Edit each day's readings here. Separate multiple passages with semicolons. "
+         << "Pasting multiple lines will fill following days.";
+    if (dayCount > 0) {
+        help << " " << dayCount << " day" << (dayCount == 1 ? "" : "s") << ".";
     }
-    if (dailyPlanDayTitleInput_) {
-        if (hasSelection) dailyPlanDayTitleInput_->activate();
-        else dailyPlanDayTitleInput_->deactivate();
+    dailyPlanDayHelpBox_->copy_label(help.str().c_str());
+
+    dailyPlanDayListGroup_->begin();
+    dailyPlanDayRows_.reserve(dayCount);
+    for (size_t i = 0; i < dayCount; ++i) {
+        const ReadingPlanDay& day = dailyPlanEditorWorkingPlan_.days[i];
+
+        auto* label = new Fl_Box(0, 0, 1, 1, "");
+        label->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+        std::ostringstream labelText;
+        labelText << "Day " << (i + 1);
+        label->copy_label(labelText.str().c_str());
+
+        auto* input = new ReadingPlanDayInput(0, 0, 1, 1);
+        input->tooltip("Separate multiple passages with semicolons.");
+        input->value(reading::joinPlanPassages(day.passages, "; ").c_str());
+        input->when(FL_WHEN_CHANGED);
+        input->callback(onDailyPlanEditorFieldChanged, this);
+        input->setMultilinePasteHandler(
+            [this, rowIndex = static_cast<int>(i)](const std::string& pastedText) {
+                applyDailyPlanEditorDistributedPaste(rowIndex, pastedText);
+            });
+
+        dailyPlanDayRows_.push_back(DailyPlanEditorDayRow{label, input});
     }
-    if (dailyPlanDayPassagesInput_) {
-        if (hasSelection) dailyPlanDayPassagesInput_->activate();
-        else dailyPlanDayPassagesInput_->deactivate();
-    }
+    dailyPlanDayListGroup_->end();
+    layoutDailyPlanEditorDayRows();
 }
 
 bool RightPane::validateDailyPlanEditorPlan(ReadingPlan& out,
                                             std::string& errorMessage) {
     applyDailyPlanEditorSummaryFields();
-    applyDailyPlanEditorSelectionFields();
+    applyDailyPlanEditorDayCells();
 
     ReadingPlan updated = dailyPlanEditorWorkingPlan_;
     if (updated.summary.name.empty()) {
@@ -4348,10 +4699,6 @@ bool RightPane::validateDailyPlanEditorPlan(ReadingPlan& out,
     for (const auto& day : updated.days) {
         if (!reading::isIsoDateInRange(day.dateIso)) {
             errorMessage = "Each reading day needs a valid date.";
-            return false;
-        }
-        if (day.passages.empty()) {
-            errorMessage = "Each reading day needs at least one passage.";
             return false;
         }
     }
@@ -4389,20 +4736,7 @@ void RightPane::loadDailyPlanEditor() {
     updateDailyPlanEditorSummaryFields();
     dailyPlanEditorDirty_ = false;
 
-    int targetIndex = 0;
-    for (size_t i = 0; i < dailyPlanEditorWorkingPlan_.days.size(); ++i) {
-        if (dailyPlanEditorWorkingPlan_.days[i].dateIso ==
-            dailyWorkspaceState_.readingPlanSelectedDateIso) {
-            targetIndex = static_cast<int>(i);
-            break;
-        }
-    }
-
-    rebuildDailyPlanDayBrowser();
-    if (dailyPlanDayBrowser_ && !dailyPlanEditorWorkingPlan_.days.empty()) {
-        dailyPlanDayBrowser_->select(targetIndex + 1);
-        loadDailyPlanEditorSelection();
-    }
+    rebuildDailyPlanDayRows();
 }
 
 void RightPane::enterDailyPlanEditMode() {
@@ -5642,6 +5976,11 @@ void RightPane::onDailyNewPlan(Fl_Widget* /*w*/, void* data) {
     ReadingPlan plan;
     plan.summary.startDateIso = reading::formatIsoDate(reading::today());
     if (!ReadingPlanEditorDialog::createPlan(self->app_, plan)) return;
+    const bool createdBlankPlan = std::all_of(
+        plan.days.begin(), plan.days.end(),
+        [](const ReadingPlanDay& day) {
+            return reading::trimCopy(day.title).empty() && day.passages.empty();
+        });
 
     int createdId = 0;
     if (!self->app_->readingPlanManager().createPlan(plan, &createdId)) {
@@ -5654,7 +5993,7 @@ void RightPane::onDailyNewPlan(Fl_Widget* /*w*/, void* data) {
     self->dailyWorkspaceState_.readingPlanId = createdId;
     self->dailyWorkspaceState_.swordReadingPlanModule.clear();
     self->dailyWorkspaceState_.readingPlanSelectedDateIso.clear();
-    self->dailyWorkspaceState_.readingPlanEditMode = false;
+    self->dailyWorkspaceState_.readingPlanEditMode = createdBlankPlan;
     self->populateReadingPlanChoices();
     self->refreshDailyWorkspace(true);
 }
@@ -5846,10 +6185,35 @@ void RightPane::onDailyReschedule(Fl_Widget* /*w*/, void* data) {
             self->dailyWorkspaceState_.readingPlanSelectedDateIso,
             request.targetDateIso);
     } else {
+        ReadingPlan plan;
+        if (!self->app_->readingPlanManager().getPlan(self->dailyWorkspaceState_.readingPlanId,
+                                                      plan)) {
+            return;
+        }
+        std::string canonicalFromDateIso;
+        int instanceStartYear = 0;
+        const ReadingPlanDay* selectedDay = readingPlanDayForDate(
+            plan,
+            self->dailyWorkspaceState_.readingPlanSelectedDateIso,
+            &canonicalFromDateIso,
+            &instanceStartYear);
+        if (!selectedDay || canonicalFromDateIso.empty()) {
+            return;
+        }
+
+        reading::Date canonicalFromDate{};
+        if (!reading::parseIsoDate(canonicalFromDateIso, canonicalFromDate)) {
+            return;
+        }
+        const int actualDayDelta =
+            isoDayDifference(self->dailyWorkspaceState_.readingPlanSelectedDateIso,
+                             request.targetDateIso);
+        const std::string canonicalTargetDateIso = reading::formatIsoDate(
+            reading::addDays(canonicalFromDate, actualDayDelta));
         ok = self->app_->readingPlanManager().rescheduleDay(
             self->dailyWorkspaceState_.readingPlanId,
-            self->dailyWorkspaceState_.readingPlanSelectedDateIso,
-            request.targetDateIso);
+            canonicalFromDateIso,
+            canonicalTargetDateIso);
     }
 
     if (!ok) {
@@ -5862,108 +6226,24 @@ void RightPane::onDailyReschedule(Fl_Widget* /*w*/, void* data) {
     self->refreshDailyWorkspace(true);
 }
 
-void RightPane::onDailyPlanEditorSelection(Fl_Widget* /*w*/, void* data) {
-    auto* self = static_cast<RightPane*>(data);
-    if (!self || !self->dailyWorkspaceState_.readingPlanEditMode) return;
-    self->loadDailyPlanEditorSelection();
-}
-
 void RightPane::onDailyPlanEditorFieldChanged(Fl_Widget* w, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self || !self->dailyWorkspaceState_.readingPlanEditMode) return;
 
-    if (w == self->dailyPlanNameInput_ ||
-        w == self->dailyPlanStartDateInput_ ||
-        w == self->dailyPlanDescriptionInput_) {
+    if (w == self->dailyPlanNameInput_ || w == self->dailyPlanDescriptionInput_) {
         self->applyDailyPlanEditorSummaryFields();
-    } else {
-        self->applyDailyPlanEditorSelectionFields();
-        int index = self->selectedDailyPlanEditorIndex();
-        if (index >= 0 && self->dailyPlanDayBrowser_) {
-            const ReadingPlanDay& day =
-                self->dailyPlanEditorWorkingPlan_.days[static_cast<size_t>(index)];
-            self->dailyPlanDayBrowser_->text(index + 1,
-                                             reading::formatReadingPlanDayLabel(day).c_str());
-            self->dailyWorkspaceState_.readingPlanSelectedDateIso = day.dateIso;
-        }
+    } else if (w == self->dailyPlanStartDateInput_) {
+        const std::string previousStartDateIso =
+            self->dailyPlanEditorWorkingPlan_.summary.startDateIso;
+        self->applyDailyPlanEditorSummaryFields();
+        self->shiftDailyPlanEditorDates(previousStartDateIso,
+                                        self->dailyPlanEditorWorkingPlan_.summary.startDateIso);
+        self->rebuildDailyPlanDayRows();
+    } else if (int index = self->dailyPlanEditorDayIndexForWidget(w); index >= 0) {
+        self->applyDailyPlanEditorDayCell(index);
     }
 
     self->dailyPlanEditorDirty_ = true;
-    self->updateDailyPlanEditorState();
-}
-
-void RightPane::onDailyPlanAddDay(Fl_Widget* /*w*/, void* data) {
-    auto* self = static_cast<RightPane*>(data);
-    if (!self || !self->dailyWorkspaceState_.readingPlanEditMode) return;
-
-    self->applyDailyPlanEditorSummaryFields();
-    self->applyDailyPlanEditorSelectionFields();
-
-    ReadingPlanDay day;
-    reading::Date baseDate{};
-    bool haveBaseDate = false;
-    int index = self->selectedDailyPlanEditorIndex();
-    if (index >= 0 &&
-        reading::parseIsoDate(self->dailyPlanEditorWorkingPlan_.days[static_cast<size_t>(index)].dateIso,
-                              baseDate)) {
-        haveBaseDate = true;
-    } else if (!self->dailyPlanEditorWorkingPlan_.days.empty() &&
-               reading::parseIsoDate(self->dailyPlanEditorWorkingPlan_.days.back().dateIso,
-                                     baseDate)) {
-        haveBaseDate = true;
-    } else if (reading::parseIsoDate(self->dailyPlanEditorWorkingPlan_.summary.startDateIso,
-                                     baseDate)) {
-        haveBaseDate = true;
-    }
-    day.sequenceNumber = static_cast<int>(self->dailyPlanEditorWorkingPlan_.days.size()) + 1;
-    day.dateIso = reading::formatIsoDate(
-        haveBaseDate ? reading::addDays(baseDate, 1) : reading::today());
-    self->dailyPlanEditorWorkingPlan_.days.push_back(std::move(day));
-    reading::normalizeReadingPlanDays(self->dailyPlanEditorWorkingPlan_.days);
-    self->dailyPlanEditorDirty_ = true;
-    self->rebuildDailyPlanDayBrowser();
-    if (self->dailyPlanDayBrowser_) {
-        self->dailyPlanDayBrowser_->select(self->dailyPlanDayBrowser_->size());
-        self->loadDailyPlanEditorSelection();
-    }
-}
-
-void RightPane::onDailyPlanDuplicateDay(Fl_Widget* /*w*/, void* data) {
-    auto* self = static_cast<RightPane*>(data);
-    if (!self || !self->dailyWorkspaceState_.readingPlanEditMode) return;
-
-    self->applyDailyPlanEditorSelectionFields();
-    int index = self->selectedDailyPlanEditorIndex();
-    if (index < 0) return;
-
-    ReadingPlanDay copy = self->dailyPlanEditorWorkingPlan_.days[static_cast<size_t>(index)];
-    copy.id = 0;
-    copy.completed = false;
-    copy.sequenceNumber = static_cast<int>(self->dailyPlanEditorWorkingPlan_.days.size()) + 1;
-    for (auto& passage : copy.passages) {
-        passage.id = 0;
-    }
-    reading::Date date{};
-    if (reading::parseIsoDate(copy.dateIso, date)) {
-        copy.dateIso = reading::formatIsoDate(reading::addDays(date, 1));
-    }
-    self->dailyPlanEditorWorkingPlan_.days.push_back(std::move(copy));
-    reading::normalizeReadingPlanDays(self->dailyPlanEditorWorkingPlan_.days);
-    self->dailyPlanEditorDirty_ = true;
-    self->rebuildDailyPlanDayBrowser();
-}
-
-void RightPane::onDailyPlanRemoveDay(Fl_Widget* /*w*/, void* data) {
-    auto* self = static_cast<RightPane*>(data);
-    if (!self || !self->dailyWorkspaceState_.readingPlanEditMode) return;
-
-    int index = self->selectedDailyPlanEditorIndex();
-    if (index < 0) return;
-
-    self->dailyPlanEditorWorkingPlan_.days.erase(
-        self->dailyPlanEditorWorkingPlan_.days.begin() + index);
-    self->dailyPlanEditorDirty_ = true;
-    self->rebuildDailyPlanDayBrowser();
 }
 
 void RightPane::onDailyPlanSave(Fl_Widget* /*w*/, void* data) {
@@ -5982,15 +6262,8 @@ void RightPane::onDailyPlanSave(Fl_Widget* /*w*/, void* data) {
         return;
     }
 
-    if (!updated.days.empty()) {
-        int index = self->selectedDailyPlanEditorIndex();
-        if (index < 0) index = 0;
-        index = std::min(index, static_cast<int>(updated.days.size()) - 1);
-        self->dailyWorkspaceState_.readingPlanSelectedDateIso =
-            updated.days[static_cast<size_t>(index)].dateIso;
-    }
-
     self->dailyWorkspaceState_.readingPlanEditMode = false;
+    self->dailyWorkspaceState_.readingPlanSelectedDateIso.clear();
     self->dailyPlanEditorWorkingPlan_ = ReadingPlan{};
     self->dailyPlanEditorDirty_ = false;
     self->populateReadingPlanChoices();

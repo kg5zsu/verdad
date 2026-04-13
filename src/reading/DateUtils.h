@@ -28,7 +28,18 @@ inline bool parseIsoDate(const std::string& text, Date& out) {
     } catch (...) {
         return false;
     }
-    return out.valid();
+    if (!out.valid()) return false;
+
+    std::tm normalized{};
+    normalized.tm_year = out.year - 1900;
+    normalized.tm_mon = out.month - 1;
+    normalized.tm_mday = out.day;
+    normalized.tm_hour = 12;
+    normalized.tm_isdst = -1;
+    std::mktime(&normalized);
+    return (normalized.tm_year + 1900) == out.year &&
+           (normalized.tm_mon + 1) == out.month &&
+           normalized.tm_mday == out.day;
 }
 
 inline std::string formatIsoDate(const Date& date) {

@@ -39,6 +39,14 @@ std::string lowerTrimmed(const std::string& text) {
     return out;
 }
 
+std::string normalizedGeneratedBookName(const std::string& book) {
+    const std::string trimmed = reading::trimCopy(book);
+    if (lowerTrimmed(trimmed) == "revelation of john") {
+        return "Revelation";
+    }
+    return trimmed;
+}
+
 reading::Date addMonthsClamped(const reading::Date& date, int deltaMonths) {
     std::tm value = reading::toTm(date);
     const int originalDay = date.day;
@@ -128,6 +136,10 @@ bool appendRuleBooks(std::vector<std::string>& orderedBooks,
         std::unordered_map<std::string, std::string> lookup;
         for (const auto& book : allBooks) {
             lookup.emplace(lowerTrimmed(book), book);
+            const std::string normalizedBook = normalizedGeneratedBookName(book);
+            if (normalizedBook != reading::trimCopy(book)) {
+                lookup.emplace(lowerTrimmed(normalizedBook), book);
+            }
         }
         for (const auto& rawBook : rule.books) {
             const auto it = lookup.find(lowerTrimmed(rawBook));
@@ -290,7 +302,7 @@ std::vector<std::vector<Segment>> partitionSegments(const std::vector<Segment>& 
 
 std::string formatSegmentReference(const Segment& segment) {
     std::ostringstream out;
-    out << segment.book << " " << segment.chapter;
+    out << normalizedGeneratedBookName(segment.book) << " " << segment.chapter;
     if (!segment.wholeChapter) {
         out << ":" << segment.verseStart;
         if (segment.verseEnd > segment.verseStart) {
@@ -350,7 +362,10 @@ bool generateReadingPlan(SwordManager& swordManager,
     reading::Date endDate = resolveEndDate(request, startDate, errorOut);
     if (!endDate.valid()) return false;
 
-    const int totalDateSlots = inclusiveDaySpan(startDate, endDate);
+    const std::vector<std::string> templateDates =
+        reading::buildGenericReadingPlanTemplateDatesForRange(request.startDateIso,
+                                                              reading::formatIsoDate(endDate));
+    const int totalDateSlots = static_cast<int>(templateDates.size());
     if (totalDateSlots <= 0) {
         if (errorOut) *errorOut = "The selected date range is empty.";
         return false;
@@ -428,7 +443,7 @@ bool generateReadingPlan(SwordManager& swordManager,
                                         (groups.size() - 1)));
         ReadingPlanDay day;
         day.sequenceNumber = static_cast<int>(i) + 1;
-        day.dateIso = reading::formatIsoDate(reading::addDays(startDate, slotIndex));
+        day.dateIso = templateDates[static_cast<size_t>(slotIndex)];
         day.passages = passagesForGroup(groups[i]);
         plan.days.push_back(std::move(day));
     }
