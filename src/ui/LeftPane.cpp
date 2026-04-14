@@ -115,7 +115,7 @@ LeftPane::LeftPane(VerdadApp* app, int X, int Y, int W, int H)
     searchInput_ = new Fl_Input(X + padding, Y + padding,
                                  W - 2 * padding - buttonW - 2, searchH);
     searchInput_->box(FL_DOWN_BOX);
-    searchInput_->color(FL_WHITE);
+    searchInput_->color(FL_BACKGROUND2_COLOR);
     searchInput_->when(FL_WHEN_ENTER_KEY);
     searchInput_->callback(onSearchInput, this);
     searchInput_->tooltip("Enter search text and press Enter");

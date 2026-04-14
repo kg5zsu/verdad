@@ -1703,7 +1703,7 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
                                                           (tileW * 2) / 5)),
                                         std::max(120, panelH - (choiceH * 2) - 28));
     generalBookTocPanel_->box(FL_THIN_UP_BOX);
-    generalBookTocPanel_->color(FL_WHITE);
+    generalBookTocPanel_->color(FL_BACKGROUND2_COLOR);
     generalBookTocPanel_->begin();
     generalBookTocPanelHeader_ = new Fl_Box(generalBookTocPanel_->x() + 8,
                                             generalBookTocPanel_->y() + 2,
@@ -1776,7 +1776,7 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
                                        tileW - 4,
                                        kDailyCalendarDrawerH);
     dailyCalendarGroup_->box(FL_THIN_UP_BOX);
-    dailyCalendarGroup_->color(FL_WHITE);
+    dailyCalendarGroup_->color(FL_BACKGROUND2_COLOR);
     dailyCalendarGroup_->begin();
     dailyPrevMonthButton_ = new Fl_Button(dailyCalendarGroup_->x() + 6,
                                           dailyCalendarGroup_->y() + 6,

@@ -58,6 +58,12 @@ WrappingInputChoice* historyInputChoice(Fl_Input_Choice* choice) {
     return static_cast<WrappingInputChoice*>(choice);
 }
 
+const VerdadApp::ThemePalette& currentThemePalette() {
+    static const VerdadApp::ThemePalette fallback;
+    if (auto* app = VerdadApp::instance()) return app->themePalette();
+    return fallback;
+}
+
 void setToggleMenuItemValue(Fl_Menu_Button* button, int index, bool enabled) {
     if (!button || index < 0 || index >= button->size()) return;
     button->mode(index, FL_MENU_TOGGLE | (enabled ? FL_MENU_VALUE : 0));
@@ -343,6 +349,7 @@ public:
     }
 
     void draw() override {
+        const auto& palette = currentThemePalette();
         fl_push_clip(x(), y(), w(), h());
         fl_color(color());
         fl_rectf(x(), y(), w(), h());
@@ -366,7 +373,7 @@ public:
             if (drawW <= 0) break;
 
             const bool isLink = !chunk.link.empty();
-            fl_color(isLink ? fl_rgb_color(0, 50, 200) : fl_rgb_color(0, 0, 0));
+            fl_color(isLink ? palette.link : palette.foreground);
             fl_draw(chunk.text.c_str(),
                     cursorX,
                     y(),
@@ -384,7 +391,7 @@ public:
                 hitRects_.push_back(std::move(rect));
 
                 if (hoveredLink_ == static_cast<int>(hitRects_.size()) - 1) {
-                    fl_color(fl_rgb_color(0, 50, 200));
+                    fl_color(palette.link);
                     fl_line(cursorX, baseline + 1, cursorX + drawW, baseline + 1);
                 }
             }
@@ -1001,6 +1008,7 @@ void BiblePane::syncOptionButtons() {
     }
     if (redWordsToggleButton_) {
         redWordsToggleButton_->value(options.showWordsOfChristRed ? 1 : 0);
+        redWordsToggleButton_->labelcolor(app_->themePalette().wordsOfJesus);
     }
     if (morphToggleButton_) {
         morphToggleButton_->value(options.showMorphMarkers ? 1 : 0);

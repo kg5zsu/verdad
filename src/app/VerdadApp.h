@@ -18,7 +18,52 @@ class MainWindow;
 /// Main application class - owns all managers and the main window
 class VerdadApp {
 public:
+    enum class ThemeMode {
+        Light,
+        Dark,
+    };
+
+    struct ThemePalette {
+        ThemeMode mode = ThemeMode::Light;
+        Fl_Color appBackground = fl_rgb_color(0xec, 0xef, 0xf2);
+        Fl_Color panelBackground = fl_rgb_color(0xfe, 0xfe, 0xfe);
+        Fl_Color contentBackground = fl_rgb_color(0xfe, 0xfe, 0xfe);
+        Fl_Color foreground = fl_rgb_color(0x2c, 0x2c, 0x2c);
+        Fl_Color mutedForeground = fl_rgb_color(0x55, 0x55, 0x55);
+        Fl_Color subtleForeground = fl_rgb_color(0x7b, 0x87, 0x92);
+        Fl_Color border = fl_rgb_color(0xd3, 0xdd, 0xe6);
+        Fl_Color selectionBackground = fl_rgb_color(0x4b, 0x7f, 0xb8);
+        Fl_Color inactiveSelectionBackground = fl_rgb_color(0xa9, 0xc1, 0xde);
+        Fl_Color accent = fl_rgb_color(0x1a, 0x52, 0x76);
+        Fl_Color accentHover = fl_rgb_color(0x27, 0x4d, 0x68);
+        Fl_Color link = fl_rgb_color(0x1a, 0x52, 0x76);
+        Fl_Color linkHover = fl_rgb_color(0x27, 0x4d, 0x68);
+        Fl_Color wordsOfJesus = fl_rgb_color(0xcc, 0x00, 0x00);
+        Fl_Color success = fl_rgb_color(0x1f, 0x7f, 0x1f);
+        Fl_Color successBackground = fl_rgb_color(0xe8, 0xf7, 0xec);
+        Fl_Color warning = fl_rgb_color(0x7a, 0x5a, 0x0a);
+        Fl_Color warningBackground = fl_rgb_color(0xff, 0xf3, 0xbf);
+        Fl_Color danger = fl_rgb_color(0xb4, 0x50, 0x28);
+        Fl_Color dangerBackground = fl_rgb_color(0xfc, 0xee, 0xe8);
+        Fl_Color tagBackground = fl_rgb_color(0xe0, 0xe8, 0xf0);
+        Fl_Color tagBorder = fl_rgb_color(0xc0, 0xd0, 0xe0);
+        Fl_Color tagHoverBackground = fl_rgb_color(0xc0, 0xd0, 0xe0);
+        Fl_Color codeBackground = fl_rgb_color(0xf2, 0xf5, 0xf7);
+        Fl_Color highlightBackground = fl_rgb_color(0xff, 0xff, 0x80);
+        Fl_Color highlightText = FL_BLACK;
+        Fl_Color editorRule = fl_rgb_color(0x78, 0x78, 0x78);
+        Fl_Color calendarCurrentMonthBackground = fl_rgb_color(0xfa, 0xfa, 0xfa);
+        Fl_Color calendarOtherMonthBackground = fl_rgb_color(0xf0, 0xf0, 0xf0);
+        Fl_Color calendarHeaderText = fl_rgb_color(0x55, 0x55, 0x55);
+        Fl_Color calendarOtherMonthText = fl_rgb_color(0x8c, 0x8c, 0x8c);
+        Fl_Color calendarGrid = fl_rgb_color(0xd2, 0xd2, 0xd2);
+        Fl_Color calendarTodayOutline = fl_rgb_color(0x2e, 0x6f, 0xbf);
+        Fl_Color calendarRangeOutline = fl_rgb_color(0x1e, 0x53, 0x99);
+        Fl_Color calendarSelectedOutline = fl_rgb_color(0x0c, 0x3a, 0x71);
+    };
+
     struct AppearanceSettings {
+        ThemeMode themeMode = ThemeMode::Light;
         std::string appFontName = "Sans";
         int appFontSize = 14;
         std::string textFontFamily = "DejaVu Serif";
@@ -91,6 +136,12 @@ public:
 
     /// Current appearance settings.
     const AppearanceSettings& appearanceSettings() const { return appearanceSettings_; }
+
+    /// Current application theme palette.
+    const ThemePalette& themePalette() const { return themePalette_; }
+
+    /// Return true when the current appearance theme is dark.
+    bool isDarkTheme() const { return appearanceSettings_.themeMode == ThemeMode::Dark; }
 
     /// Update appearance settings and apply them immediately.
     void setAppearanceSettings(const AppearanceSettings& settings);
@@ -170,6 +221,7 @@ private:
     PreviewDictionarySettings previewDictionarySettings_;
     OptionDisplaySettings optionDisplaySettings_;
     ModuleManagerSettings moduleManagerSettings_;
+    ThemePalette themePalette_;
     std::vector<std::string> systemFontFamilies_;
     /// Map from family name (lowercase) to FLTK font index
     std::unordered_map<std::string, Fl_Font> fontFamilyMap_;
@@ -184,6 +236,9 @@ private:
 
     /// Load user preferences
     bool loadPreferences();
+
+    /// Apply the configured light/dark palette to FLTK and cache theme colors.
+    void applyThemePalette(ThemeMode mode);
 
     /// Apply parsed preference data to the running app.
     bool applyPreferencesMap(const std::unordered_map<std::string, std::string>& prefs,

@@ -89,6 +89,12 @@ namespace {
 constexpr double kPreviewUpdateDelaySec = 0.08;
 constexpr double kStatusPollDelaySec = 0.1;
 
+const VerdadApp::ThemePalette& currentThemePalette() {
+    static const VerdadApp::ThemePalette fallback;
+    if (auto* app = VerdadApp::instance()) return app->themePalette();
+    return fallback;
+}
+
 std::string trimCopy(const std::string& text) {
     size_t start = 0;
     while (start < text.size() &&
@@ -774,11 +780,12 @@ int SearchResultBrowser::item_width(void* item) const {
 
 void SearchResultBrowser::item_draw(void* item,
                                     int X, int Y, int W, int H) const {
+    const auto& palette = currentThemePalette();
     const bool selected = item_selected(item) != 0;
     Fl_Color bg = selected ? selection_color() : color();
     Fl_Color fg = fl_contrast(textcolor(), bg);
-    Fl_Color highlightBg = fl_rgb_color(255, 255, 128);
-    Fl_Color highlightFg = FL_BLACK;
+    Fl_Color highlightBg = palette.highlightBackground;
+    Fl_Color highlightFg = palette.highlightText;
 
     fl_color(bg);
     fl_rectf(X, Y, W, H);

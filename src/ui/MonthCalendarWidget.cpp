@@ -1,5 +1,7 @@
 #include "ui/MonthCalendarWidget.h"
 
+#include "app/VerdadApp.h"
+
 #include <FL/Fl.H>
 #include <FL/fl_draw.H>
 
@@ -15,11 +17,19 @@ constexpr int kCellPadding = 4;
 
 const char* kWeekdayLabels[7] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 
-Fl_Color summaryColorForCell(const CalendarDayMeta& meta, bool inDisplayedMonth) {
-    if (!inDisplayedMonth) return fl_rgb_color(150, 150, 150);
-    if (meta.completed) return fl_rgb_color(16, 120, 52);
-    if (meta.overdue) return fl_rgb_color(180, 80, 40);
-    return fl_rgb_color(70, 70, 70);
+const VerdadApp::ThemePalette& currentThemePalette() {
+    static const VerdadApp::ThemePalette fallback;
+    if (auto* app = VerdadApp::instance()) return app->themePalette();
+    return fallback;
+}
+
+Fl_Color summaryColorForCell(const CalendarDayMeta& meta,
+                             bool inDisplayedMonth,
+                             const VerdadApp::ThemePalette& palette) {
+    if (!inDisplayedMonth) return palette.calendarOtherMonthText;
+    if (meta.completed) return palette.success;
+    if (meta.overdue) return palette.danger;
+    return palette.mutedForeground;
 }
 
 } // namespace
@@ -29,6 +39,8 @@ MonthCalendarWidget::MonthCalendarWidget(int X, int Y, int W, int H, const char*
     , displayedMonth_(reading::today())
     , selectedDate_(reading::today()) {
     box(FL_FLAT_BOX);
+    color(FL_BACKGROUND2_COLOR);
+    labelcolor(FL_FOREGROUND_COLOR);
     selectedDateIsos_.push_back(reading::formatIsoDate(selectedDate_));
     selectedDateSet_.insert(selectedDateIsos_.front());
 }
@@ -121,6 +133,7 @@ int MonthCalendarWidget::handle(int event) {
 }
 
 void MonthCalendarWidget::draw() {
+    const auto& palette = currentThemePalette();
     fl_push_clip(x(), y(), w(), h());
     fl_color(color());
     fl_rectf(x(), y(), w(), h());
@@ -132,7 +145,7 @@ void MonthCalendarWidget::draw() {
     fl_font(labelfont(), 11);
     for (int col = 0; col < 7; ++col) {
         int cellX = x() + (col * cellW);
-        fl_color(fl_rgb_color(85, 85, 85));
+        fl_color(palette.calendarHeaderText);
         fl_draw(kWeekdayLabels[col], cellX, y(), cellW, kWeekdayHeaderH, FL_ALIGN_CENTER);
     }
 
@@ -147,53 +160,53 @@ void MonthCalendarWidget::draw() {
         if (metaIt != metaByIso_.end()) meta = metaIt->second;
 
         const bool inSelection = hasSelectedDateIso(iso);
-        bool selected = inSelection;
         bool isToday = reading::sameDate(cell.date, today);
 
-        Fl_Color fill = cell.inDisplayedMonth ? fl_rgb_color(250, 250, 250)
-                                              : fl_rgb_color(240, 240, 240);
+        Fl_Color fill = cell.inDisplayedMonth
+            ? palette.calendarCurrentMonthBackground
+            : palette.calendarOtherMonthBackground;
         if (inSelection) {
-            fill = fl_rgb_color(220, 232, 248);
+            fill = palette.tagBackground;
         } else if (meta.completed) {
-            fill = fl_rgb_color(232, 247, 236);
+            fill = palette.successBackground;
         } else if (meta.overdue) {
-            fill = fl_rgb_color(252, 238, 232);
+            fill = palette.dangerBackground;
         }
         fl_color(fill);
         fl_rectf(cell.X, cell.Y, cell.W, cell.H);
 
-        fl_color(fl_rgb_color(210, 210, 210));
+        fl_color(palette.calendarGrid);
         fl_rect(cell.X, cell.Y, cell.W, cell.H);
 
         if (isToday) {
-            fl_color(fl_rgb_color(46, 111, 191));
+            fl_color(palette.calendarTodayOutline);
             fl_rect(cell.X + 1, cell.Y + 1, cell.W - 2, cell.H - 2);
         }
         if (inSelection) {
-            fl_color(fl_rgb_color(30, 83, 153));
+            fl_color(palette.calendarRangeOutline);
             fl_rect(cell.X + 2, cell.Y + 2, cell.W - 4, cell.H - 4);
         }
         if (reading::sameDate(cell.date, selectedDate_)) {
-            fl_color(fl_rgb_color(12, 58, 113));
+            fl_color(palette.calendarSelectedOutline);
             fl_rect(cell.X + 3, cell.Y + 3, cell.W - 6, cell.H - 6);
         }
 
-        fl_color(cell.inDisplayedMonth ? FL_BLACK : fl_rgb_color(140, 140, 140));
+        fl_color(cell.inDisplayedMonth ? palette.foreground : palette.calendarOtherMonthText);
         fl_font(labelfont(), 12);
         fl_draw(std::to_string(cell.date.day).c_str(),
                 cell.X + kCellPadding,
                 cell.Y + kCellPadding + 10);
 
         if (meta.completed) {
-            fl_color(fl_rgb_color(16, 120, 52));
+            fl_color(palette.success);
             fl_draw("@check", cell.X + cell.W - 18, cell.Y + 2, 16, 16, FL_ALIGN_CENTER);
         } else if (meta.overdue) {
-            fl_color(fl_rgb_color(180, 80, 40));
+            fl_color(palette.danger);
             fl_draw("!", cell.X + cell.W - 16, cell.Y + 2, 12, 16, FL_ALIGN_CENTER);
         }
 
         if (!meta.summary.empty()) {
-            fl_color(summaryColorForCell(meta, cell.inDisplayedMonth));
+            fl_color(summaryColorForCell(meta, cell.inDisplayedMonth, palette));
             fl_font(FL_HELVETICA, 10);
             const int lineHeight = 12;
             const int maxLines = std::max(1, (cell.H - 22) / lineHeight);

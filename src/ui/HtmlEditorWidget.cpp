@@ -1,5 +1,6 @@
 #include "ui/HtmlEditorWidget.h"
 
+#include "app/VerdadApp.h"
 #include "ui/WrappingChoice.h"
 #include "ui/UiFontUtils.h"
 #include "sword/SwordManager.h"
@@ -49,6 +50,12 @@ enum class HtmlExportFlavor {
     Standard,
     Odt,
 };
+
+const VerdadApp::ThemePalette& currentThemePalette() {
+    static const VerdadApp::ThemePalette fallback;
+    if (auto* app = VerdadApp::instance()) return app->themePalette();
+    return fallback;
+}
 
 std::string trimCopy(const std::string& text) {
     size_t start = 0;
@@ -1588,8 +1595,9 @@ void HtmlEditorTextArea::draw() {
 
     ensureLayout();
 
+    const auto& palette = currentThemePalette();
     fl_push_clip(textAreaX_, textAreaY_, textAreaW_, textAreaH_);
-    fl_color(FL_BACKGROUND2_COLOR);
+    fl_color(palette.panelBackground);
     fl_rectf(textAreaX_, textAreaY_, textAreaW_, textAreaH_);
     drawSelection();
     drawText();
@@ -2155,7 +2163,10 @@ void HtmlEditorTextArea::drawSelection() const {
     int selEnd = 0;
     if (!selectionRange(selStart, selEnd)) return;
 
-    Fl_Color fill = (Fl::focus() == this) ? FL_SELECTION_COLOR : fl_rgb_color(170, 200, 255);
+    const auto& palette = currentThemePalette();
+    Fl_Color fill = (Fl::focus() == this)
+        ? palette.selectionBackground
+        : palette.inactiveSelectionBackground;
     fl_color(fill);
 
     int top = scrollY();
@@ -2187,9 +2198,14 @@ void HtmlEditorTextArea::drawSelection() const {
 
 void HtmlEditorTextArea::drawText() const {
     if (!owner_) return;
+    const auto& palette = currentThemePalette();
     int selStart = 0;
     int selEnd = 0;
     bool hasSelection = selectionRange(selStart, selEnd);
+    Fl_Color selectedBg = (Fl::focus() == this)
+        ? palette.selectionBackground
+        : palette.inactiveSelectionBackground;
+    Fl_Color selectedFg = fl_contrast(FL_FOREGROUND_COLOR, selectedBg);
     int top = scrollY();
     for (const VisualLine& line : lines_) {
         int lineTop = textAreaY_ + line.y - top;
@@ -2208,9 +2224,10 @@ void HtmlEditorTextArea::drawText() const {
                 ? std::max(6, owner_->displayFontSizeForFormat(CharFormat{}) - 1)
                 : owner_->displayFontSizeForFormat(fmt);
             fl_font(font, size);
-            Fl_Color glyphColor = glyph.link ? FL_BLUE :
-                                  (glyph.rule ? fl_rgb_color(120, 120, 120) : FL_FOREGROUND_COLOR);
-            if (selected) glyphColor = FL_WHITE;
+            Fl_Color glyphColor = glyph.link
+                ? palette.link
+                : (glyph.rule ? palette.editorRule : palette.foreground);
+            if (selected) glyphColor = selectedFg;
             fl_color(glyphColor);
             fl_draw(cachedText_.data() + glyph.start,
                     glyph.end - glyph.start,
@@ -2219,7 +2236,7 @@ void HtmlEditorTextArea::drawText() const {
 
             if (glyph.link) {
                 int underlineY = baseline + 1;
-                fl_color(selected ? FL_WHITE : FL_BLUE);
+                fl_color(selected ? selectedFg : palette.link);
                 fl_line(textAreaX_ + line.drawX + glyph.x,
                         underlineY,
                         textAreaX_ + line.drawX + glyph.x + glyph.width,
@@ -2239,7 +2256,7 @@ void HtmlEditorTextArea::drawCaret() const {
     int lineTop = textAreaY_ + caret.top - scrollY();
     if (lineTop + caret.height < textAreaY_ || lineTop > textAreaY_ + textAreaH_) return;
 
-    fl_color(FL_BLACK);
+    fl_color(currentThemePalette().foreground);
     fl_line(textAreaX_ + caret.x,
             lineTop + 1,
             textAreaX_ + caret.x,

@@ -725,6 +725,9 @@ int parallelColumnForElement(const std::shared_ptr<litehtml::element>& element) 
 
 HtmlWidget::HtmlWidget(int X, int Y, int W, int H, const char* label)
     : Fl_Widget(X, Y, W, H, label) {
+    color(FL_BACKGROUND2_COLOR);
+    labelcolor(FL_FOREGROUND_COLOR);
+
     // Create vertical scrollbar
     scrollbar_ = new Fl_Scrollbar(X + W - kScrollbarExtent, Y,
                                   kScrollbarExtent, H);
@@ -2006,9 +2009,11 @@ void HtmlWidget::notifyScrollChanged(int oldScrollY) {
 
 void HtmlWidget::draw() {
     activeFltkFont_ = nullptr;
+    Fl_Color emptyColor = fl_inactive(FL_FOREGROUND_COLOR);
+
     // Draw background
     fl_push_clip(x(), y(), w(), h());
-    fl_color(FL_WHITE);
+    fl_color(color());
     fl_rectf(x(), y(), w(), h());
 
     if (doc_) {
@@ -2028,7 +2033,7 @@ void HtmlWidget::draw() {
     } else {
         textFragments_.clear();
         // No content
-        fl_color(FL_DARK3);
+        fl_color(emptyColor);
         fl_font(FL_HELVETICA, 12);
         fl_draw("No content", x() + 10, y() + 20);
     }

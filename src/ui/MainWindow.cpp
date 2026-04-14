@@ -1760,6 +1760,10 @@ void MainWindow::applyAppearanceSettings(Fl_Font appFont,
     lastAppliedTextCss_ = textCssOverride;
     appearanceApplied_ = true;
 
+    if (searchHelpWindow_) {
+        searchHelpWindow_->redraw();
+    }
+
     redraw();
 }
 
@@ -2573,7 +2577,7 @@ void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
     constexpr int fieldXOffset = 180;
     constexpr int spinnerW = 90;
 
-    int appearanceRowCount = 7;
+    int appearanceRowCount = 8;
     int dictionaryRowCount = 2 + static_cast<int>(languageCodes.size());
     int editorRowCount = 2;
     int maxRowCount = std::max({appearanceRowCount, dictionaryRowCount, editorRowCount});
@@ -2602,6 +2606,14 @@ void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
     appearanceTab->begin();
 
     int rowY = groupY + groupPadY;
+    Fl_Box* themeLabel = new Fl_Box(labelX, rowY, labelW, 24, "Theme:");
+    themeLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    Fl_Choice* themeChoice = new Fl_Choice(fieldX, rowY, spinnerW + 40, 24);
+    themeChoice->add("Light");
+    themeChoice->add("Dark");
+    themeChoice->value(current.themeMode == VerdadApp::ThemeMode::Dark ? 1 : 0);
+    rowY += rowStep;
+
     Fl_Box* appFontLabel = new Fl_Box(labelX, rowY, labelW, 24, "Application font:");
     appFontLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
     auto* appFontChoice = new FilterableChoiceWidget(fieldX, rowY, fieldW, 24);
@@ -2786,6 +2798,10 @@ void MainWindow::onViewSettings(Fl_Widget* /*w*/, void* data) {
         VerdadApp::AppearanceSettings updated = current;
         VerdadApp::PreviewDictionarySettings updatedPreview = currentPreview;
 
+        updated.themeMode =
+            (themeChoice->value() == 1)
+                ? VerdadApp::ThemeMode::Dark
+                : VerdadApp::ThemeMode::Light;
         std::string appFontName = appFontChoice->selectedValue();
         if (!appFontName.empty()) {
             updated.appFontName = appFontName;
@@ -2995,7 +3011,8 @@ void MainWindow::onHelpAbout(Fl_Widget* /*w*/, void* data) {
     projectLinkButton.down_box(FL_NO_BOX);
     projectLinkButton.clear_visible_focus();
     projectLinkButton.align(FL_ALIGN_CENTER | FL_ALIGN_INSIDE);
-    projectLinkButton.labelcolor(fl_rgb_color(0, 102, 204));
+    projectLinkButton.labelcolor(self->app_ ? self->app_->themePalette().link
+                                            : fl_rgb_color(0, 102, 204));
     projectLinkButton.tooltip("Open the Verdad GitHub project page.");
     projectLinkButton.callback(
         [](Fl_Widget* /*w*/, void* /*data*/) {

@@ -243,6 +243,90 @@ std::string escapeCssString(const std::string& text) {
     return out;
 }
 
+const char* themeModeToken(VerdadApp::ThemeMode mode) {
+    switch (mode) {
+    case VerdadApp::ThemeMode::Dark:
+        return "dark";
+    case VerdadApp::ThemeMode::Light:
+    default:
+        return "light";
+    }
+}
+
+VerdadApp::ThemeMode themeModeFromToken(const std::string& text,
+                                        VerdadApp::ThemeMode fallback) {
+    std::string token = trimCopy(text);
+    std::transform(token.begin(), token.end(), token.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    if (token == "dark") return VerdadApp::ThemeMode::Dark;
+    if (token == "light") return VerdadApp::ThemeMode::Light;
+    return fallback;
+}
+
+VerdadApp::ThemePalette makeThemePalette(VerdadApp::ThemeMode mode) {
+    VerdadApp::ThemePalette palette;
+    palette.mode = mode;
+    if (mode == VerdadApp::ThemeMode::Dark) {
+        palette.appBackground = fl_rgb_color(0x20, 0x23, 0x27);
+        palette.panelBackground = fl_rgb_color(0x2a, 0x30, 0x38);
+        palette.contentBackground = fl_rgb_color(0x2a, 0x30, 0x38);
+        palette.foreground = fl_rgb_color(0xe6, 0xe9, 0xee);
+        palette.mutedForeground = fl_rgb_color(0xb0, 0xb8, 0xc2);
+        palette.subtleForeground = fl_rgb_color(0x87, 0x92, 0xa0);
+        palette.border = fl_rgb_color(0x46, 0x50, 0x5d);
+        palette.selectionBackground = fl_rgb_color(0x3d, 0x6d, 0xa3);
+        palette.inactiveSelectionBackground = fl_rgb_color(0x3a, 0x46, 0x54);
+        palette.accent = fl_rgb_color(0x8f, 0xc2, 0xff);
+        palette.accentHover = fl_rgb_color(0xb1, 0xd4, 0xff);
+        palette.link = fl_rgb_color(0x86, 0xb7, 0xff);
+        palette.linkHover = fl_rgb_color(0xb1, 0xd4, 0xff);
+        palette.wordsOfJesus = fl_rgb_color(0xff, 0x8e, 0x7d);
+        palette.success = fl_rgb_color(0x7f, 0xd4, 0x8e);
+        palette.successBackground = fl_rgb_color(0x23, 0x3a, 0x2b);
+        palette.warning = fl_rgb_color(0xe7, 0xc7, 0x6d);
+        palette.warningBackground = fl_rgb_color(0x45, 0x38, 0x14);
+        palette.danger = fl_rgb_color(0xff, 0x9b, 0x7a);
+        palette.dangerBackground = fl_rgb_color(0x47, 0x2c, 0x25);
+        palette.tagBackground = fl_rgb_color(0x2c, 0x41, 0x58);
+        palette.tagBorder = fl_rgb_color(0x41, 0x61, 0x7e);
+        palette.tagHoverBackground = fl_rgb_color(0x35, 0x50, 0x6b);
+        palette.codeBackground = fl_rgb_color(0x24, 0x2b, 0x33);
+        palette.highlightBackground = fl_rgb_color(0x69, 0x5a, 0x14);
+        palette.highlightText = fl_rgb_color(0xff, 0xf7, 0xd6);
+        palette.editorRule = fl_rgb_color(0x7a, 0x86, 0x94);
+        palette.calendarCurrentMonthBackground = fl_rgb_color(0x22, 0x27, 0x2e);
+        palette.calendarOtherMonthBackground = fl_rgb_color(0x1b, 0x20, 0x26);
+        palette.calendarHeaderText = fl_rgb_color(0xa8, 0xb2, 0xbf);
+        palette.calendarOtherMonthText = fl_rgb_color(0x66, 0x70, 0x7d);
+        palette.calendarGrid = fl_rgb_color(0x40, 0x48, 0x55);
+        palette.calendarTodayOutline = fl_rgb_color(0x74, 0xa7, 0xff);
+        palette.calendarRangeOutline = fl_rgb_color(0x4d, 0x83, 0xc7);
+        palette.calendarSelectedOutline = fl_rgb_color(0xb8, 0xd6, 0xff);
+    }
+    return palette;
+}
+
+void unpackColor(Fl_Color color, uchar& red, uchar& green, uchar& blue) {
+    Fl::get_color(color, red, green, blue);
+}
+
+std::string cssHex(Fl_Color color) {
+    uchar red = 0;
+    uchar green = 0;
+    uchar blue = 0;
+    unpackColor(color, red, green, blue);
+
+    std::ostringstream out;
+    out << '#'
+        << std::hex << std::setfill('0')
+        << std::setw(2) << static_cast<int>(red)
+        << std::setw(2) << static_cast<int>(green)
+        << std::setw(2) << static_cast<int>(blue);
+    return out.str();
+}
+
 bool readPreferencesFile(const std::string& prefFile, PreferenceMap& prefsOut) {
     std::ifstream file(prefFile);
     if (!file.is_open()) return false;
@@ -478,12 +562,7 @@ bool VerdadApp::initialize(int argc, char* argv[]) {
         joinPath(getConfigDir(), "module_index.db"));
 
     // Set up FLTK
-    Fl::scheme("gtk+");
-    uchar backgroundRed = 0;
-    uchar backgroundGreen = 0;
-    uchar backgroundBlue = 0;
-    Fl::get_color(FL_LIGHT2, backgroundRed, backgroundGreen, backgroundBlue);
-    Fl::background(backgroundRed, backgroundGreen, backgroundBlue);
+    applyThemePalette(appearanceSettings_.themeMode);
     Fl_File_Icon::load_system_icons();
     Fl::set_fonts("-*");
 
@@ -604,6 +683,8 @@ bool VerdadApp::applyPreferencesMap(const PreferenceMap& prefs,
     };
 
     AppearanceSettings importedAppearance = appearanceSettings_;
+    importedAppearance.themeMode =
+        themeModeFromToken(lookup("theme"), importedAppearance.themeMode);
     importedAppearance.appFontName =
         normalizeAppFontName(lookup("app_font"));
     importedAppearance.appFontSize =
@@ -737,6 +818,7 @@ void VerdadApp::savePreferences() {
     file << "# Verdad preferences\n";
 
     if (mainWindow_) {
+        file << "theme=" << themeModeToken(appearanceSettings_.themeMode) << "\n";
         file << "app_font=" << appearanceSettings_.appFontName << "\n";
         file << "app_font_size=" << appearanceSettings_.appFontSize << "\n";
         file << "text_font_family=" << appearanceSettings_.textFontFamily << "\n";
@@ -841,7 +923,33 @@ void VerdadApp::savePreferences() {
     }
 }
 
+void VerdadApp::applyThemePalette(ThemeMode mode) {
+    themePalette_ = makeThemePalette(mode);
+
+    uchar red = 0;
+    uchar green = 0;
+    uchar blue = 0;
+
+    Fl::scheme("gtk+");
+
+    unpackColor(themePalette_.appBackground, red, green, blue);
+    Fl::background(red, green, blue);
+
+    unpackColor(themePalette_.panelBackground, red, green, blue);
+    Fl::background2(red, green, blue);
+
+    unpackColor(themePalette_.foreground, red, green, blue);
+    Fl::foreground(red, green, blue);
+
+    unpackColor(themePalette_.selectionBackground, red, green, blue);
+    Fl::set_color(FL_SELECTION_COLOR, red, green, blue);
+
+    unpackColor(themePalette_.mutedForeground, red, green, blue);
+    Fl::set_color(FL_INACTIVE_COLOR, red, green, blue);
+}
+
 void VerdadApp::setAppearanceSettings(const AppearanceSettings& settings) {
+    appearanceSettings_.themeMode = settings.themeMode;
     appearanceSettings_.appFontName = normalizeAppFontName(settings.appFontName);
     appearanceSettings_.appFontSize = clampFontSize(settings.appFontSize);
     appearanceSettings_.textFontFamily =
@@ -857,11 +965,15 @@ void VerdadApp::setAppearanceSettings(const AppearanceSettings& settings) {
         clampEditorIndentWidth(settings.editorIndentWidth);
     appearanceSettings_.editorLineHeight = clampLineHeight(settings.editorLineHeight);
 
+    applyThemePalette(appearanceSettings_.themeMode);
+
     const Fl_Font uiFont = appFont();
     const Fl_Fontsize uiFontSize = static_cast<Fl_Fontsize>(appearanceSettings_.appFontSize);
     fl_message_font(uiFont, uiFontSize);
     Fl_Tooltip::font(uiFont);
     Fl_Tooltip::size(uiFontSize);
+    Fl_Tooltip::color(themePalette_.codeBackground);
+    Fl_Tooltip::textcolor(themePalette_.foreground);
 
     if (mainWindow_) {
         mainWindow_->applyAppearanceSettings(
@@ -1056,6 +1168,7 @@ std::string VerdadApp::textStyleOverrideCss() const {
     int size = clampFontSize(appearanceSettings_.textFontSize);
     double lineHeight = clampLineHeight(appearanceSettings_.textLineHeight);
     const auto& options = optionDisplaySettings_;
+    const auto& palette = themePalette_;
 
     std::ostringstream css;
     css << "body,\n"
@@ -1077,7 +1190,150 @@ std::string VerdadApp::textStyleOverrideCss() const {
         << "}\n";
 
     css << "span.verdad-inline-marker { display: none; }\n";
-    if (!options.showWordsOfChristRed) {
+    if (appearanceSettings_.themeMode == ThemeMode::Dark) {
+        css << "body {\n"
+            << "  color: " << cssHex(palette.foreground) << " !important;\n"
+            << "  background-color: " << cssHex(palette.contentBackground) << " !important;\n"
+            << "}\n"
+            << "div.mag-lite,\n"
+            << "div.mag,\n"
+            << "div.commentary,\n"
+            << "div.commentary-heading,\n"
+            << "div.dictionary,\n"
+            << "div.general-book,\n"
+            << "div.help-doc,\n"
+            << "div.daily-devotion-body,\n"
+            << "div.module-preview,\n"
+            << "div.link-preview {\n"
+            << "  color: " << cssHex(palette.foreground) << " !important;\n"
+            << "}\n"
+            << "div.mag-lite {\n"
+            << "  background-color: " << cssHex(palette.contentBackground) << " !important;\n"
+            << "}\n"
+            << "sup.versenum,\n"
+            << "span.chapnum,\n"
+            << ".title,\n"
+            << ".moduleHeader,\n"
+            << ".testamentHeader,\n"
+            << ".bookHeader,\n"
+            << ".chapterHeader,\n"
+            << "div.dictionary .entry-key,\n"
+            << "div.link-preview .entry-key,\n"
+            << "div.general-book .entry-key,\n"
+            << "div.general-book-toc-title,\n"
+            << "div.general-book-section h4,\n"
+            << "div.module-preview h3,\n"
+            << "div.module-preview-section-title,\n"
+            << "div.help-doc h1,\n"
+            << "div.help-doc h2,\n"
+            << "h2.daily-devotion-heading,\n"
+            << "div.mag-word,\n"
+            << "div.mag-lite .mag-wordline,\n"
+            << "div.mag-lite .mag-label,\n"
+            << "div.preview-verse-ref > a.preview-verse-link,\n"
+            << "div.commentary-gutter > a.versenum-link > span.commentary-versenum {\n"
+            << "  color: " << cssHex(palette.accent) << " !important;\n"
+            << "}\n"
+            << "a.footnote,\n"
+            << "a.noteMarker,\n"
+            << "div.commentary a,\n"
+            << "div.dictionary a,\n"
+            << "div.general-book a,\n"
+            << "div.help-doc a,\n"
+            << "div.daily-reading-summary a,\n"
+            << "div.module-preview a,\n"
+            << "div.link-preview a,\n"
+            << "a.preview-verse-link {\n"
+            << "  color: " << cssHex(palette.link) << " !important;\n"
+            << "}\n"
+            << "a.strongs,\n"
+            << "span.strongs,\n"
+            << "span.verdad-inline-marker a.strongs,\n"
+            << "span.verdad-inline-marker a.morph {\n"
+            << "  color: inherit !important;\n"
+            << "}\n"
+            << "a.footnote:hover,\n"
+            << "a.noteMarker:hover,\n"
+            << "div.commentary a:hover,\n"
+            << "div.dictionary a:hover,\n"
+            << "div.general-book a:hover,\n"
+            << "div.help-doc a:hover,\n"
+            << "div.daily-reading-summary a:hover,\n"
+            << "div.module-preview a:hover,\n"
+            << "div.link-preview a:hover,\n"
+            << "a.preview-verse-link:hover {\n"
+            << "  color: " << cssHex(palette.linkHover) << " !important;\n"
+            << "}\n"
+            << "div.chapter-heading,\n"
+            << ".colophon,\n"
+            << "table.module-preview-meta td.label,\n"
+            << "div.daily-reading-summary,\n"
+            << "div.daily-reading-summary .daily-reading-summary-separator,\n"
+            << "div.daily-reading-summary .daily-reading-summary-empty,\n"
+            << "div.mag-lite .mag-morph-label,\n"
+            << "div.mag-lite .mag-defline,\n"
+            << "div.mag-strongs,\n"
+            << "div.mag-morph,\n"
+            << "div.mag-def,\n"
+            << "span.verdad-inline-marker {\n"
+            << "  color: " << cssHex(palette.mutedForeground) << " !important;\n"
+            << "}\n"
+            << "div.daily-reading-summary .daily-reading-summary-plan,\n"
+            << "div.daily-reading-summary .daily-reading-summary-item-label {\n"
+            << "  color: " << cssHex(palette.accent) << " !important;\n"
+            << "}\n"
+            << ".sechead,\n"
+            << ".sectionhead,\n"
+            << "div.module-preview-about,\n"
+            << "div.module-preview p.module-preview-summary {\n"
+            << "  color: " << cssHex(palette.foreground) << " !important;\n"
+            << "}\n"
+            << "span.searchhit,\n"
+            << ".highlight {\n"
+            << "  background-color: " << cssHex(palette.highlightBackground) << " !important;\n"
+            << "  color: " << cssHex(palette.highlightText) << " !important;\n"
+            << "}\n"
+            << "div.parallel-col {\n"
+            << "  border-right-color: " << cssHex(palette.border) << " !important;\n"
+            << "}\n"
+            << "div.commentary-separator,\n"
+            << "hr.daily-devotion-divider {\n"
+            << "  border-top-color: " << cssHex(palette.border) << " !important;\n"
+            << "}\n"
+            << "div.commentary-verse.commentary-selected > div.commentary-gutter > a.versenum-link > span.commentary-versenum,\n"
+            << "a.verse-tag,\n"
+            << "a.verse-tag-marker {\n"
+            << "  background-color: " << cssHex(palette.tagBackground) << " !important;\n"
+            << "  border-color: " << cssHex(palette.tagBorder) << " !important;\n"
+            << "  color: " << cssHex(palette.link) << " !important;\n"
+            << "}\n"
+            << "div.commentary-verse.commentary-selected > div.commentary-gutter > a.versenum-link:hover > span.commentary-versenum,\n"
+            << "a.verse-tag:hover,\n"
+            << "a.verse-tag-marker:hover {\n"
+            << "  background-color: " << cssHex(palette.tagHoverBackground) << " !important;\n"
+            << "}\n"
+            << "div.general-book-toc,\n"
+            << "div.help-doc code {\n"
+            << "  background: " << cssHex(palette.codeBackground) << " !important;\n"
+            << "  border-color: " << cssHex(palette.border) << " !important;\n"
+            << "  color: " << cssHex(palette.foreground) << " !important;\n"
+            << "}\n"
+            << "span.verdad-inline-marker {\n"
+            << "  color: " << cssHex(palette.warning) << " !important;\n"
+            << "}\n";
+    }
+    if (options.showWordsOfChristRed) {
+        css << ".wordsOfJesus,\n"
+            << ".wordsOfJesus a,\n"
+            << "span.wordsofchrist,\n"
+            << "span.wordsofchrist a,\n"
+            << ".wordsofchrist,\n"
+            << ".wordsofchrist a,\n"
+            << ".jesusWords,\n"
+            << ".jesusWords a {\n"
+            << "  color: " << cssHex(palette.wordsOfJesus) << " !important;\n"
+            << "}\n";
+    } else {
         css << ".wordsOfJesus,\n"
             << ".wordsOfJesus a,\n"
             << "span.wordsofchrist,\n"
@@ -1105,6 +1361,12 @@ std::string VerdadApp::textStyleOverrideCss() const {
     }
     if (!options.showCrossReferenceMarkers) {
         css << "a.noteMarker.crossReference, a.footnote.crossReference { display: none; }\n";
+    }
+    if (appearanceSettings_.themeMode == ThemeMode::Dark) {
+        css << ".verse-selected,\n"
+            << ".verse-selected * {\n"
+            << "  color: " << cssHex(palette.success) << " !important;\n"
+            << "}\n";
     }
 
     return css.str();
