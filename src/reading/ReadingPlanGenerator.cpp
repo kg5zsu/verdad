@@ -14,8 +14,6 @@
 namespace verdad {
 namespace {
 
-constexpr reading::Date kGenericDisplayAnchorDate{2001, 1, 1};
-
 struct ChapterSpec {
     std::string book;
     int chapter = 0;
@@ -62,16 +60,17 @@ reading::Date addMonthsClamped(const reading::Date& date, int deltaMonths) {
 }
 
 int inclusiveDaySpan(const reading::Date& start, const reading::Date& end) {
-    std::tm startTm = reading::toTm(start);
-    std::tm endTm = reading::toTm(end);
-    const double seconds = std::difftime(std::mktime(&endTm), std::mktime(&startTm));
-    return static_cast<int>(std::llround(seconds / (60.0 * 60.0 * 24.0))) + 1;
+    return reading::dayDifference(start, end) + 1;
 }
 
 bool resolveTemplateDates(const ReadingPlanGenerationRequest& request,
                           std::vector<std::string>& outDates,
                           std::string* errorOut) {
-    const reading::Date startDate = kGenericDisplayAnchorDate;
+    reading::Date startDate{};
+    if (!reading::parseIsoDate(request.startDateIso, startDate)) {
+        if (errorOut) *errorOut = "Enter a valid start date in YYYY-MM-DD format.";
+        return false;
+    }
     reading::Date endDate{};
 
     switch (request.timeframeKind) {
@@ -110,9 +109,7 @@ bool resolveTemplateDates(const ReadingPlanGenerationRequest& request,
         return false;
     }
 
-    outDates = reading::buildGenericReadingPlanTemplateDates(
-        defaultReadingPlanDisplayStartDateIso(),
-        totalDays);
+    outDates = reading::buildSequentialDateSeries(request.startDateIso, totalDays);
     if (!outDates.empty()) return true;
 
     if (errorOut) *errorOut = "The selected time frame is empty.";
@@ -349,11 +346,7 @@ std::vector<ReadingPlanPassage> passagesForGroup(const std::vector<Segment>& gro
 
 } // namespace
 
-std::string defaultReadingPlanDisplayStartDateIso() {
-    return reading::formatIsoDate(kGenericDisplayAnchorDate);
-}
-
-bool buildReadingPlanTemplateDates(const ReadingPlanGenerationRequest& request,
+bool buildReadingPlanScheduleDates(const ReadingPlanGenerationRequest& request,
                                    std::vector<std::string>& outDates,
                                    std::string* errorOut) {
     outDates.clear();
@@ -373,11 +366,11 @@ bool generateReadingPlan(SwordManager& swordManager,
         return false;
     }
 
-    std::vector<std::string> templateDates;
-    if (!buildReadingPlanTemplateDates(request, templateDates, errorOut)) {
+    std::vector<std::string> scheduleDates;
+    if (!buildReadingPlanScheduleDates(request, scheduleDates, errorOut)) {
         return false;
     }
-    const int totalDateSlots = static_cast<int>(templateDates.size());
+    const int totalDateSlots = static_cast<int>(scheduleDates.size());
 
     const std::vector<std::string> allBooks = swordManager.getBookNames(request.moduleName);
     const std::vector<std::string> oldTestamentBooks =
@@ -440,7 +433,7 @@ bool generateReadingPlan(SwordManager& swordManager,
     ReadingPlan plan;
     plan.summary.name = request.name;
     plan.summary.description = request.description;
-    plan.summary.startDateIso = defaultReadingPlanDisplayStartDateIso();
+    plan.summary.startDateIso = request.startDateIso;
 
     for (size_t i = 0; i < groups.size(); ++i) {
         const int slotIndex = (groups.size() <= 1 || totalDateSlots <= 1)
@@ -450,7 +443,7 @@ bool generateReadingPlan(SwordManager& swordManager,
                                         (groups.size() - 1)));
         ReadingPlanDay day;
         day.sequenceNumber = static_cast<int>(i) + 1;
-        day.dateIso = templateDates[static_cast<size_t>(slotIndex)];
+        day.dateIso = scheduleDates[static_cast<size_t>(slotIndex)];
         day.passages = passagesForGroup(groups[i]);
         plan.days.push_back(std::move(day));
     }

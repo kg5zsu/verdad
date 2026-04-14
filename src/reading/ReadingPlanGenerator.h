@@ -40,15 +40,14 @@ struct ReadingPlanGenerationRequest {
     std::string moduleName;
     std::string name;
     std::string description;
+    std::string startDateIso;
     ReadingPlanTimeframeKind timeframeKind = ReadingPlanTimeframeKind::OneYear;
     int timeframeValue = 0;
     ReadingPlanSplitMode splitMode = ReadingPlanSplitMode::Chapter;
     std::vector<ReadingPlanScopeRule> scopeRules;
 };
 
-std::string defaultReadingPlanDisplayStartDateIso();
-
-bool buildReadingPlanTemplateDates(const ReadingPlanGenerationRequest& request,
+bool buildReadingPlanScheduleDates(const ReadingPlanGenerationRequest& request,
                                    std::vector<std::string>& outDates,
                                    std::string* errorOut = nullptr);
 

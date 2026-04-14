@@ -48,6 +48,10 @@ public:
 
     std::vector<ReadingPlanSummary> listPlans() const;
     bool getPlan(int planId, ReadingPlan& out) const;
+    bool resolvePlanDay(int planId,
+                        const std::string& dateIso,
+                        ReadingPlanDay* outDay = nullptr,
+                        std::string* canonicalDateIsoOut = nullptr) const;
     bool createPlan(const ReadingPlan& plan, int* createdId = nullptr);
     bool updatePlan(const ReadingPlan& plan);
     bool deletePlan(int planId);

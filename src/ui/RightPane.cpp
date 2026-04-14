@@ -64,21 +64,6 @@ constexpr int kDailyActionButtonW = 112;
 constexpr int kDailyReadingPlanBottomMinH = 180;
 constexpr int kDailyReadingPlanBottomMaxH = 260;
 
-int isoDayDifference(const std::string& fromDateIso,
-                     const std::string& toDateIso) {
-    reading::Date fromDate{};
-    reading::Date toDate{};
-    if (!reading::parseIsoDate(fromDateIso, fromDate) ||
-        !reading::parseIsoDate(toDateIso, toDate)) {
-        return 0;
-    }
-
-    std::tm fromTm = reading::toTm(fromDate);
-    std::tm toTm = reading::toTm(toDate);
-    return static_cast<int>(
-        std::difftime(std::mktime(&toTm), std::mktime(&fromTm)) / (60 * 60 * 24));
-}
-
 std::vector<std::string> splitReadingPlanCellText(const std::string& text) {
     std::vector<std::string> values;
     std::string current;
@@ -962,147 +947,21 @@ std::string joinHtmlItems(const std::vector<std::string>& items,
     return html.str();
 }
 
-struct EditableReadingPlanDisplayDay {
-    const ReadingPlanDay* day = nullptr;
-    std::string actualDateIso;
-    std::string canonicalDateIso;
-    int instanceStartYear = 0;
-};
-
-const ReadingPlanDay* firstTemplateReadingPlanDay(const ReadingPlan& plan) {
-    for (const auto& day : plan.days) {
-        if (reading::isIsoDateInRange(day.dateIso)) return &day;
-    }
-    return nullptr;
-}
-
-std::vector<int> editableReadingPlanCandidateStartYears(const ReadingPlan& plan,
-                                                        int targetYear) {
-    reading::Date anchorStart{};
-    if (!reading::parseIsoDate(plan.summary.startDateIso, anchorStart)) return {};
-
-    const int cycleYears =
-        reading::genericReadingPlanCycleYears(static_cast<int>(plan.days.size()));
-    const int approxStep = cycleYears > 0
-        ? (targetYear - anchorStart.year) / cycleYears
-        : 0;
-
-    std::vector<int> years;
-    years.reserve(7);
-    for (int delta = -3; delta <= 3; ++delta) {
-        years.push_back(anchorStart.year + ((approxStep + delta) * cycleYears));
-    }
-    std::sort(years.begin(), years.end());
-    years.erase(std::unique(years.begin(), years.end()), years.end());
-    return years;
-}
-
-bool actualReadingPlanDateForDay(const ReadingPlan& plan,
-                                 const ReadingPlanDay& day,
-                                 int instanceStartYear,
-                                 std::string& actualDateIsoOut) {
-    const ReadingPlanDay* templateStartDay = firstTemplateReadingPlanDay(plan);
-    if (!templateStartDay) return false;
-
-    reading::Date templateStart{};
-    reading::Date templateDate{};
-    if (!reading::parseIsoDate(templateStartDay->dateIso, templateStart) ||
-        !reading::parseIsoDate(day.dateIso, templateDate)) {
-        return false;
-    }
-
-    const reading::Date actualDate{
-        instanceStartYear + (templateDate.year - templateStart.year),
-        templateDate.month,
-        templateDate.day,
-    };
-    const std::string actualDateIso = reading::formatIsoDate(actualDate);
-    reading::Date verified{};
-    if (!reading::parseIsoDate(actualDateIso, verified)) return false;
-
-    actualDateIsoOut = actualDateIso;
-    return true;
-}
-
-EditableReadingPlanDisplayDay readingPlanDisplayDayForDate(const ReadingPlan& plan,
-                                                           const std::string& actualDateIso) {
-    reading::Date actualDate{};
-    if (!reading::parseIsoDate(actualDateIso, actualDate)) return {};
-
-    for (int instanceStartYear :
-         editableReadingPlanCandidateStartYears(plan, actualDate.year)) {
-        for (const auto& day : plan.days) {
-            std::string mappedActualDateIso;
-            if (!actualReadingPlanDateForDay(plan, day, instanceStartYear, mappedActualDateIso)) {
-                continue;
-            }
-            if (mappedActualDateIso == actualDateIso) {
-                return EditableReadingPlanDisplayDay{
-                    &day,
-                    mappedActualDateIso,
-                    day.dateIso,
-                    instanceStartYear,
-                };
-            }
-        }
-    }
-    return {};
-}
-
-std::vector<EditableReadingPlanDisplayDay> readingPlanDisplayDaysForInstance(
-    const ReadingPlan& plan,
-    int instanceStartYear) {
-    std::vector<EditableReadingPlanDisplayDay> days;
-    days.reserve(plan.days.size());
-    for (const auto& day : plan.days) {
-        std::string actualDateIso;
-        if (!actualReadingPlanDateForDay(plan, day, instanceStartYear, actualDateIso)) {
-            continue;
-        }
-        days.push_back(EditableReadingPlanDisplayDay{
-            &day,
-            actualDateIso,
-            day.dateIso,
-            instanceStartYear,
-        });
-    }
-    return days;
-}
-
-std::vector<EditableReadingPlanDisplayDay> readingPlanDisplayDaysForMonth(
-    const ReadingPlan& plan,
-    int year,
-    int month) {
-    std::vector<EditableReadingPlanDisplayDay> matches;
-    std::unordered_set<std::string> seenDates;
-    for (int instanceStartYear : editableReadingPlanCandidateStartYears(plan, year)) {
-        for (const auto& displayDay : readingPlanDisplayDaysForInstance(plan, instanceStartYear)) {
-            reading::Date actualDate{};
-            if (!reading::parseIsoDate(displayDay.actualDateIso, actualDate) ||
-                actualDate.year != year || actualDate.month != month ||
-                !seenDates.insert(displayDay.actualDateIso).second) {
-                continue;
-            }
-            matches.push_back(displayDay);
-        }
-    }
-
-    std::sort(matches.begin(), matches.end(),
-              [](const EditableReadingPlanDisplayDay& lhs,
-                 const EditableReadingPlanDisplayDay& rhs) {
-                  return lhs.actualDateIso < rhs.actualDateIso;
-              });
-    return matches;
-}
-
 const ReadingPlanDay* readingPlanDayForDate(const ReadingPlan& plan,
                                             const std::string& dateIso,
                                             std::string* canonicalDateIsoOut = nullptr,
                                             int* instanceStartYearOut = nullptr) {
-    EditableReadingPlanDisplayDay displayDay = readingPlanDisplayDayForDate(plan, dateIso);
-    if (canonicalDateIsoOut) *canonicalDateIsoOut = displayDay.canonicalDateIso;
-    if (instanceStartYearOut) *instanceStartYearOut = displayDay.instanceStartYear;
-    return displayDay.day;
+    if (canonicalDateIsoOut) canonicalDateIsoOut->clear();
+    if (instanceStartYearOut) *instanceStartYearOut = 0;
+    if (!reading::isIsoDateInRange(dateIso)) return nullptr;
+
+    for (const auto& day : plan.days) {
+        if (day.dateIso != dateIso) continue;
+        if (canonicalDateIsoOut) *canonicalDateIsoOut = day.dateIso;
+        return &day;
+    }
+
+    return nullptr;
 }
 
 std::string buildReadingPlanDayHtml(const ReadingPlan& plan,
@@ -1585,7 +1444,6 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
     , dailyHtml_(nullptr)
     , dailyPlanEditorGroup_(nullptr)
     , dailyPlanNameInput_(nullptr)
-    , dailyPlanStartDateInput_(nullptr)
     , dailyPlanDescriptionInput_(nullptr)
     , dailyPlanDayHelpBox_(nullptr)
     , dailyPlanDayScroll_(nullptr)
@@ -3984,13 +3842,9 @@ std::vector<std::string> RightPane::actionableSelectedReadingPlanDateIsos(
         }
 
         for (const auto& dateIso : selectedDateIsos) {
-            std::string canonicalDateIso;
-            const ReadingPlanDay* day = readingPlanDayForDate(plan,
-                                                              dateIso,
-                                                              &canonicalDateIso,
-                                                              nullptr);
-            if (!day || canonicalDateIso.empty()) continue;
-            actionable.push_back(canonicalDateIso);
+            const ReadingPlanDay* day = readingPlanDayForDate(plan, dateIso, nullptr, nullptr);
+            if (!day) continue;
+            actionable.push_back(day->dateIso);
             anyCompletedState = true;
             everyCompleted = everyCompleted && day->completed;
         }
@@ -4037,23 +3891,19 @@ std::vector<std::string> RightPane::actionableReadingPlanDatesThroughCurrent(
             return actionable;
         }
 
-        int instanceStartYear = 0;
-        const ReadingPlanDay* currentDay = readingPlanDayForDate(plan,
-                                                                 currentDateIso,
-                                                                 nullptr,
-                                                                 &instanceStartYear);
+        const ReadingPlanDay* currentDay = readingPlanDayForDate(plan, currentDateIso);
         if (!currentDay) {
             return actionable;
         }
 
-        for (const auto& displayDay : readingPlanDisplayDaysForInstance(plan, instanceStartYear)) {
-            if (!displayDay.day ||
-                displayDay.day->sequenceNumber > currentDay->sequenceNumber) {
+        for (const auto& day : plan.days) {
+            if (!reading::isIsoDateInRange(day.dateIso) ||
+                day.sequenceNumber > currentDay->sequenceNumber) {
                 break;
             }
-            actionable.push_back(displayDay.canonicalDateIso);
+            actionable.push_back(day.dateIso);
             anyCompletedState = true;
-            everyCompleted = everyCompleted && displayDay.day->completed;
+            everyCompleted = everyCompleted && day.completed;
         }
     }
 
@@ -4082,40 +3932,32 @@ std::string RightPane::defaultEditableReadingPlanDateIso(int planId) const {
         return todayIso;
     }
 
-    std::vector<EditableReadingPlanDisplayDay> displayDays;
-    for (int instanceStartYear : editableReadingPlanCandidateStartYears(plan,
-                                                                        reading::today().year)) {
-        std::vector<EditableReadingPlanDisplayDay> instanceDays =
-            readingPlanDisplayDaysForInstance(plan, instanceStartYear);
-        displayDays.insert(displayDays.end(), instanceDays.begin(), instanceDays.end());
+    std::vector<const ReadingPlanDay*> sortedDays;
+    sortedDays.reserve(plan.days.size());
+    for (const auto& day : plan.days) {
+        if (reading::isIsoDateInRange(day.dateIso)) {
+            sortedDays.push_back(&day);
+        }
     }
-    if (displayDays.empty()) return todayIso;
+    if (sortedDays.empty()) return todayIso;
 
-    std::sort(displayDays.begin(), displayDays.end(),
-              [](const EditableReadingPlanDisplayDay& lhs,
-                 const EditableReadingPlanDisplayDay& rhs) {
-                  return lhs.actualDateIso < rhs.actualDateIso;
+    std::sort(sortedDays.begin(), sortedDays.end(),
+              [](const ReadingPlanDay* lhs, const ReadingPlanDay* rhs) {
+                  if (lhs->dateIso != rhs->dateIso) return lhs->dateIso < rhs->dateIso;
+                  return lhs->sequenceNumber < rhs->sequenceNumber;
               });
-    displayDays.erase(std::unique(displayDays.begin(),
-                                  displayDays.end(),
-                                  [](const EditableReadingPlanDisplayDay& lhs,
-                                     const EditableReadingPlanDisplayDay& rhs) {
-                                      return lhs.actualDateIso == rhs.actualDateIso;
-                                  }),
-                      displayDays.end());
 
-    for (const auto& displayDay : displayDays) {
-        if (displayDay.day && !displayDay.day->completed &&
-            displayDay.actualDateIso >= todayIso) {
-            return displayDay.actualDateIso;
+    for (const ReadingPlanDay* day : sortedDays) {
+        if (!day->completed && day->dateIso >= todayIso) {
+            return day->dateIso;
         }
     }
-    for (const auto& displayDay : displayDays) {
-        if (displayDay.day && !displayDay.day->completed) {
-            return displayDay.actualDateIso;
+    for (const ReadingPlanDay* day : sortedDays) {
+        if (!day->completed) {
+            return day->dateIso;
         }
     }
-    return displayDays.back().actualDateIso;
+    return sortedDays.back()->dateIso;
 }
 
 std::string RightPane::defaultSwordReadingPlanDateIso(const std::string& moduleName) const {
@@ -4264,19 +4106,20 @@ void RightPane::updateDailyCalendarMeta() {
     } else if (dailyWorkspaceState_.readingPlanId > 0) {
         ReadingPlan plan;
         if (app_->readingPlanManager().getPlan(dailyWorkspaceState_.readingPlanId, plan)) {
-            for (const auto& displayDay : readingPlanDisplayDaysForMonth(plan,
-                                                                         month.year,
-                                                                         month.month)) {
-                if (!displayDay.day) continue;
+            for (const auto& day : plan.days) {
                 reading::Date date{};
-                if (!reading::parseIsoDate(displayDay.actualDateIso, date)) continue;
+                if (!reading::parseIsoDate(day.dateIso, date) ||
+                    date.year != month.year ||
+                    date.month != month.month) {
+                    continue;
+                }
                 CalendarDayMeta dayMeta;
-                dayMeta.summary = readingPlanDayCalendarSummary(app_, *displayDay.day);
+                dayMeta.summary = readingPlanDayCalendarSummary(app_, day);
                 dayMeta.hasContent = true;
-                dayMeta.completed = displayDay.day->completed;
-                dayMeta.overdue = !displayDay.day->completed &&
+                dayMeta.completed = day.completed;
+                dayMeta.overdue = !day.completed &&
                                   reading::compareDates(date, today) < 0;
-                meta.emplace(displayDay.actualDateIso, std::move(dayMeta));
+                meta.emplace(day.dateIso, std::move(dayMeta));
             }
         }
     }
@@ -4511,27 +4354,6 @@ void RightPane::updateDailyPlanEditorSummaryFields() {
     dailyPlanDescriptionInput_->value(dailyPlanEditorWorkingPlan_.summary.description.c_str());
 }
 
-void RightPane::shiftDailyPlanEditorDates(const std::string& previousStartDateIso,
-                                          const std::string& newStartDateIso) {
-    (void)previousStartDateIso;
-    if (!reading::isIsoDateInRange(newStartDateIso) ||
-        dailyPlanEditorWorkingPlan_.days.empty()) {
-        return;
-    }
-
-    const std::vector<std::string> templateDates =
-        reading::buildGenericReadingPlanTemplateDates(
-            newStartDateIso,
-            static_cast<int>(dailyPlanEditorWorkingPlan_.days.size()));
-    if (templateDates.size() != dailyPlanEditorWorkingPlan_.days.size()) {
-        return;
-    }
-
-    for (size_t i = 0; i < dailyPlanEditorWorkingPlan_.days.size(); ++i) {
-        dailyPlanEditorWorkingPlan_.days[i].dateIso = templateDates[i];
-    }
-}
-
 void RightPane::applyDailyPlanEditorDayCell(int index) {
     if (index < 0 ||
         index >= static_cast<int>(dailyPlanEditorWorkingPlan_.days.size()) ||
@@ -4712,6 +4534,10 @@ bool RightPane::validateDailyPlanEditorPlan(ReadingPlan& out,
         return false;
     }
 
+    if (reading::isIsoDateInRange(updated.days.front().dateIso)) {
+        updated.summary.startDateIso = updated.days.front().dateIso;
+    }
+
     for (const auto& day : updated.days) {
         if (!reading::isIsoDateInRange(day.dateIso)) {
             errorMessage = "Each reading day needs a valid date.";
@@ -4749,6 +4575,11 @@ void RightPane::loadDailyPlanEditor() {
 
     dailyPlanEditorWorkingPlan_ = std::move(plan);
     reading::normalizeReadingPlanDays(dailyPlanEditorWorkingPlan_.days);
+    if (!dailyPlanEditorWorkingPlan_.days.empty() &&
+        reading::isIsoDateInRange(dailyPlanEditorWorkingPlan_.days.front().dateIso)) {
+        dailyPlanEditorWorkingPlan_.summary.startDateIso =
+            dailyPlanEditorWorkingPlan_.days.front().dateIso;
+    }
     updateDailyPlanEditorSummaryFields();
     dailyPlanEditorDirty_ = false;
 
@@ -6168,13 +5999,11 @@ void RightPane::onDailyReschedule(Fl_Widget* /*w*/, void* data) {
 
     if (self->dailyWorkspaceState_.readingPlanSource == DailyReadingPlanSource::Editable) {
         if (self->dailyWorkspaceState_.readingPlanId <= 0) return;
-
-        ReadingPlan plan;
-        if (!self->app_->readingPlanManager().getPlan(self->dailyWorkspaceState_.readingPlanId,
-                                                      plan)) {
-            return;
-        }
-        if (!readingPlanDayForDate(plan, self->dailyWorkspaceState_.readingPlanSelectedDateIso)) {
+        if (!self->app_->readingPlanManager().resolvePlanDay(
+                self->dailyWorkspaceState_.readingPlanId,
+                self->dailyWorkspaceState_.readingPlanSelectedDateIso,
+                nullptr,
+                nullptr)) {
             return;
         }
     } else if (self->dailyWorkspaceState_.readingPlanSource ==
@@ -6202,35 +6031,10 @@ void RightPane::onDailyReschedule(Fl_Widget* /*w*/, void* data) {
             self->dailyWorkspaceState_.readingPlanSelectedDateIso,
             request.targetDateIso);
     } else {
-        ReadingPlan plan;
-        if (!self->app_->readingPlanManager().getPlan(self->dailyWorkspaceState_.readingPlanId,
-                                                      plan)) {
-            return;
-        }
-        std::string canonicalFromDateIso;
-        int instanceStartYear = 0;
-        const ReadingPlanDay* selectedDay = readingPlanDayForDate(
-            plan,
-            self->dailyWorkspaceState_.readingPlanSelectedDateIso,
-            &canonicalFromDateIso,
-            &instanceStartYear);
-        if (!selectedDay || canonicalFromDateIso.empty()) {
-            return;
-        }
-
-        reading::Date canonicalFromDate{};
-        if (!reading::parseIsoDate(canonicalFromDateIso, canonicalFromDate)) {
-            return;
-        }
-        const int actualDayDelta =
-            isoDayDifference(self->dailyWorkspaceState_.readingPlanSelectedDateIso,
-                             request.targetDateIso);
-        const std::string canonicalTargetDateIso = reading::formatIsoDate(
-            reading::addDays(canonicalFromDate, actualDayDelta));
         ok = self->app_->readingPlanManager().rescheduleDay(
             self->dailyWorkspaceState_.readingPlanId,
-            canonicalFromDateIso,
-            canonicalTargetDateIso);
+            self->dailyWorkspaceState_.readingPlanSelectedDateIso,
+            request.targetDateIso);
     }
 
     if (!ok) {

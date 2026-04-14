@@ -1140,12 +1140,16 @@ void BiblePane::refreshDailyReadingPlanBar() {
         state.readingPlanId > 0) {
         ReadingPlan plan;
         if (app_->readingPlanManager().getPlan(state.readingPlanId, plan)) {
-            for (const auto& day : plan.days) {
-                if (day.dateIso == state.readingPlanSelectedDateIso) {
-                    canComplete = true;
-                    completed = day.completed;
+            const ReadingPlanDay* day = nullptr;
+            for (const auto& candidate : plan.days) {
+                if (candidate.dateIso == state.readingPlanSelectedDateIso) {
+                    day = &candidate;
                     break;
                 }
+            }
+            if (day) {
+                canComplete = true;
+                completed = day->completed;
             }
         }
     } else if (app_ &&
@@ -1962,24 +1966,6 @@ void BiblePane::updateDailyReadingPlanCompleted(bool completed) {
     bool ok = false;
     if (state.readingPlanSource == DailyReadingPlanSource::Editable &&
         state.readingPlanId > 0) {
-        ReadingPlan plan;
-        if (!app_->readingPlanManager().getPlan(state.readingPlanId, plan)) {
-            refreshDailyReadingPlanBar();
-            return;
-        }
-
-        bool hasDay = false;
-        for (const auto& day : plan.days) {
-            if (day.dateIso == state.readingPlanSelectedDateIso) {
-                hasDay = true;
-                break;
-            }
-        }
-        if (!hasDay) {
-            refreshDailyReadingPlanBar();
-            return;
-        }
-
         ok = app_->readingPlanManager().setDayCompleted(
             state.readingPlanId, state.readingPlanSelectedDateIso, completed);
     } else if (state.readingPlanSource == DailyReadingPlanSource::SwordModule &&

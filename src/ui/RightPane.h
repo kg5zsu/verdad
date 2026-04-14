@@ -304,7 +304,6 @@ private:
     HtmlWidget* dailyHtml_;
     Fl_Group* dailyPlanEditorGroup_;
     Fl_Input* dailyPlanNameInput_;
-    Fl_Input* dailyPlanStartDateInput_;
     Fl_Multiline_Input* dailyPlanDescriptionInput_;
     Fl_Box* dailyPlanDayHelpBox_;
     Fl_Scroll* dailyPlanDayScroll_;
@@ -409,8 +408,6 @@ private:
     void loadDailyPlanEditor();
     void rebuildDailyPlanDayRows();
     void layoutDailyPlanEditorDayRows();
-    void shiftDailyPlanEditorDates(const std::string& previousStartDateIso,
-                                   const std::string& newStartDateIso);
     void applyDailyPlanEditorDistributedPaste(int startIndex,
                                               const std::string& pastedText);
     void updateDailyPlanEditorSummaryFields();

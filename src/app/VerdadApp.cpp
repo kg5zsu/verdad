@@ -272,7 +272,7 @@ VerdadApp::ThemePalette makeThemePalette(VerdadApp::ThemeMode mode) {
         palette.appBackground = fl_rgb_color(0x20, 0x23, 0x27);
         palette.panelBackground = fl_rgb_color(0x2a, 0x30, 0x38);
         palette.contentBackground = fl_rgb_color(0x2a, 0x30, 0x38);
-        palette.foreground = fl_rgb_color(0xe6, 0xe9, 0xee);
+        palette.foreground = fl_rgb_color(0xe6, 0xe9, 0xee);  //FL_WHITE; //
         palette.mutedForeground = fl_rgb_color(0xb0, 0xb8, 0xc2);
         palette.subtleForeground = fl_rgb_color(0x87, 0x92, 0xa0);
         palette.border = fl_rgb_color(0x46, 0x50, 0x5d);
@@ -1190,6 +1190,38 @@ std::string VerdadApp::textStyleOverrideCss() const {
         << "}\n";
 
     css << "span.verdad-inline-marker { display: none; }\n";
+    if (appearanceSettings_.themeMode == ThemeMode::Light) {
+        css << "body,\n"
+            << "div.chapter,\n"
+            << "div.verse,\n"
+            << "div.commentary,\n"
+            << "div.commentary-heading,\n"
+            << "div.commentary-text,\n"
+            << "div.dictionary,\n"
+            << "div.general-book,\n"
+            << "div.mag-lite,\n"
+            << "div.mag,\n"
+            << "div.help-doc,\n"
+            << "div.daily-devotion-body,\n"
+            << "div.module-preview,\n"
+            << "div.link-preview,\n"
+            << "div.chapter-heading,\n"
+            << ".sechead,\n"
+            << ".sectionhead,\n"
+            << ".colophon,\n"
+            << "table.module-preview-meta td.label,\n"
+            << "div.daily-reading-summary,\n"
+            << "div.daily-reading-summary .daily-reading-summary-empty,\n"
+            << "div.mag-lite .mag-morph-label,\n"
+            << "div.mag-lite .mag-defline,\n"
+            << "div.mag-strongs,\n"
+            << "div.mag-morph,\n"
+            << "div.mag-def,\n"
+            << "div.module-preview-about,\n"
+            << "div.module-preview p.module-preview-summary {\n"
+            << "  color: " << cssHex(palette.foreground) << " !important;\n"
+            << "}\n";
+    }
     if (appearanceSettings_.themeMode == ThemeMode::Dark) {
         css << "body {\n"
             << "  color: " << cssHex(palette.foreground) << " !important;\n"

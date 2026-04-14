@@ -28,7 +28,7 @@ public:
         Fl_Color appBackground = fl_rgb_color(0xec, 0xef, 0xf2);
         Fl_Color panelBackground = fl_rgb_color(0xfe, 0xfe, 0xfe);
         Fl_Color contentBackground = fl_rgb_color(0xfe, 0xfe, 0xfe);
-        Fl_Color foreground = fl_rgb_color(0x2c, 0x2c, 0x2c);
+        Fl_Color foreground = FL_BLACK;
         Fl_Color mutedForeground = fl_rgb_color(0x55, 0x55, 0x55);
         Fl_Color subtleForeground = fl_rgb_color(0x7b, 0x87, 0x92);
         Fl_Color border = fl_rgb_color(0xd3, 0xdd, 0xe6);

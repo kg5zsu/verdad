@@ -344,6 +344,7 @@ private:
         request.name = reading::trimCopy(nameInput_->value() ? nameInput_->value() : "");
         request.description =
             reading::trimCopy(descriptionInput_->value() ? descriptionInput_->value() : "");
+        request.startDateIso = workingPlan_.summary.startDateIso;
         request.timeframeKind = timeframeKindFromChoice();
         request.splitMode =
             (splitChoice_ && splitChoice_->value() == 1)
@@ -417,16 +418,17 @@ private:
         }
 
         ReadingPlanGenerationRequest templateRequest;
+        templateRequest.startDateIso = workingPlan_.summary.startDateIso;
         templateRequest.timeframeKind = timeframeKindFromChoice();
         templateRequest.timeframeValue = parsePreviewAmount();
 
         std::vector<std::string> templateDates;
-        if (!buildReadingPlanTemplateDates(templateRequest, templateDates, &errorMessage)) {
+        if (!buildReadingPlanScheduleDates(templateRequest, templateDates, &errorMessage)) {
             fl_alert("%s", errorMessage.c_str());
             return false;
         }
 
-        blankPlan.summary.startDateIso = defaultReadingPlanDisplayStartDateIso();
+        blankPlan.summary.startDateIso = workingPlan_.summary.startDateIso;
         blankPlan.days.reserve(templateDates.size());
         for (size_t i = 0; i < templateDates.size(); ++i) {
             ReadingPlanDay day;

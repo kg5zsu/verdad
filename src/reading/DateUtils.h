@@ -87,6 +87,30 @@ inline Date addDays(const Date& date, int deltaDays) {
     return fromTm(value);
 }
 
+inline long long civilDayNumber(const Date& date) {
+    int year = date.year;
+    int month = date.month;
+    int day = date.day;
+    year -= month <= 2 ? 1 : 0;
+    const int era = (year >= 0 ? year : year - 399) / 400;
+    const unsigned yoe = static_cast<unsigned>(year - (era * 400));
+    const unsigned doy = static_cast<unsigned>(
+        ((153 * (month + (month > 2 ? -3 : 9))) + 2) / 5 + day - 1);
+    const unsigned doe = yoe * 365 + (yoe / 4) - (yoe / 100) + doy;
+    return static_cast<long long>(era) * 146097LL + static_cast<long long>(doe) - 719468LL;
+}
+
+inline int dayDifference(const Date& from, const Date& to) {
+    return static_cast<int>(civilDayNumber(to) - civilDayNumber(from));
+}
+
+inline int dayDifference(const std::string& fromIso, const std::string& toIso) {
+    Date from{};
+    Date to{};
+    if (!parseIsoDate(fromIso, from) || !parseIsoDate(toIso, to)) return 0;
+    return dayDifference(from, to);
+}
+
 inline Date addMonths(const Date& date, int deltaMonths) {
     std::tm value = toTm(date);
     value.tm_mon += deltaMonths;
