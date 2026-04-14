@@ -29,6 +29,13 @@ class HtmlWidget;
 /// Main application window with left pane + tabbed Bible/Commentary workspaces.
 class MainWindow : public Fl_Double_Window {
 public:
+    enum class RightPaneTab {
+        Commentary,
+        GeneralBooks,
+        DevotionsPlans,
+        Documents,
+    };
+
     struct StudyHistoryEntry {
         std::string module;
         std::string reference;
@@ -63,10 +70,9 @@ public:
         int leftPanePreviewHeight = 150;
         int dictionaryPaneHeight = 0;
         int activeStudyTab = 0;
-        bool generalBooksTabActive = false;
+        RightPaneTab rightPaneTab = RightPaneTab::Commentary;
         std::string generalBookModule;
         std::string generalBookKey;
-        bool documentsTabActive = false;
         std::string documentPath;
         DailyWorkspaceState dailyWorkspace;
         std::vector<StudyTabState> studyTabs;

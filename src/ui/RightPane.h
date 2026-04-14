@@ -133,6 +133,7 @@ public:
     /// Legacy naming kept for session compatibility.
     /// Returns true if the secondary tab is active (now General Books), false for Commentary.
     bool isDictionaryTabActive() const;
+    TopTab currentTopTab() const { return visibleTopTab(); }
 
     bool isDocumentsTabActive() const;
     void setDocumentsTabActive(bool active);
@@ -443,6 +444,8 @@ private:
     void loadCommentaryEditorForCurrentEntry();
     void applyCommentaryStyleOverride();
     void syncCommentarySelectionClass(int oldVerse, int newVerse);
+    void restoreDisplayBufferFallbacks(bool commentaryRestored,
+                                       bool dictionaryRestored);
     void updateCommentarySelection(int verse);
     std::string activeBibleReference() const;
     void onHtmlLink(const std::string& url, bool commentarySource);

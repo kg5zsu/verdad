@@ -3060,7 +3060,7 @@ void RightPane::setDictionaryTabActive(bool dictionaryActive) {
 }
 
 bool RightPane::isDevotionsPlansTabActive() const {
-    return visibleTopTab() == TopTab::DevotionsPlans;
+    return activeTopTab_ == TopTab::DevotionsPlans;
 }
 
 void RightPane::setDevotionsPlansTabActive(bool active) {
@@ -3306,6 +3306,8 @@ RightPane::DisplayBuffer RightPane::takeDisplayBuffer() {
 
 void RightPane::restoreDisplayBuffer(const DisplayBuffer& buffer) {
     perf::ScopeTimer timer("RightPane::restoreDisplayBuffer(copy)");
+    const bool commentaryRestored = buffer.commentary.valid;
+    const bool dictionaryRestored = buffer.dictionary.valid;
     if (commentaryHtml_ && buffer.commentary.valid) {
         HtmlWidget::Snapshot snap;
         snap.doc = buffer.commentary.doc;
@@ -3330,10 +3332,13 @@ void RightPane::restoreDisplayBuffer(const DisplayBuffer& buffer) {
         snap.valid = buffer.dictionary.valid;
         dictionaryHtml_->restoreSnapshot(snap);
     }
+    restoreDisplayBufferFallbacks(commentaryRestored, dictionaryRestored);
 }
 
 void RightPane::restoreDisplayBuffer(DisplayBuffer&& buffer) {
     perf::ScopeTimer timer("RightPane::restoreDisplayBuffer(move)");
+    const bool commentaryRestored = buffer.commentary.valid;
+    const bool dictionaryRestored = buffer.dictionary.valid;
     if (commentaryHtml_ && buffer.commentary.valid) {
         HtmlWidget::Snapshot snap;
         snap.doc = std::move(buffer.commentary.doc);
@@ -3359,6 +3364,23 @@ void RightPane::restoreDisplayBuffer(DisplayBuffer&& buffer) {
         snap.valid = buffer.dictionary.valid;
         buffer.dictionary.valid = false;
         dictionaryHtml_->restoreSnapshot(std::move(snap));
+    }
+    restoreDisplayBufferFallbacks(commentaryRestored, dictionaryRestored);
+}
+
+void RightPane::restoreDisplayBufferFallbacks(bool commentaryRestored,
+                                              bool dictionaryRestored) {
+    if (!dictionaryRestored &&
+        !currentDictionary_.empty() &&
+        !currentDictKey_.empty()) {
+        showDictionaryEntryInternal(currentDictionary_, currentDictKey_);
+    }
+
+    if (!commentaryRestored &&
+        (visibleTopTab() == TopTab::Commentary || commentaryEditing_) &&
+        !currentCommentary_.empty() &&
+        !currentCommentaryRef_.empty()) {
+        showCommentary(currentCommentary_, currentCommentaryRef_);
     }
 }
 
@@ -3411,9 +3433,11 @@ void RightPane::refresh() {
     TopTab keepTab = visibleTopTab();
 
     bool commentaryVisible = (keepTab == TopTab::Commentary);
+    bool commentaryNeedsPreload =
+        commentaryHtml_ && commentaryHtml_->currentHtml().empty();
     if (!currentCommentary_.empty() &&
         !currentCommentaryRef_.empty() &&
-        (commentaryVisible || commentaryEditing_)) {
+        (commentaryVisible || commentaryEditing_ || commentaryNeedsPreload)) {
         showCommentary(currentCommentary_, currentCommentaryRef_);
     }
     if (!currentDictionary_.empty() && !currentDictKey_.empty()) {

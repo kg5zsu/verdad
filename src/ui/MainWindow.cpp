@@ -1778,15 +1778,30 @@ MainWindow::SessionState MainWindow::captureSessionState() {
     state.activeStudyTab = activeStudyTab_;
     if (rightPane_) {
         state.dictionaryPaneHeight = rightPane_->dictionaryPaneHeight();
-        state.generalBooksTabActive = rightPane_->isDictionaryTabActive();
+        switch (rightPane_->currentTopTab()) {
+        case RightPane::TopTab::GeneralBooks:
+            state.rightPaneTab = RightPaneTab::GeneralBooks;
+            break;
+        case RightPane::TopTab::DevotionsPlans:
+            state.rightPaneTab = RightPaneTab::DevotionsPlans;
+            break;
+        case RightPane::TopTab::Documents:
+            state.rightPaneTab = RightPaneTab::Documents;
+            break;
+        case RightPane::TopTab::Commentary:
+        default:
+            state.rightPaneTab = RightPaneTab::Commentary;
+            break;
+        }
         state.generalBookModule = rightPane_->currentGeneralBookModule();
         state.generalBookKey = rightPane_->currentGeneralBookKey();
-        state.documentsTabActive = rightPane_->isDocumentsTabActive();
         state.documentPath = rightPane_->currentDocumentPath();
         state.dailyWorkspace = rightPane_->currentDailyWorkspaceState();
     }
     if (documentRestoreScheduled_) {
-        state.documentsTabActive = pendingDocumentsTabActive_;
+        if (pendingDocumentsTabActive_) {
+            state.rightPaneTab = RightPaneTab::Documents;
+        }
         if (!pendingDocumentRestorePath_.empty()) {
             state.documentPath = pendingDocumentRestorePath_;
         }
@@ -1854,20 +1869,28 @@ void MainWindow::restoreSessionState(const SessionState& state) {
             if (!state.generalBookModule.empty()) {
                 rightPane_->showGeneralBookEntry(state.generalBookModule,
                                                  state.generalBookKey);
-            } else if (state.generalBooksTabActive &&
+            } else if (state.rightPaneTab == RightPaneTab::GeneralBooks &&
                        !rightPane_->currentGeneralBookModule().empty()) {
                 rightPane_->showGeneralBookEntry(rightPane_->currentGeneralBookModule(),
                                                  rightPane_->currentGeneralBookKey());
             }
-            if (state.documentsTabActive) {
+            switch (state.rightPaneTab) {
+            case RightPaneTab::Documents:
                 rightPane_->setDocumentsTabActive(true);
-            } else if (dailyState.tabActive) {
+                break;
+            case RightPaneTab::DevotionsPlans:
                 rightPane_->setDevotionsPlansTabActive(true);
-            } else {
-                rightPane_->setDictionaryTabActive(state.generalBooksTabActive);
+                break;
+            case RightPaneTab::GeneralBooks:
+                rightPane_->setDictionaryTabActive(true);
+                break;
+            case RightPaneTab::Commentary:
+            default:
+                rightPane_->setDictionaryTabActive(false);
+                break;
             }
             scheduleDeferredDocumentRestore(state.documentPath,
-                                            state.documentsTabActive);
+                                            state.rightPaneTab == RightPaneTab::Documents);
         }
         redraw();
         return;
@@ -1931,17 +1954,25 @@ void MainWindow::restoreSessionState(const SessionState& state) {
         if (!state.generalBookModule.empty()) {
             rightPane_->showGeneralBookEntry(state.generalBookModule,
                                              state.generalBookKey);
-        } else if (state.generalBooksTabActive &&
+        } else if (state.rightPaneTab == RightPaneTab::GeneralBooks &&
                    !rightPane_->currentGeneralBookModule().empty()) {
             rightPane_->showGeneralBookEntry(rightPane_->currentGeneralBookModule(),
                                              rightPane_->currentGeneralBookKey());
         }
-        if (state.documentsTabActive) {
+        switch (state.rightPaneTab) {
+        case RightPaneTab::Documents:
             rightPane_->setDocumentsTabActive(true);
-        } else if (dailyState.tabActive) {
+            break;
+        case RightPaneTab::DevotionsPlans:
             rightPane_->setDevotionsPlansTabActive(true);
-        } else {
-            rightPane_->setDictionaryTabActive(state.generalBooksTabActive);
+            break;
+        case RightPaneTab::GeneralBooks:
+            rightPane_->setDictionaryTabActive(true);
+            break;
+        case RightPaneTab::Commentary:
+        default:
+            rightPane_->setDictionaryTabActive(false);
+            break;
         }
     }
 
@@ -1955,7 +1986,7 @@ void MainWindow::restoreSessionState(const SessionState& state) {
 
     if (rightPane_) {
         scheduleDeferredDocumentRestore(state.documentPath,
-                                        state.documentsTabActive);
+                                        state.rightPaneTab == RightPaneTab::Documents);
     }
 
     redraw();
@@ -2145,14 +2176,13 @@ void MainWindow::restoreDeferredDocumentSession() {
 
     const bool keepDocumentsActive = pendingDocumentsTabActive_;
     if (!pendingDocumentRestorePath_.empty()) {
-        rightPane_->setDocumentsTabActive(true);
-        rightPane_->openDocument(pendingDocumentRestorePath_, true);
+        rightPane_->openDocument(pendingDocumentRestorePath_, keepDocumentsActive);
     }
-    if (!keepDocumentsActive && !pendingDocumentRestorePath_.empty()) {
-        rightPane_->setDocumentsTabActive(false);
-    } else if (keepDocumentsActive) {
+    if (keepDocumentsActive) {
         rightPane_->setDocumentsTabActive(true);
     }
+
+    rightPane_->redrawChrome();
 
     pendingDocumentRestorePath_.clear();
     pendingDocumentsTabActive_ = false;
