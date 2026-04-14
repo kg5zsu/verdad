@@ -22,6 +22,24 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Hash AppImage tool URLs
+        id: appimage-tool-urls
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_url_blocks="$(
+            {
+              sed -n '/set(VERDAD_LINUXDEPLOY_URL/,/CACHE STRING/p' CMakeLists.txt
+              sed -n '/set(VERDAD_LINUXDEPLOY_PLUGIN_APPIMAGE_URL/,/CACHE STRING/p' CMakeLists.txt
+            }
+          )"
+          if [ -z "$tool_url_blocks" ]; then
+            echo "Failed to extract AppImage tool URLs from CMakeLists.txt." >&2
+            exit 1
+          fi
+          hash="$(printf '%s\n' "$tool_url_blocks" | sha256sum | cut -d' ' -f1)"
+          echo "hash=${hash}" >> "$GITHUB_OUTPUT"
+
       - name: Cache apt archives
         uses: actions/cache@v4
         with:
@@ -29,6 +47,14 @@ jobs:
           key: apt-linux-ubuntu-22.04-${{ hashFiles('.github/workflows/build.yml') }}
           restore-keys: |
             apt-linux-ubuntu-22.04-
+
+      - name: Cache AppImage tools
+        uses: actions/cache@v4
+        with:
+          path: tools/appimage-tools
+          key: appimage-tools-${{ runner.os }}-${{ github.job }}-${{ steps.appimage-tool-urls.outputs.hash }}
+          restore-keys: |
+            appimage-tools-${{ runner.os }}-${{ github.job }}-
 
       - name: Restore ccache
         uses: actions/cache@v4
@@ -72,11 +98,16 @@ jobs:
       - name: Package (tar.gz)
         run: cmake --build build --target bundle
 
+      - name: Package (AppImage)
+        run: cmake --build build --target appimage
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: verdad-linux-x86_64
-          path: build/verdad-*.tar.gz
+          path: |
+            build/verdad-*.tar.gz
+            build/verdad-*.AppImage
 
   # ===========================================================================
   # macOS (ARM64)
