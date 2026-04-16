@@ -20,6 +20,7 @@
 
 #include "reading/DateUtils.h"
 #include "reading/ReadingPlanManager.h"
+#include "tags/TagManager.h"
 #include "sword/SwordManager.h"
 #include "ui/DailyWorkspaceState.h"
 
@@ -104,6 +105,10 @@ public:
     void showGeneralBookEntry(const std::string& moduleName,
                               const std::string& key,
                               const std::string& searchHighlight);
+
+    /// Tag the current commentary/general-book selection.
+    void tagCurrentCommentarySelection(const std::string& selectionText);
+    void tagCurrentGeneralBookSelection(const std::string& selectionText);
 
     /// Set the current commentary module.
     /// When activateCurrentVerse is true, load the module at the active Bible verse.
@@ -278,6 +283,10 @@ private:
     std::vector<std::string> generalBookChoiceLabels_;
     std::string currentGeneralBook_;
     std::string currentGeneralBookKey_;
+    std::string commentaryContextWord_;
+    std::string commentaryContextQuery_;
+    std::string generalBookContextWord_;
+    std::string generalBookContextQuery_;
     std::vector<GeneralBookTocEntry> generalBookToc_;
     std::unordered_map<const Fl_Tree_Item*, int> generalBookTreeItemIndices_;
     std::unordered_map<std::string, std::string> generalBookSectionCache_;
@@ -385,6 +394,36 @@ private:
     std::string buildGeneralBookWindowHtml();
     void restoreGeneralBookLoadedRangeFromHtml(const std::string& html);
     std::string applySearchHighlightToHtml(const std::string& html) const;
+    void onGeneralBookHover(const std::string& word,
+                            const std::string& href,
+                            const std::string& strong,
+                            const std::string& morph,
+                            const std::string& module,
+                            int x, int y);
+    void onGeneralBookContextMenu(const std::string& word,
+                                  const std::string& href,
+                                  const std::string& strong,
+                                  const std::string& morph,
+                                  const std::string& module,
+                                  int x, int y);
+    void onCommentaryHover(const std::string& word,
+                           const std::string& href,
+                           const std::string& strong,
+                           const std::string& morph,
+                           const std::string& module,
+                           int x, int y);
+    void onCommentaryContextMenu(const std::string& word,
+                                 const std::string& href,
+                                 const std::string& strong,
+                                 const std::string& morph,
+                                 const std::string& module,
+                                 int x, int y);
+    static void onGeneralBookSearchWord(Fl_Widget* w, void* data);
+    static void onGeneralBookLookupDictionary(Fl_Widget* w, void* data);
+    static void onGeneralBookAddTag(Fl_Widget* w, void* data);
+    static void onCommentarySearchWord(Fl_Widget* w, void* data);
+    static void onCommentaryLookupDictionary(Fl_Widget* w, void* data);
+    static void onCommentaryAddTag(Fl_Widget* w, void* data);
 
     /// Populate and refresh the Devotions & Plans workspace.
     void populateDailyDevotionModules();

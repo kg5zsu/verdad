@@ -1,22 +1,28 @@
 #include "ui/TagPanel.h"
+
 #include "app/VerdadApp.h"
-#include "ui/MainWindow.h"
-#include "ui/LeftPane.h"
 #include "ui/BiblePane.h"
-#include "ui/UiFontUtils.h"
-#include "ui/VerseReferenceSort.h"
-#include "ui/VerseListCopyMenu.h"
 #include "sword/SwordManager.h"
 #include "tags/TagManager.h"
+#include "ui/LeftPane.h"
+#include "ui/MainWindow.h"
+#include "ui/UiFontUtils.h"
+#include "ui/VerseReferenceSort.h"
 
 #include <FL/Fl.H>
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_Hold_Browser.H>
+#include <FL/Fl_Choice.H>
+#include <FL/Fl_Menu_Button.H>
 #include <FL/Fl_Return_Button.H>
 #include <FL/fl_ask.H>
+
 #include <algorithm>
 #include <cctype>
+#include <limits>
+#include <sstream>
+#include <unordered_map>
 
 namespace verdad {
 namespace {
@@ -46,6 +52,32 @@ std::string toLowerCopy(const std::string& text) {
     return out;
 }
 
+bool targetEquals(const TagTarget& a, const TagTarget& b) {
+    return a.kind == b.kind &&
+           a.moduleName == b.moduleName &&
+           a.sourceKey == b.sourceKey &&
+           a.selectionText == b.selectionText;
+}
+
+bool matchesResourceFilterKind(const TagTarget& target,
+                               TagPanel::ResourceFilter filter) {
+    switch (filter) {
+    case TagPanel::ResourceFilter::All:
+        return true;
+    case TagPanel::ResourceFilter::Verse:
+        return target.kind == TagTarget::Kind::Verse;
+    case TagPanel::ResourceFilter::Commentary:
+        return target.kind == TagTarget::Kind::Commentary;
+    case TagPanel::ResourceFilter::GeneralBook:
+        return target.kind == TagTarget::Kind::GeneralBook;
+    }
+    return true;
+}
+
+std::string targetDisplayLabel(const TagTarget& target) {
+    return target.displayLabel();
+}
+
 struct TagFilterQuery {
     std::string raw;
     std::string lowered;
@@ -73,17 +105,23 @@ TagFilterQuery buildTagFilterQuery(const std::string& text) {
     return query;
 }
 
-bool verseMatchesFilter(const std::string& verseKey, const TagFilterQuery& query) {
+bool targetMatchesFilter(const TagTarget& target,
+                         const TagFilterQuery& query,
+                         TagPanel::ResourceFilter resourceFilter) {
+    if (!matchesResourceFilterKind(target, resourceFilter)) return false;
     if (query.lowered.empty()) return true;
 
-    if (toLowerCopy(verseKey).find(query.lowered) != std::string::npos) {
-        return true;
-    }
+    const std::string label = toLowerCopy(targetDisplayLabel(target));
+    if (label.find(query.lowered) != std::string::npos) return true;
 
-    if (!query.hasVerseRef) return false;
+    if (toLowerCopy(target.moduleName).find(query.lowered) != std::string::npos) return true;
+    if (toLowerCopy(target.sourceKey).find(query.lowered) != std::string::npos) return true;
+    if (toLowerCopy(target.selectionText).find(query.lowered) != std::string::npos) return true;
+
+    if (!query.hasVerseRef || target.kind != TagTarget::Kind::Verse) return false;
 
     try {
-        SwordManager::VerseRef verseRef = SwordManager::parseVerseRef(verseKey);
+        SwordManager::VerseRef verseRef = SwordManager::parseVerseRef(target.sourceKey);
         return verseRef.book == query.verseRef.book &&
                verseRef.chapter == query.verseRef.chapter &&
                verseRef.verse == query.verseRef.verse;
@@ -94,25 +132,126 @@ bool verseMatchesFilter(const std::string& verseKey, const TagFilterQuery& query
 
 bool tagMatchesFilter(TagManager& tagMgr,
                       const std::string& tagName,
-                      const TagFilterQuery& query) {
+                      const TagFilterQuery& query,
+                      TagPanel::ResourceFilter resourceFilter) {
     if (query.lowered.empty()) return true;
 
     if (toLowerCopy(tagName).find(query.lowered) != std::string::npos) {
         return true;
     }
 
-    const auto verses = tagMgr.getVersesWithTag(tagName);
-    return std::any_of(verses.begin(), verses.end(),
-                       [&](const std::string& verseKey) {
-                           return verseMatchesFilter(verseKey, query);
+    const auto targets = tagMgr.getTargetsWithTag(tagName);
+    return std::any_of(targets.begin(), targets.end(),
+                       [&](const TagTarget& target) {
+                           return targetMatchesFilter(target, query, resourceFilter);
                        });
+}
+
+struct TargetSortKey {
+    bool parsed = false;
+    int bookRank = std::numeric_limits<int>::max();
+    int chapter = std::numeric_limits<int>::max();
+    int verse = std::numeric_limits<int>::max();
+    std::string kindToken;
+    std::string moduleName;
+    std::string sourceKey;
+    std::string selectionText;
+    std::string label;
+};
+
+std::string normalizeBookKey(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (char c : in) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (std::isalnum(uc)) {
+            out.push_back(static_cast<char>(std::tolower(uc)));
+        }
+    }
+    return out;
+}
+
+void sortTargetsCanonical(SwordManager& swordMgr,
+                          const std::string& moduleName,
+                          std::vector<TagTarget>& targets) {
+    if (targets.size() < 2) return;
+
+    std::unordered_map<std::string, int> bookOrder;
+    const auto books = swordMgr.getBookNames(moduleName);
+    for (size_t i = 0; i < books.size(); ++i) {
+        std::string key = normalizeBookKey(books[i]);
+        if (!key.empty() && bookOrder.find(key) == bookOrder.end()) {
+            bookOrder.emplace(key, static_cast<int>(i));
+        }
+    }
+
+    struct Entry {
+        TagTarget target;
+        TargetSortKey key;
+    };
+
+    std::vector<Entry> entries;
+    entries.reserve(targets.size());
+    for (const auto& target : targets) {
+        Entry entry;
+        entry.target = target;
+        entry.key.kindToken = target.kind == TagTarget::Kind::Verse
+            ? "verse"
+            : (target.kind == TagTarget::Kind::Commentary ? "commentary" : "general_book");
+        entry.key.moduleName = target.moduleName;
+        entry.key.sourceKey = target.sourceKey;
+        entry.key.selectionText = target.selectionText;
+        entry.key.label = targetDisplayLabel(target);
+
+        if (target.kind == TagTarget::Kind::Verse) {
+            SwordManager::VerseRef parsed;
+            try {
+                parsed = SwordManager::parseVerseRef(target.sourceKey);
+            } catch (...) {
+                parsed = SwordManager::VerseRef{};
+            }
+            if (!parsed.book.empty() && parsed.chapter > 0 && parsed.verse > 0) {
+                entry.key.parsed = true;
+                entry.key.chapter = parsed.chapter;
+                entry.key.verse = parsed.verse;
+                std::string normBook = normalizeBookKey(parsed.book);
+                auto it = bookOrder.find(normBook);
+                if (it != bookOrder.end()) {
+                    entry.key.bookRank = it->second;
+                }
+            }
+        }
+
+        entries.push_back(std::move(entry));
+    }
+
+    std::stable_sort(entries.begin(), entries.end(),
+                     [](const Entry& a, const Entry& b) {
+        if (a.key.parsed != b.key.parsed) return a.key.parsed > b.key.parsed;
+        if (a.key.kindToken != b.key.kindToken) return a.key.kindToken < b.key.kindToken;
+        if (a.key.parsed) {
+            if (a.key.bookRank != b.key.bookRank) return a.key.bookRank < b.key.bookRank;
+            if (a.key.chapter != b.key.chapter) return a.key.chapter < b.key.chapter;
+            if (a.key.verse != b.key.verse) return a.key.verse < b.key.verse;
+        }
+        if (a.key.moduleName != b.key.moduleName) return a.key.moduleName < b.key.moduleName;
+        if (a.key.sourceKey != b.key.sourceKey) return a.key.sourceKey < b.key.sourceKey;
+        if (a.key.selectionText != b.key.selectionText) return a.key.selectionText < b.key.selectionText;
+        return a.key.label < b.key.label;
+    });
+
+    targets.clear();
+    targets.reserve(entries.size());
+    for (auto& entry : entries) {
+        targets.push_back(std::move(entry.target));
+    }
 }
 
 class AddTagDialog {
 public:
-    AddTagDialog(TagManager& tagMgr, const std::string& verseKey)
+    AddTagDialog(TagManager& tagMgr, const TagTarget& target)
         : tagMgr_(tagMgr)
-        , verseKey_(verseKey)
+        , target_(target)
         , dialog_(440, 380, "Add Tag") {
         allTags_ = tagMgr_.getAllTags();
 
@@ -121,7 +260,7 @@ public:
 
         prompt_ = new Fl_Box(16, 16, dialog_.w() - 32, 44);
         prompt_->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_WRAP);
-        std::string promptText = "Add tag to " + verseKey_ +
+        std::string promptText = "Add tag to " + target_.displayLabel() +
                                  ":\nSelect an existing tag or type a new one.";
         prompt_->copy_label(promptText.c_str());
 
@@ -155,7 +294,6 @@ public:
         }
 
         if (!accepted_) return false;
-
         tagName = resultTagName_;
         return true;
     }
@@ -213,7 +351,6 @@ private:
         if (index <= 0 || index > static_cast<int>(visibleTags_.size())) {
             return "";
         }
-
         return visibleTags_[index - 1];
     }
 
@@ -248,7 +385,7 @@ private:
     }
 
     TagManager& tagMgr_;
-    std::string verseKey_;
+    TagTarget target_;
     std::vector<Tag> allTags_;
     std::vector<std::string> visibleTags_;
     bool accepted_ = false;
@@ -283,9 +420,9 @@ private:
     TagPanel* owner_ = nullptr;
 };
 
-class TagVerseBrowser : public Fl_Hold_Browser {
+class TagItemBrowser : public Fl_Hold_Browser {
 public:
-    TagVerseBrowser(TagPanel* owner, int X, int Y, int W, int H)
+    TagItemBrowser(TagPanel* owner, int X, int Y, int W, int H)
         : Fl_Hold_Browser(X, Y, W, H)
         , owner_(owner) {}
 
@@ -293,47 +430,15 @@ public:
         if (event == FL_PUSH) {
             int button = Fl::event_button();
             if (button == FL_RIGHT_MOUSE) {
-                pressedLine_ = 0;
-                if (owner_) {
-                    owner_->showVerseListContextMenu(Fl::event_x(), Fl::event_y());
-                }
+                if (owner_) owner_->showItemContextMenu(Fl::event_x(), Fl::event_y());
                 return 1;
             }
-            if (button == FL_LEFT_MOUSE || button == FL_MIDDLE_MOUSE) {
-                pressedLine_ = lineAtEvent();
-            } else {
-                pressedLine_ = 0;
-            }
         }
-
-        const int button = (event == FL_RELEASE) ? Fl::event_button() : 0;
-        const int line = (event == FL_RELEASE) ? lineAtEvent() : 0;
-        const bool isDoubleClick = (event == FL_RELEASE) ? (Fl::event_clicks() > 0) : false;
-        const int handled = Fl_Hold_Browser::handle(event);
-
-        if (event == FL_RELEASE && owner_ &&
-            (button == FL_LEFT_MOUSE || button == FL_MIDDLE_MOUSE)) {
-            int targetLine = line;
-            if (pressedLine_ > 0 && (targetLine <= 0 || targetLine == pressedLine_)) {
-                targetLine = pressedLine_;
-            }
-            owner_->activateVerseLine(targetLine > 0 ? targetLine : value(),
-                                      button, isDoubleClick);
-            pressedLine_ = 0;
-            return 1;
-        }
-
-        return handled;
+        return Fl_Hold_Browser::handle(event);
     }
 
 private:
-    int lineAtEvent() {
-        void* item = find_item(Fl::event_y());
-        return item ? lineno(item) : 0;
-    }
-
     TagPanel* owner_ = nullptr;
-    int pressedLine_ = 0;
 };
 
 TagPanel::TagPanel(VerdadApp* app, int X, int Y, int W, int H)
@@ -341,31 +446,40 @@ TagPanel::TagPanel(VerdadApp* app, int X, int Y, int W, int H)
     , app_(app)
     , filterInput_(nullptr)
     , clearFilterButton_(nullptr)
+    , resourceFilterChoice_(nullptr)
     , tagBrowser_(nullptr)
-    , verseBrowser_(nullptr)
+    , itemBrowser_(nullptr)
     , newTagButton_(nullptr)
     , deleteTagButton_(nullptr)
     , renameTagButton_(nullptr)
-    , removeVerseButton_(nullptr) {
+    , removeTagButton_(nullptr) {
     begin();
 
     filterInput_ = new TagFilterInput(this, X, Y, W, 28);
     filterInput_->when(FL_WHEN_CHANGED);
     filterInput_->callback(onFilterChange, this);
-    filterInput_->tooltip("Filter tags by name or by verse reference");
+    filterInput_->tooltip("Filter tags by name or by item text/reference");
 
     clearFilterButton_ = new Fl_Button(X, Y, 10, 10, "X");
     clearFilterButton_->callback(onClearFilter, this);
     clearFilterButton_->tooltip("Clear the tag filter");
 
+    resourceFilterChoice_ = new Fl_Choice(X, Y, 10, 10, "Types:");
+    resourceFilterChoice_->add("All");
+    resourceFilterChoice_->add("Verses");
+    resourceFilterChoice_->add("Commentaries");
+    resourceFilterChoice_->add("General Books");
+    resourceFilterChoice_->value(0);
+    resourceFilterChoice_->callback(onResourceFilterChange, this);
+    resourceFilterChoice_->tooltip("Choose which resource types to browse and search");
+
     tagBrowser_ = new Fl_Hold_Browser(X, Y, W, H);
     tagBrowser_->type(FL_HOLD_BROWSER);
     tagBrowser_->callback(onTagSelect, this);
 
-    verseBrowser_ = new TagVerseBrowser(this, X, Y, W, H);
-    verseBrowser_->linespacing(app_ ? app_->appearanceSettings().browserLineSpacing : 0);
-    verseBrowser_->callback(onVerseSelect, this);
-    verseBrowser_->when(FL_WHEN_CHANGED);
+    itemBrowser_ = new TagItemBrowser(this, X, Y, W, H);
+    itemBrowser_->type(FL_HOLD_BROWSER);
+    itemBrowser_->callback(onItemSelect, this);
 
     newTagButton_ = new Fl_Button(X, Y, 10, 10, "New");
     newTagButton_->callback(onNewTag, this);
@@ -376,12 +490,12 @@ TagPanel::TagPanel(VerdadApp* app, int X, int Y, int W, int H)
     deleteTagButton_ = new Fl_Button(X, Y, 10, 10, "Delete");
     deleteTagButton_->callback(onDeleteTag, this);
 
-    removeVerseButton_ = new Fl_Button(X, Y, 10, 10, "Remove Verse");
-    removeVerseButton_->callback(onRemoveVerse, this);
+    removeTagButton_ = new Fl_Button(X, Y, 10, 10, "Remove");
+    removeTagButton_->callback(onRemoveTag, this);
 
     end();
 
-    resizable(verseBrowser_);
+    resizable(itemBrowser_);
     layoutChildren();
     updateFilterControls();
     populateTags();
@@ -399,48 +513,60 @@ void TagPanel::refresh() {
 }
 
 void TagPanel::setVerseListLineSpacing(int pixels) {
-    if (!verseBrowser_) return;
+    if (!itemBrowser_) return;
     const int spacing = std::clamp(pixels, 0, 16);
-    if (verseBrowser_->linespacing() == spacing) return;
-    verseBrowser_->linespacing(spacing);
+    if (itemBrowser_->linespacing() == spacing) return;
+    itemBrowser_->linespacing(spacing);
     if (!selectedTagName_.empty()) {
-        populateVerses(selectedTagName_);
+        populateTargets(selectedTagName_);
     } else {
-        verseBrowser_->redraw();
+        itemBrowser_->redraw();
     }
 }
 
 void TagPanel::showAddTagDialog(const std::string& verseKey) {
-    AddTagDialog dialog(app_->tagManager(), verseKey);
+    showAddTagDialog(TagTarget::verse(verseKey));
+}
+
+void TagPanel::showAddTagDialog(const TagTarget& target) {
+    if (!app_) return;
+    AddTagDialog dialog(app_->tagManager(), target);
     std::string tagName;
     if (dialog.open(tagName)) {
-        app_->tagManager().tagVerse(verseKey, tagName);
+        app_->tagManager().tagTarget(target, tagName);
         app_->tagManager().save();
         selectedTagName_ = tagName;
-        selectedVerseKey_ = verseKey;
+        selectedTarget_ = target;
+        hasSelectedTarget_ = true;
         populateTags();
-        refreshBiblePane();
+        refreshPreviewForSelection();
     }
 }
 
 void TagPanel::showTagsForVerse(const std::string& verseKey) {
     if (!filterInput_) return;
     filterInput_->value(verseKey.c_str());
-    selectedVerseKey_ = verseKey;
+    if (resourceFilterChoice_) {
+        resourceFilterChoice_->value(1);
+    }
+    selectedTarget_ = TagTarget::verse(verseKey);
+    hasSelectedTarget_ = true;
     updateFilterControls();
     populateTags();
 }
 
 void TagPanel::layoutChildren() {
-    if (!filterInput_ || !clearFilterButton_ || !tagBrowser_ || !verseBrowser_ ||
+    if (!filterInput_ || !clearFilterButton_ || !resourceFilterChoice_ ||
+        !tagBrowser_ || !itemBrowser_ ||
         !newTagButton_ || !renameTagButton_ || !deleteTagButton_ ||
-        !removeVerseButton_) {
+        !removeTagButton_) {
         return;
     }
 
     const int padding = 2;
     const int topInset = 12;
     const int filterH = 26;
+    const int choiceW = 140;
     const int clearButtonW = 52;
     const int buttonH = 25;
     const int innerX = x() + padding;
@@ -448,16 +574,19 @@ void TagPanel::layoutChildren() {
     const int bottomY = y() + h() - padding;
 
     int cy = y() + topInset;
-    int actualClearButtonW = std::min(clearButtonW, std::max(0, innerW - 20 - padding));
-    int filterInputW = std::max(20, innerW - actualClearButtonW - padding);
+    int actualChoiceW = std::min(choiceW, std::max(0, innerW - 20 - padding));
+    int actualClearButtonW = std::min(clearButtonW, std::max(0, innerW - actualChoiceW - 20 - (2 * padding)));
+    int filterInputW = std::max(20, innerW - actualChoiceW - actualClearButtonW - (2 * padding));
     filterInput_->resize(innerX, cy, filterInputW, filterH);
-    clearFilterButton_->resize(innerX + filterInputW + padding, cy,
-                               std::max(0, innerW - filterInputW - padding), filterH);
+    resourceFilterChoice_->resize(innerX + filterInputW + padding, cy,
+                                  actualChoiceW, filterH);
+    clearFilterButton_->resize(innerX + filterInputW + padding + actualChoiceW + padding, cy,
+                               std::max(0, innerW - filterInputW - actualChoiceW - (2 * padding)), filterH);
     cy += filterH + padding;
 
     int listAreaH = std::max(50, bottomY - cy - (2 * buttonH) - (3 * padding));
     int tagH = std::max(24, listAreaH / 2);
-    int verseH = std::max(24, listAreaH - tagH);
+    int itemH = std::max(24, listAreaH - tagH);
 
     tagBrowser_->resize(innerX, cy, innerW, tagH);
     cy += tagH + padding;
@@ -469,10 +598,10 @@ void TagPanel::layoutChildren() {
                              innerW - 2 * (buttonW + padding), buttonH);
     cy += buttonH + padding;
 
-    verseBrowser_->resize(innerX, cy, innerW, verseH);
-    cy += verseH + padding;
+    itemBrowser_->resize(innerX, cy, innerW, itemH);
+    cy += itemH + padding;
 
-    removeVerseButton_->resize(innerX, std::min(cy, bottomY - buttonH), innerW, buttonH);
+    removeTagButton_->resize(innerX, std::min(cy, bottomY - buttonH), innerW, buttonH);
 }
 
 void TagPanel::updateFilterControls() {
@@ -490,7 +619,6 @@ void TagPanel::clearFilter(bool focusInput) {
     if (!filterInput_) return;
 
     filterInput_->value("");
-    selectedVerseKey_.clear();
     updateFilterControls();
     populateTags();
     if (focusInput) {
@@ -498,10 +626,37 @@ void TagPanel::clearFilter(bool focusInput) {
     }
 }
 
-void TagPanel::refreshBiblePane() {
-    if (app_ && app_->mainWindow() && app_->mainWindow()->biblePane()) {
-        app_->mainWindow()->biblePane()->refresh();
+void TagPanel::applyResourceFilterFromChoice() {
+    if (!resourceFilterChoice_) return;
+
+    switch (resourceFilterChoice_->value()) {
+    case 1:
+        selectedResourceFilter_ = ResourceFilter::Verse;
+        break;
+    case 2:
+        selectedResourceFilter_ = ResourceFilter::Commentary;
+        break;
+    case 3:
+        selectedResourceFilter_ = ResourceFilter::GeneralBook;
+        break;
+    case 0:
+    default:
+        selectedResourceFilter_ = ResourceFilter::All;
+        break;
     }
+}
+
+bool TagPanel::targetMatchesResourceFilter(const TagTarget& target) const {
+    return matchesResourceFilterKind(target, selectedResourceFilter_);
+}
+
+bool TagPanel::tagMatchesResourceFilter(const std::string& tagName) const {
+    if (!app_) return false;
+    const auto targets = app_->tagManager().getTargetsWithTag(tagName);
+    return std::any_of(targets.begin(), targets.end(),
+                       [&](const TagTarget& target) {
+                           return targetMatchesResourceFilter(target);
+                       });
 }
 
 std::string TagPanel::activeBibleModule() const {
@@ -516,32 +671,74 @@ std::string TagPanel::activeBibleModule() const {
     return "";
 }
 
-void TagPanel::updateVersePreview(const std::string& verseKey) {
-    if (verseKey.empty() || !app_ || !app_->mainWindow() || !app_->mainWindow()->leftPane()) {
+void TagPanel::refreshPreviewForSelection() {
+    if (!hasSelectedTarget_ || !app_ || !app_->mainWindow() || !app_->mainWindow()->leftPane()) {
+        return;
+    }
+    updateTargetPreview(selectedTarget_);
+}
+
+void TagPanel::updateTargetPreview(const TagTarget& target) {
+    if (!app_ || !app_->mainWindow() || !app_->mainWindow()->leftPane()) return;
+
+    if (target.kind == TagTarget::Kind::Verse) {
+        std::string module = activeBibleModule();
+        if (module.empty()) return;
+        std::string html = app_->swordManager().getVerseText(module, target.sourceKey);
+        app_->mainWindow()->leftPane()->setVersePreviewText(html, module, target.sourceKey);
         return;
     }
 
-    std::string module = activeBibleModule();
-    if (module.empty()) return;
+    std::ostringstream html;
+    html << "<div class=\"preview-verse-block\">";
+    html << "<div class=\"preview-verse-ref\">";
+    html << "<a class=\"preview-verse-link\" href=\"open-preview-resource\">";
+    html << (target.kind == TagTarget::Kind::Commentary ? "Open commentary" : "Open general book");
+    html << "</a></div>";
+    html << "<div class=\"preview-tag-resource\">";
+    html << "<div><b>" << (target.kind == TagTarget::Kind::Commentary ? "Commentary" : "General Book")
+         << "</b></div>";
+    if (!target.moduleName.empty()) {
+        html << "<div>" << target.moduleName << "</div>";
+    }
+    if (!target.sourceKey.empty()) {
+        html << "<div>" << target.sourceKey << "</div>";
+    }
+    if (!target.selectionText.empty()) {
+        html << "<div>" << target.selectionText << "</div>";
+    }
+    html << "</div></div>";
 
-    std::string html = app_->swordManager().getVerseText(module, verseKey);
-    app_->mainWindow()->leftPane()->setVersePreviewText(html, module, verseKey);
+    LeftPane::PreviewKind kind =
+        (target.kind == TagTarget::Kind::Commentary)
+            ? LeftPane::PreviewKind::Commentary
+            : LeftPane::PreviewKind::GeneralBook;
+    app_->mainWindow()->leftPane()->setResourcePreviewText(
+        html.str(), target.moduleName, target.sourceKey, kind);
 }
 
 void TagPanel::populateTags() {
+    if (!tagBrowser_ || !itemBrowser_) return;
+
+    applyResourceFilterFromChoice();
     tagBrowser_->clear();
     tagBrowser_->value(0);
+    itemBrowser_->clear();
+    itemBrowser_->value(0);
     visibleTags_.clear();
+    visibleTargets_.clear();
 
     const TagFilterQuery filter = buildTagFilterQuery(
         filterInput_ ? filterInput_->value() : "");
 
     auto tags = app_->tagManager().getAllTags();
     for (const auto& tag : tags) {
-        if (!tagMatchesFilter(app_->tagManager(), tag.name, filter)) {
+        if (!tagMatchesResourceFilter(tag.name)) {
             continue;
         }
-
+        if (!tagMatchesFilter(app_->tagManager(), tag.name, filter, selectedResourceFilter_)) {
+            continue;
+        }
         visibleTags_.push_back(tag.name);
         int count = app_->tagManager().getTagCount(tag.name);
         std::string line = tag.name + " (" + std::to_string(count) + ")";
@@ -562,95 +759,118 @@ void TagPanel::populateTags() {
     if (selectedLine > 0) {
         tagBrowser_->value(selectedLine);
         selectedTagName_ = visibleTags_[selectedLine - 1];
-        populateVerses(selectedTagName_);
+        populateTargets(selectedTagName_);
     } else {
         selectedTagName_.clear();
-        selectedVerseKey_.clear();
-        verseBrowser_->clear();
-        verseBrowser_->value(0);
+        hasSelectedTarget_ = false;
     }
 }
 
-void TagPanel::populateVerses(const std::string& tagName) {
-    verseBrowser_->clear();
-    verseBrowser_->value(0);
+void TagPanel::populateTargets(const std::string& tagName) {
+    if (!itemBrowser_) return;
 
-    auto verses = app_->tagManager().getVersesWithTag(tagName);
-    verse_reference_sort::sortVerseKeysCanonical(app_->swordManager(),
-                                                 activeBibleModule(),
-                                                 verses);
+    itemBrowser_->clear();
+    itemBrowser_->value(0);
+    visibleTargets_.clear();
+
+    auto targets = app_->tagManager().getTargetsWithTag(tagName);
+    sortTargetsCanonical(app_->swordManager(), activeBibleModule(), targets);
+
     const TagFilterQuery filter = buildTagFilterQuery(
         filterInput_ ? filterInput_->value() : "");
+
     int selectedLine = 0;
-    int firstFilterMatch = 0;
+    for (const auto& target : targets) {
+        if (!targetMatchesFilter(target, filter, selectedResourceFilter_)) continue;
 
-    for (const auto& verse : verses) {
-        verseBrowser_->add(verse.c_str());
-        int line = verseBrowser_->size();
-        if (selectedLine == 0 && !selectedVerseKey_.empty() &&
-            verse == selectedVerseKey_) {
-            selectedLine = line;
-        }
-        if (firstFilterMatch == 0 && verseMatchesFilter(verse, filter)) {
-            firstFilterMatch = line;
+        visibleTargets_.push_back(target);
+        std::string line = targetDisplayLabel(target);
+        itemBrowser_->add(line.c_str());
+
+        if (hasSelectedTarget_ && targetEquals(target, selectedTarget_)) {
+            selectedLine = itemBrowser_->size();
         }
     }
 
-    if (selectedLine == 0 && firstFilterMatch > 0) {
-        selectedLine = firstFilterMatch;
-    }
-    if (selectedLine == 0 && !verses.empty()) {
+    if (selectedLine == 0 && !visibleTargets_.empty()) {
         selectedLine = 1;
     }
 
     if (selectedLine > 0) {
-        verseBrowser_->value(selectedLine);
-        const char* text = verseBrowser_->text(selectedLine);
-        selectedVerseKey_ = text ? text : "";
-        updateVersePreview(selectedVerseKey_);
+        itemBrowser_->value(selectedLine);
+        selectedTarget_ = visibleTargets_[selectedLine - 1];
+        hasSelectedTarget_ = true;
+        refreshPreviewForSelection();
     } else {
-        selectedVerseKey_.clear();
+        hasSelectedTarget_ = false;
     }
 }
 
-void TagPanel::activateVerseLine(int line, int mouseButton, bool isDoubleClick) {
+void TagPanel::activateTargetLine(int line, int mouseButton, bool isDoubleClick) {
     if (!app_ || !app_->mainWindow()) return;
-    if (line <= 0 || line > verseBrowser_->size()) return;
+    if (line <= 0 || line > static_cast<int>(visibleTargets_.size())) return;
 
-    const char* text = verseBrowser_->text(line);
-    if (!text || !text[0]) return;
+    const TagTarget& target = visibleTargets_[static_cast<size_t>(line - 1)];
+    selectedTarget_ = target;
+    hasSelectedTarget_ = true;
 
-    std::string verseKey = text;
-    std::string module = activeBibleModule();
-
-    if (mouseButton == FL_MIDDLE_MOUSE) {
-        app_->mainWindow()->openInNewStudyTab(module, verseKey);
+    if (mouseButton == FL_MIDDLE_MOUSE && target.kind == TagTarget::Kind::Verse) {
+        std::string module = activeBibleModule();
+        app_->mainWindow()->openInNewStudyTab(module, target.sourceKey);
         return;
     }
 
     if (mouseButton == FL_LEFT_MOUSE && isDoubleClick) {
-        if (!module.empty()) {
-            app_->mainWindow()->navigateTo(module, verseKey);
+        if (target.kind == TagTarget::Kind::Verse) {
+            std::string module = activeBibleModule();
+            if (!module.empty()) {
+                app_->mainWindow()->navigateTo(module, target.sourceKey);
+            } else {
+                app_->mainWindow()->navigateTo(target.sourceKey);
+            }
+        } else if (target.kind == TagTarget::Kind::Commentary) {
+            app_->mainWindow()->showCommentary(target.moduleName,
+                                               target.sourceKey,
+                                               target.selectionText);
         } else {
-            app_->mainWindow()->navigateTo(verseKey);
+            app_->mainWindow()->showGeneralBookEntry(target.moduleName,
+                                                     target.sourceKey,
+                                                     target.selectionText);
         }
     }
 }
 
-void TagPanel::showVerseListContextMenu(int screenX, int screenY) {
-    if (!app_ || !verseBrowser_ || verseBrowser_->size() <= 0) return;
+void TagPanel::showItemContextMenu(int screenX, int screenY) {
+    if (!app_ || !itemBrowser_ || itemBrowser_->size() <= 0) return;
 
-    std::vector<verse_list_copy::Entry> entries;
-    entries.reserve(static_cast<size_t>(verseBrowser_->size()));
-    const std::string module = activeBibleModule();
-    for (int line = 1; line <= verseBrowser_->size(); ++line) {
-        const char* text = verseBrowser_->text(line);
-        if (!text || !text[0]) continue;
-        entries.push_back({module, text});
+    int line = itemBrowser_->value();
+    if (line <= 0 || line > static_cast<int>(visibleTargets_.size())) return;
+
+    const TagTarget& target = visibleTargets_[static_cast<size_t>(line - 1)];
+    Fl_Menu_Button menu(screenX, screenY, 0, 0);
+    ui_font::applyCurrentAppMenuFont(&menu);
+
+    std::string copyLabel = "Copy Item Label";
+    menu.add(copyLabel.c_str(), 0, [](Fl_Widget*, void* data) {
+        auto* self = static_cast<TagPanel*>(data);
+        if (!self || !self->hasSelectedTarget_) return;
+        std::string text = targetDisplayLabel(self->selectedTarget_);
+        Fl::copy(text.c_str(), static_cast<int>(text.size()), 0);
+        Fl::copy(text.c_str(), static_cast<int>(text.size()), 1);
+    }, this);
+
+    if (target.kind == TagTarget::Kind::Verse) {
+        std::string verseLabel = "Copy Verse Reference";
+        menu.add(verseLabel.c_str(), 0, [](Fl_Widget*, void* data) {
+            auto* self = static_cast<TagPanel*>(data);
+            if (!self || !self->hasSelectedTarget_) return;
+            std::string text = self->selectedTarget_.sourceKey;
+            Fl::copy(text.c_str(), static_cast<int>(text.size()), 0);
+            Fl::copy(text.c_str(), static_cast<int>(text.size()), 1);
+        }, this);
     }
 
-    verse_list_copy::showVerseListCopyMenu(
-        app_->swordManager(), entries, screenX, screenY);
+    menu.popup();
 }
 
 void TagPanel::onFilterChange(Fl_Widget* /*w*/, void* data) {
@@ -666,38 +886,44 @@ void TagPanel::onClearFilter(Fl_Widget* /*w*/, void* data) {
     self->clearFilter(true);
 }
 
-void TagPanel::onTagSelect(Fl_Widget* /*w*/, void* data) {
+void TagPanel::onResourceFilterChange(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<TagPanel*>(data);
     if (!self) return;
+    self->populateTags();
+}
+
+void TagPanel::onTagSelect(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<TagPanel*>(data);
+    if (!self || !self->tagBrowser_) return;
 
     int idx = self->tagBrowser_->value();
     if (idx <= 0 || idx > static_cast<int>(self->visibleTags_.size())) {
         self->selectedTagName_.clear();
-        self->verseBrowser_->clear();
-        self->selectedVerseKey_.clear();
+        self->itemBrowser_->clear();
+        self->visibleTargets_.clear();
+        self->hasSelectedTarget_ = false;
         return;
     }
 
     self->selectedTagName_ = self->visibleTags_[idx - 1];
-    self->populateVerses(self->selectedTagName_);
+    self->populateTargets(self->selectedTagName_);
 }
 
-void TagPanel::onVerseSelect(Fl_Widget* /*w*/, void* data) {
+void TagPanel::onItemSelect(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<TagPanel*>(data);
-    if (!self) return;
+    if (!self || !self->itemBrowser_) return;
 
-    int idx = self->verseBrowser_->value();
-    if (idx <= 0 || idx > self->verseBrowser_->size()) return;
+    int idx = self->itemBrowser_->value();
+    if (idx <= 0 || idx > static_cast<int>(self->visibleTargets_.size())) return;
 
-    const char* text = self->verseBrowser_->text(idx);
-    if (text && text[0]) {
-        self->selectedVerseKey_ = text;
-        self->updateVersePreview(self->selectedVerseKey_);
-    }
+    self->selectedTarget_ = self->visibleTargets_[idx - 1];
+    self->hasSelectedTarget_ = true;
+    self->updateTargetPreview(self->selectedTarget_);
 }
 
 void TagPanel::onNewTag(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<TagPanel*>(data);
+    if (!self || !self->app_) return;
 
     const char* rawName = fl_input("New tag name:");
     if (!rawName) return;
@@ -712,7 +938,7 @@ void TagPanel::onNewTag(Fl_Widget* /*w*/, void* data) {
         self->app_->tagManager().save();
         self->selectedTagName_ = name;
         self->populateTags();
-        self->refreshBiblePane();
+        self->refreshPreviewForSelection();
     } else {
         fl_alert("Tag '%s' already exists.", name.c_str());
     }
@@ -720,34 +946,33 @@ void TagPanel::onNewTag(Fl_Widget* /*w*/, void* data) {
 
 void TagPanel::onDeleteTag(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<TagPanel*>(data);
+    if (!self || !self->app_ || !self->tagBrowser_) return;
 
     int idx = self->tagBrowser_->value();
-    if (idx <= 0) return;
-
-    if (idx - 1 >= static_cast<int>(self->visibleTags_.size())) return;
+    if (idx <= 0 || idx - 1 >= static_cast<int>(self->visibleTags_.size())) return;
 
     std::string tagName = self->visibleTags_[idx - 1];
-    int confirm = fl_choice("Delete tag '%s' and remove from all verses?",
+    int confirm = fl_choice("Delete tag '%s' and remove it from all items?",
                             "Cancel", "Delete", nullptr, tagName.c_str());
     if (confirm == 1) {
         self->app_->tagManager().deleteTag(tagName);
         self->app_->tagManager().save();
         if (self->selectedTagName_ == tagName) {
             self->selectedTagName_.clear();
-            self->selectedVerseKey_.clear();
+            self->visibleTargets_.clear();
+            self->hasSelectedTarget_ = false;
         }
         self->populateTags();
-        self->refreshBiblePane();
+        self->refreshPreviewForSelection();
     }
 }
 
 void TagPanel::onRenameTag(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<TagPanel*>(data);
+    if (!self || !self->app_ || !self->tagBrowser_) return;
 
     int idx = self->tagBrowser_->value();
-    if (idx <= 0) return;
-
-    if (idx - 1 >= static_cast<int>(self->visibleTags_.size())) return;
+    if (idx <= 0 || idx - 1 >= static_cast<int>(self->visibleTags_.size())) return;
 
     std::string oldName = self->visibleTags_[idx - 1];
     const char* rawNewName = fl_input("Rename tag '%s' to:", oldName.c_str(),
@@ -765,21 +990,21 @@ void TagPanel::onRenameTag(Fl_Widget* /*w*/, void* data) {
         self->app_->tagManager().save();
         self->selectedTagName_ = newName;
         self->populateTags();
-        self->refreshBiblePane();
+        self->refreshPreviewForSelection();
     } else {
         fl_alert("Cannot rename: tag '%s' already exists.", newName.c_str());
     }
 }
 
-void TagPanel::onRemoveVerse(Fl_Widget* /*w*/, void* data) {
+void TagPanel::onRemoveTag(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<TagPanel*>(data);
-    if (!self) return;
-    if (self->selectedTagName_.empty() || self->selectedVerseKey_.empty()) return;
+    if (!self || !self->app_ || !self->hasSelectedTarget_) return;
 
-    self->app_->tagManager().untagVerse(self->selectedVerseKey_, self->selectedTagName_);
+    if (self->selectedTagName_.empty()) return;
+    self->app_->tagManager().untagTarget(self->selectedTarget_, self->selectedTagName_);
     self->app_->tagManager().save();
     self->populateTags();
-    self->refreshBiblePane();
+    self->refreshPreviewForSelection();
 }
 
 } // namespace verdad

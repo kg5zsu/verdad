@@ -303,6 +303,19 @@ void LeftPane::setPreviewText(const std::string& html,
                               const std::string& sourceKey) {
     previewSourceModule_ = sourceModule;
     previewSourceKey_ = sourceKey;
+    previewKind_ = PreviewKind::Plain;
+    if (previewWidget_) {
+        previewWidget_->setHtml(html);
+    }
+}
+
+void LeftPane::setResourcePreviewText(const std::string& html,
+                                      const std::string& sourceModule,
+                                      const std::string& sourceKey,
+                                      PreviewKind kind) {
+    previewSourceModule_ = sourceModule;
+    previewSourceKey_ = sourceKey;
+    previewKind_ = kind;
     if (previewWidget_) {
         previewWidget_->setHtml(html);
     }
@@ -418,6 +431,22 @@ void LeftPane::onPreviewLink(const std::string& url) {
     if (url == "open-preview-verse") {
         if (previewSourceKey_.empty()) return;
         if (!trimCopy(previewSourceModule_).empty()) {
+            app_->mainWindow()->navigateTo(previewSourceModule_, previewSourceKey_);
+        } else {
+            app_->mainWindow()->navigateTo(previewSourceKey_);
+        }
+        return;
+    }
+
+    if (url == "open-preview-resource") {
+        if (previewSourceKey_.empty()) return;
+        if (previewKind_ == PreviewKind::Commentary) {
+            app_->mainWindow()->showCommentary(previewSourceModule_,
+                                               previewSourceKey_);
+        } else if (previewKind_ == PreviewKind::GeneralBook) {
+            app_->mainWindow()->showGeneralBookEntry(previewSourceModule_,
+                                                     previewSourceKey_);
+        } else if (!trimCopy(previewSourceModule_).empty()) {
             app_->mainWindow()->navigateTo(previewSourceModule_, previewSourceKey_);
         } else {
             app_->mainWindow()->navigateTo(previewSourceKey_);
