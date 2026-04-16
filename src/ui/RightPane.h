@@ -82,6 +82,9 @@ public:
 
     /// Show commentary using a specific module
     void showCommentary(const std::string& moduleName, const std::string& reference);
+    void showCommentary(const std::string& moduleName,
+                        const std::string& reference,
+                        const std::string& searchHighlight);
 
     /// Show a dictionary/lexicon entry
     void showDictionaryEntry(const std::string& key);
@@ -98,6 +101,9 @@ public:
 
     /// Show a general book entry in a specific module
     void showGeneralBookEntry(const std::string& moduleName, const std::string& key);
+    void showGeneralBookEntry(const std::string& moduleName,
+                              const std::string& key,
+                              const std::string& searchHighlight);
 
     /// Set the current commentary module.
     /// When activateCurrentVerse is true, load the module at the active Bible verse.
@@ -238,6 +244,7 @@ private:
     static constexpr size_t kCommentaryChapterCacheByteLimit = 16 * 1024 * 1024;
     int highlightedCommentaryVerse_ = 0;
     std::string htmlStyleOverrideCss_;
+    std::string searchHighlight_;
     bool commentaryEditing_ = false;
     std::string commentaryEditModule_;
     std::string commentaryEditReference_;
@@ -377,6 +384,7 @@ private:
     std::string generalBookSectionHtml(int tocIndex);
     std::string buildGeneralBookWindowHtml();
     void restoreGeneralBookLoadedRangeFromHtml(const std::string& html);
+    std::string applySearchHighlightToHtml(const std::string& html) const;
 
     /// Populate and refresh the Devotions & Plans workspace.
     void populateDailyDevotionModules();

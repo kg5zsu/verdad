@@ -1172,6 +1172,7 @@ void SearchPanel::search(const std::string& query,
     updateFilterControls();
 
     std::string trimmedQuery = trimCopy(query);
+    currentSearchQuery_ = trimmedQuery;
     if (trimmedQuery.empty()) return;
 
     std::string moduleName = effectiveModuleSelection(moduleOverride);
@@ -1395,6 +1396,7 @@ void SearchPanel::showReferenceResults(const std::string& moduleName,
     cancelActiveSearch();
     cancelPendingPreviewUpdate();
     resetHighlightState();
+    currentSearchQuery_.clear();
     resetResultView();
     stopIndexingIndicator();
 
@@ -1837,6 +1839,7 @@ void SearchPanel::resetHighlightState() {
     highlightStrongs_.clear();
     highlightPhrase_.clear();
     highlightRegexValid_ = false;
+    currentSearchQuery_.clear();
 }
 
 void SearchPanel::rebuildResultMetrics() {
@@ -2145,11 +2148,11 @@ void SearchPanel::activateResultLine(int line, int mouseButton, bool isDoubleCli
 
     if (mouseButton == FL_LEFT_MOUSE && isDoubleClick) {
         if (result.resourceType == "commentary") {
-            app_->mainWindow()->showCommentary(result.module, result.key);
+            app_->mainWindow()->showCommentary(result.module, result.key, currentSearchQuery_);
         } else if (result.resourceType == "dictionary") {
             app_->mainWindow()->showDictionaryEntry(result.module, result.key);
         } else if (result.resourceType == "general_book") {
-            app_->mainWindow()->showGeneralBookEntry(result.module, result.key);
+            app_->mainWindow()->showGeneralBookEntry(result.module, result.key, currentSearchQuery_);
         } else {
             app_->mainWindow()->navigateTo(result.module, result.key);
         }
@@ -2242,11 +2245,11 @@ void SearchPanel::onResultDoubleClick(Fl_Widget* /*w*/, void* data) {
 
     if (self->app_->mainWindow()) {
         if (result->resourceType == "commentary") {
-            self->app_->mainWindow()->showCommentary(result->module, result->key);
+            self->app_->mainWindow()->showCommentary(result->module, result->key, self->currentSearchQuery_);
         } else if (result->resourceType == "dictionary") {
             self->app_->mainWindow()->showDictionaryEntry(result->module, result->key);
         } else if (result->resourceType == "general_book") {
-            self->app_->mainWindow()->showGeneralBookEntry(result->module, result->key);
+            self->app_->mainWindow()->showGeneralBookEntry(result->module, result->key, self->currentSearchQuery_);
         } else {
             self->app_->mainWindow()->navigateTo(result->module, result->key);
         }

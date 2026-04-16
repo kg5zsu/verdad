@@ -28,6 +28,7 @@
 #include <FL/Fl_Browser_.H>
 #include <FL/Fl_Button.H>
 #include <FL/Fl_Check_Button.H>
+#include <FL/Fl_Multi_Browser.H>
 #include <FL/Fl_Hold_Browser.H>
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Input_.H>
@@ -330,7 +331,7 @@ public:
         pendingLabel->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
         y += 22;
 
-        existingBrowser_ = new Fl_Hold_Browser(x, y, colW, browserH);
+        existingBrowser_ = new Fl_Multi_Browser(x, y, colW, browserH);
         pendingBrowser_ = new Fl_Hold_Browser(x + colW + gap, y, colW, browserH);
         y += browserH + 8;
 
@@ -441,7 +442,7 @@ private:
             const char* filename = chooser.filename();
             if (filename) addPath(filename);
         } else {
-            for (int i = 1; i <= count; ++i) {
+            for (int i = 0; i < count; ++i) {
                 const char* filename = chooser.filename(i);
                 if (filename) addPath(filename);
             }
@@ -484,20 +485,38 @@ private:
     }
 
     void removeImport() {
-        int index = existingBrowser_ ? existingBrowser_->value() - 1 : -1;
-        if (index < 0 || index >= static_cast<int>(existingRecords_.size())) {
-            setStatus("Select an imported module to remove.");
+        if (!existingBrowser_) {
+            setStatus("Select one or more imported modules to remove.");
             return;
         }
 
-        const auto& record = existingRecords_[static_cast<size_t>(index)];
-        int confirm = fl_choice("Remove imported file \"%s\"?\n\nIts extracted content and metadata will be deleted.",
-                                "Cancel", "Remove", nullptr, record.moduleName.c_str());
-        if (confirm != 1) return;
+        std::vector<std::string> moduleNames;
+        for (int line = 1; line <= existingBrowser_->size(); ++line) {
+            if (!existingBrowser_->selected(line)) continue;
+            int index = line - 1;
+            if (index >= 0 && index < static_cast<int>(existingRecords_.size())) {
+                moduleNames.push_back(existingRecords_[static_cast<size_t>(index)].moduleName);
+            }
+        }
 
-        std::string error;
-        if (!app_->importedModuleManager().removeModule(record.moduleName, &error)) {
-            setStatus(error.empty() ? "Failed to remove imported file." : error);
+        if (moduleNames.empty()) {
+            setStatus("Select one or more imported modules to remove.");
+            return;
+        }
+
+        int removedCount = 0;
+        std::string firstError;
+        for (const auto& moduleName : moduleNames) {
+            std::string error;
+            if (!app_->importedModuleManager().removeModule(moduleName, &error)) {
+                if (firstError.empty()) firstError = error.empty() ? "Failed to remove imported file." : error;
+                continue;
+            }
+            ++removedCount;
+        }
+
+        if (removedCount == 0) {
+            setStatus(firstError.empty() ? "Failed to remove imported file." : firstError);
             return;
         }
 
@@ -505,7 +524,13 @@ private:
         app_->refreshSearchIndexCatalog();
         owner_->refresh();
         refreshExisting();
-        setStatus("Removed imported file.");
+        if (removedCount == 1) {
+            setStatus("Removed imported file.");
+        } else {
+            std::ostringstream message;
+            message << "Removed " << removedCount << " imported files.";
+            setStatus(message.str());
+        }
     }
 
     void importPending() {
@@ -573,7 +598,7 @@ private:
     MainWindow* owner_ = nullptr;
     VerdadApp* app_ = nullptr;
     Fl_Double_Window* window_ = nullptr;
-    Fl_Hold_Browser* existingBrowser_ = nullptr;
+    Fl_Multi_Browser* existingBrowser_ = nullptr;
     Fl_Hold_Browser* pendingBrowser_ = nullptr;
     Fl_Check_Button* copyCheck_ = nullptr;
     Fl_Input* tagsInput_ = nullptr;
@@ -1810,6 +1835,15 @@ void MainWindow::showCommentary(const std::string& module,
     }
 }
 
+void MainWindow::showCommentary(const std::string& module,
+                                const std::string& reference,
+                                const std::string& searchHighlight) {
+    if (rightPane_) {
+        rightPane_->showCommentary(module, reference, searchHighlight);
+        if (!applyingTabState_) captureActiveTabState();
+    }
+}
+
 void MainWindow::showDictionary(const std::string& key) {
     if (rightPane_) {
         rightPane_->showDictionaryEntry(key);
@@ -1837,6 +1871,15 @@ void MainWindow::showGeneralBookEntry(const std::string& module,
                                       const std::string& key) {
     if (rightPane_) {
         rightPane_->showGeneralBookEntry(module, key);
+        if (!applyingTabState_) captureActiveTabState();
+    }
+}
+
+void MainWindow::showGeneralBookEntry(const std::string& module,
+                                      const std::string& key,
+                                      const std::string& searchHighlight) {
+    if (rightPane_) {
+        rightPane_->showGeneralBookEntry(module, key, searchHighlight);
         if (!applyingTabState_) captureActiveTabState();
     }
 }
