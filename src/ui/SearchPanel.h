@@ -127,6 +127,7 @@ private:
     bool swordSearchInProgress_ = false;
     std::string statusSuffix_;
     std::string currentResultLabel_;
+    std::string currentSearchQuery_;
     bool previewUpdateScheduled_ = false;
     std::string pendingPreviewModule_;
     std::string pendingPreviewKey_;

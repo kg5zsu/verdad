@@ -97,6 +97,7 @@ set(SOURCES
     src/main.cpp
     src/app/VerdadApp.cpp
     src/app/PlatformPaths.cpp
+    src/import/ImportedModuleManager.cpp
     src/sword/SwordManager.cpp
     src/sword/SwordPaths.cpp
     src/search/SearchIndexer.cpp
@@ -129,6 +130,7 @@ set(HEADERS
     src/app/VerdadApp.h
     src/app/PerfTrace.h
     src/app/PlatformPaths.h
+    src/import/ImportedModuleManager.h
     src/sword/SwordManager.h
     src/sword/SwordPaths.h
     src/search/SearchIndexer.h
@@ -169,6 +171,7 @@ add_executable(verdad ${SOURCES} ${HEADERS})
 add_executable(verdad-bench
     src/bench_main.cpp
     src/app/PlatformPaths.cpp
+    src/import/ImportedModuleManager.cpp
     src/sword/SwordManager.cpp
     src/sword/SwordPaths.cpp
     src/ui/HtmlWidget.cpp
@@ -212,6 +215,7 @@ target_link_libraries(verdad PRIVATE
 target_link_libraries(verdad-bench PRIVATE
     fltk::images
     ${SWORD_LIBRARIES}
+    SQLite::SQLite3
     litehtml
     Threads::Threads
 )

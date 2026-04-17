@@ -93,6 +93,9 @@ public:
     /// Show commentary for a verse in the active workspace tab
     void showCommentary(const std::string& reference);
     void showCommentary(const std::string& module, const std::string& reference);
+    void showCommentary(const std::string& module,
+                        const std::string& reference,
+                        const std::string& searchHighlight);
 
     /// Show dictionary entry in the active workspace tab
     void showDictionary(const std::string& key);
@@ -104,6 +107,9 @@ public:
 
     /// Show a general-book entry in the active workspace tab.
     void showGeneralBookEntry(const std::string& module, const std::string& key);
+    void showGeneralBookEntry(const std::string& module,
+                              const std::string& key,
+                              const std::string& searchHighlight);
 
     /// Queue Mag viewer info update in the left pane preview.
     void showWordInfo(const std::string& word, const std::string& href,
@@ -339,6 +345,7 @@ private:
     static void onFileNewDocument(Fl_Widget* w, void* data);
     static void onFileSaveDocument(Fl_Widget* w, void* data);
     static void onFileExportDocumentOdt(Fl_Widget* w, void* data);
+    static void onToolsImportFiles(Fl_Widget* w, void* data);
     static void onToolsImportSettings(Fl_Widget* w, void* data);
     static void onToolsExportSettings(Fl_Widget* w, void* data);
     static void onViewParallel(Fl_Widget* w, void* data);

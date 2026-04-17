@@ -22,6 +22,13 @@ class HtmlWidget;
 /// and a preview area at the bottom.
 class LeftPane : public Fl_Group {
 public:
+    enum class PreviewKind {
+        Plain,
+        Verse,
+        Commentary,
+        GeneralBook,
+    };
+
     LeftPane(VerdadApp* app, int X, int Y, int W, int H);
     ~LeftPane() override;
 
@@ -45,6 +52,12 @@ public:
     void setPreviewText(const std::string& html,
                         const std::string& sourceModule = "",
                         const std::string& sourceKey = "");
+
+    /// Update the preview area for a tagged commentary/general-book item.
+    void setResourcePreviewText(const std::string& html,
+                                const std::string& sourceModule,
+                                const std::string& sourceKey,
+                                PreviewKind kind);
 
     /// Update the preview area with a verse preview and a clickable reference header.
     void setVersePreviewText(const std::string& html,
@@ -108,6 +121,7 @@ private:
     HtmlWidget* previewWidget_;
     std::string previewSourceModule_;
     std::string previewSourceKey_;
+    PreviewKind previewKind_ = PreviewKind::Plain;
 
     /// Show only the active tab panel to avoid cross-tab redraw artifacts.
     void syncTabPanelVisibility();

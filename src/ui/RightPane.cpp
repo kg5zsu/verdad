@@ -11,6 +11,8 @@
 #include "ui/LeftPane.h"
 #include "ui/MainWindow.h"
 #include "ui/ModuleChoiceUtils.h"
+#include "ui/TagPanel.h"
+#include "ui/UiFontUtils.h"
 #include "ui/StyledTabs.h"
 #include "ui/WrappingChoice.h"
 #include "sword/SwordManager.h"
@@ -165,6 +167,148 @@ std::string stripReadingPlanPasteDayPrefix(const std::string& text,
     }
 
     return trimmed;
+}
+
+bool isHighlightWordByte(unsigned char c) {
+    return std::isalnum(c) || c == '\'' || c == '-' || c >= 0x80;
+}
+
+std::string lowerAsciiCopy(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return text;
+}
+
+std::vector<std::string> tokenizeHighlightQuery(const std::string& query) {
+    std::vector<std::string> terms;
+    std::unordered_set<std::string> seen;
+    std::string current;
+
+    auto flush = [&]() {
+        if (current.empty()) return;
+        std::string term = current;
+        current.clear();
+        std::string lower = lowerAsciiCopy(term);
+        if (seen.insert(lower).second) {
+            terms.push_back(std::move(term));
+        }
+    };
+
+    for (char ch : query) {
+        if (isHighlightWordByte(static_cast<unsigned char>(ch))) {
+            current.push_back(ch);
+        } else {
+            flush();
+        }
+    }
+    flush();
+
+    std::sort(terms.begin(), terms.end(),
+              [](const std::string& a, const std::string& b) {
+                  if (a.size() != b.size()) return a.size() > b.size();
+                  return lowerAsciiCopy(a) < lowerAsciiCopy(b);
+              });
+    return terms;
+}
+
+void markRange(std::vector<bool>& mask, size_t start, size_t end) {
+    if (start >= end || start >= mask.size()) return;
+    end = std::min(end, mask.size());
+    for (size_t i = start; i < end; ++i) {
+        mask[i] = true;
+    }
+}
+
+void markLiteralMatches(std::vector<bool>& mask,
+                        const std::string& text,
+                        const std::string& term,
+                        bool requireWordBoundaries) {
+    if (text.empty() || term.empty()) return;
+
+    std::string lowerText = lowerAsciiCopy(text);
+    std::string lowerTerm = lowerAsciiCopy(term);
+    size_t pos = 0;
+    while ((pos = lowerText.find(lowerTerm, pos)) != std::string::npos) {
+        size_t end = pos + lowerTerm.size();
+        bool ok = true;
+        if (requireWordBoundaries) {
+            if (pos > 0 && isHighlightWordByte(static_cast<unsigned char>(text[pos - 1]))) {
+                ok = false;
+            }
+            if (end < text.size() &&
+                isHighlightWordByte(static_cast<unsigned char>(text[end]))) {
+                ok = false;
+            }
+        }
+        if (ok) {
+            markRange(mask, pos, end);
+            pos = end;
+        } else {
+            ++pos;
+        }
+    }
+}
+
+std::string wrapHighlightMask(const std::string& text,
+                              const std::vector<bool>& mask) {
+    if (text.empty() || mask.empty()) return text;
+
+    std::string out;
+    out.reserve(text.size() + 32);
+    bool inHighlight = false;
+    for (size_t i = 0; i < text.size(); ++i) {
+        bool shouldHighlight = i < mask.size() && mask[i];
+        if (shouldHighlight && !inHighlight) {
+            out += "<span class=\"searchhit\">";
+            inHighlight = true;
+        } else if (!shouldHighlight && inHighlight) {
+            out += "</span>";
+            inHighlight = false;
+        }
+        out.push_back(text[i]);
+    }
+    if (inHighlight) out += "</span>";
+    return out;
+}
+
+std::string highlightTextSegment(const std::string& text,
+                                 const std::vector<std::string>& terms) {
+    if (text.empty() || terms.empty()) return text;
+
+    std::vector<bool> mask(text.size(), false);
+    for (const auto& term : terms) {
+        markLiteralMatches(mask, text, term, true);
+    }
+    return wrapHighlightMask(text, mask);
+}
+
+std::string highlightHtmlText(const std::string& html,
+                              const std::string& query) {
+    const std::vector<std::string> terms = tokenizeHighlightQuery(query);
+    if (html.empty() || terms.empty()) return html;
+
+    std::string out;
+    out.reserve(html.size() + 64);
+    for (size_t pos = 0; pos < html.size();) {
+        if (html[pos] == '<') {
+            size_t tagEnd = html.find('>', pos);
+            if (tagEnd == std::string::npos) {
+                out.append(html, pos, html.size() - pos);
+                break;
+            }
+            out.append(html, pos, tagEnd - pos + 1);
+            pos = tagEnd + 1;
+            continue;
+        }
+
+        size_t nextTag = html.find('<', pos);
+        size_t end = (nextTag == std::string::npos) ? html.size() : nextTag;
+        out += highlightTextSegment(html.substr(pos, end - pos), terms);
+        pos = end;
+    }
+    return out;
 }
 
 class ReadingPlanDayInput : public Fl_Input {
@@ -1509,6 +1653,20 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
                                      panelH - choiceH - 6);
     commentaryHtml_->setLinkCallback(
         [this](const std::string& url) { onHtmlLink(url, true); });
+    commentaryHtml_->setHoverCallback(
+        [this](const std::string& word, const std::string& href,
+               const std::string& strong, const std::string& morph,
+               const std::string& module,
+               int x, int y) {
+            onCommentaryHover(word, href, strong, morph, module, x, y);
+        });
+    commentaryHtml_->setContextCallback(
+        [this](const std::string& word, const std::string& href,
+               const std::string& strong, const std::string& morph,
+               const std::string& module,
+               int x, int y) {
+            onCommentaryContextMenu(word, href, strong, morph, module, x, y);
+        });
     commentaryEditor_ = new HtmlEditorWidget(tileX + 2,
                                              panelY + choiceH + 4,
                                              tileW - 4,
@@ -1554,6 +1712,20 @@ RightPane::RightPane(VerdadApp* app, int X, int Y, int W, int H)
                                       panelH - (choiceH * 2) - 8);
     generalBookHtml_->setLinkCallback(
         [this](const std::string& url) { onHtmlLink(url, false); });
+    generalBookHtml_->setHoverCallback(
+        [this](const std::string& word, const std::string& href,
+               const std::string& strong, const std::string& morph,
+               const std::string& module,
+               int x, int y) {
+            onGeneralBookHover(word, href, strong, morph, module, x, y);
+        });
+    generalBookHtml_->setContextCallback(
+        [this](const std::string& word, const std::string& href,
+               const std::string& strong, const std::string& morph,
+               const std::string& module,
+               int x, int y) {
+            onGeneralBookContextMenu(word, href, strong, morph, module, x, y);
+        });
     generalBookTocPanel_ = new Fl_Group(tileX + 10,
                                         panelY + (choiceH * 2) + 14,
                                         std::min(kGeneralBookOverlayMaxW,
@@ -2291,12 +2463,19 @@ int RightPane::handle(int event) {
 
 void RightPane::showCommentary(const std::string& reference) {
     if (currentCommentary_.empty()) return;
-    showCommentary(currentCommentary_, reference);
+    showCommentary(currentCommentary_, reference, "");
 }
 
 void RightPane::showCommentary(const std::string& moduleName,
                                const std::string& reference) {
+    showCommentary(moduleName, reference, "");
+}
+
+void RightPane::showCommentary(const std::string& moduleName,
+                               const std::string& reference,
+                               const std::string& searchHighlight) {
     perf::ScopeTimer timer("RightPane::showCommentary");
+    searchHighlight_ = searchHighlight;
 
     if (commentaryEditing_ &&
         (!commentaryEditModule_.empty() || !commentaryEditReference_.empty()) &&
@@ -2347,7 +2526,7 @@ void RightPane::showCommentary(const std::string& moduleName,
                        moduleName.c_str(), reference.c_str(), step.elapsedMs());
             step.reset();
         }
-        commentaryHtml_->setHtml(html);
+        commentaryHtml_->setHtml(applySearchHighlightToHtml(html));
         highlightedCommentaryVerse_ = 0;
         perf::logf("RightPane::showCommentary commentaryHtml_->setHtml: %.3f ms",
                    step.elapsedMs());
@@ -2416,6 +2595,10 @@ void RightPane::syncCommentarySelectionClass(int oldVerse, int newVerse) {
         commentaryVerseNumberElementId(newVerse),
         commentaryVerseNumberSelectedStyle(),
         false);
+}
+
+std::string RightPane::applySearchHighlightToHtml(const std::string& html) const {
+    return highlightHtmlText(html, searchHighlight_);
 }
 
 void RightPane::showDictionaryEntry(const std::string& key) {
@@ -2503,12 +2686,19 @@ void RightPane::showGeneralBookEntry(const std::string& key) {
     }
 
     if (!currentGeneralBook_.empty()) {
-        showGeneralBookEntry(currentGeneralBook_, key);
+        showGeneralBookEntry(currentGeneralBook_, key, "");
     }
 }
 
 void RightPane::showGeneralBookEntry(const std::string& moduleName,
                                      const std::string& key) {
+    showGeneralBookEntry(moduleName, key, "");
+}
+
+void RightPane::showGeneralBookEntry(const std::string& moduleName,
+                                     const std::string& key,
+                                     const std::string& searchHighlight) {
+    searchHighlight_ = searchHighlight;
     bool moduleChanged = (moduleName != currentGeneralBook_);
     currentGeneralBook_ = moduleName;
     module_choice::applyChoiceValue(generalBookChoice_,
@@ -2525,7 +2715,8 @@ void RightPane::showGeneralBookEntry(const std::string& moduleName,
         generalBookLoadedEnd_ = -1;
         showGeneralBookTocOverlay(false);
         if (generalBookHtml_) {
-            generalBookHtml_->setHtml(app_->swordManager().getGeneralBookEntry(moduleName, ""));
+            generalBookHtml_->setHtml(applySearchHighlightToHtml(
+                app_->swordManager().getGeneralBookEntry(moduleName, "")));
         }
         updateGeneralBookNavigationChrome();
         return;
@@ -2563,7 +2754,7 @@ void RightPane::setCommentaryModule(const std::string& moduleName,
     std::string reference = activeBibleReference();
     if (reference.empty()) reference = currentCommentaryRef_;
     if (!reference.empty()) {
-        showCommentary(moduleName, reference);
+        showCommentary(moduleName, reference, searchHighlight_);
     }
 }
 
@@ -2695,7 +2886,7 @@ void RightPane::rebuildGeneralBookWindow(int preserveIndex,
     int oldScrollY = generalBookHtml_->scrollY();
     int oldAnchorTop = generalBookHtml_->elementTopById(preserveAnchor);
 
-    generalBookHtml_->setHtml(buildGeneralBookWindowHtml());
+    generalBookHtml_->setHtml(applySearchHighlightToHtml(buildGeneralBookWindowHtml()));
 
     if (alignPreserveToTop) {
         generalBookHtml_->scrollToAnchor(preserveAnchor);
@@ -2799,7 +2990,8 @@ void RightPane::showAdjacentGeneralBookEntry(int delta) {
     }
 
     showGeneralBookEntry(currentGeneralBook_,
-                         generalBookToc_[static_cast<size_t>(newIndex)].key);
+                         generalBookToc_[static_cast<size_t>(newIndex)].key,
+                         searchHighlight_);
 }
 
 void RightPane::rebuildGeneralBookTocTree() {
@@ -3238,7 +3430,7 @@ void RightPane::restoreDisplayBufferFallbacks(bool commentaryRestored,
         (visibleTopTab() == TopTab::Commentary || commentaryEditing_) &&
         !currentCommentary_.empty() &&
         !currentCommentaryRef_.empty()) {
-        showCommentary(currentCommentary_, currentCommentaryRef_);
+        showCommentary(currentCommentary_, currentCommentaryRef_, searchHighlight_);
     }
 }
 
@@ -3296,7 +3488,7 @@ void RightPane::refresh() {
     if (!currentCommentary_.empty() &&
         !currentCommentaryRef_.empty() &&
         (commentaryVisible || commentaryEditing_ || commentaryNeedsPreload)) {
-        showCommentary(currentCommentary_, currentCommentaryRef_);
+        showCommentary(currentCommentary_, currentCommentaryRef_, searchHighlight_);
     }
     if (!currentDictionary_.empty() && !currentDictKey_.empty()) {
         showDictionaryEntryInternal(currentDictionary_, currentDictKey_);
@@ -3304,7 +3496,7 @@ void RightPane::refresh() {
     // Lazy-load general books to avoid paying parse/render cost on every cold
     // tab activation when user is reading commentary.
     if (!currentGeneralBook_.empty() && secondaryTabIsGeneralBooks_) {
-        showGeneralBookEntry(currentGeneralBook_, currentGeneralBookKey_);
+        showGeneralBookEntry(currentGeneralBook_, currentGeneralBookKey_, searchHighlight_);
     }
     if (keepTab == TopTab::DevotionsPlans || dailyWorkspaceState_.tabActive) {
         refreshDailyWorkspace(true);
@@ -3616,7 +3808,7 @@ void RightPane::populateGeneralBookModules(bool eagerLoad) {
         currentGeneralBook_ = selectedModule;
         if (eagerLoad) {
             populateGeneralBookToc();
-            showGeneralBookEntry(currentGeneralBook_, currentGeneralBookKey_);
+            showGeneralBookEntry(currentGeneralBook_, currentGeneralBookKey_, searchHighlight_);
         } else {
             generalBookToc_.clear();
             generalBookTreeItemIndices_.clear();
@@ -5114,7 +5306,7 @@ bool RightPane::saveCommentaryEdit(bool exitEditMode) {
         commentaryEditModule_.clear();
         commentaryEditReference_.clear();
         if (!currentCommentary_.empty() && !currentCommentaryRef_.empty()) {
-            showCommentary(currentCommentary_, currentCommentaryRef_);
+            showCommentary(currentCommentary_, currentCommentaryRef_, searchHighlight_);
         }
     }
 
@@ -5129,7 +5321,7 @@ void RightPane::cancelCommentaryEdit() {
     commentaryEditReference_.clear();
     if (commentaryEditor_) commentaryEditor_->setModified(false);
     if (!currentCommentary_.empty() && !currentCommentaryRef_.empty()) {
-        showCommentary(currentCommentary_, currentCommentaryRef_);
+        showCommentary(currentCommentary_, currentCommentaryRef_, searchHighlight_);
     } else {
         updateCommentaryEditorChrome();
     }
@@ -5473,6 +5665,136 @@ void RightPane::onHtmlLink(const std::string& url, bool commentarySource) {
     }
 }
 
+void RightPane::onCommentaryHover(const std::string& word,
+                                  const std::string& href,
+                                  const std::string& strong,
+                                  const std::string& morph,
+                                  const std::string& /*module*/,
+                                  int x, int y) {
+    if (!app_ || !app_->mainWindow()) return;
+
+    if (href.rfind("tags:", 0) == 0) {
+        app_->mainWindow()->hideWordInfo();
+        return;
+    }
+
+    if (!strong.empty() || !morph.empty() || !href.empty()) {
+        app_->mainWindow()->showWordInfo(word, href, strong, morph, x, y);
+    } else {
+        app_->mainWindow()->hideWordInfo();
+    }
+}
+
+void RightPane::onCommentaryContextMenu(const std::string& word,
+                                        const std::string& href,
+                                        const std::string& strong,
+                                        const std::string& morph,
+                                        const std::string& module,
+                                        int screenX, int screenY) {
+    if (!app_ || !app_->mainWindow()) return;
+
+    commentaryContextWord_ = trimCopy(word);
+    commentaryContextQuery_ = commentaryContextWord_;
+
+    if (commentaryHtml_) {
+        HtmlWidget::SelectionInfo selection = commentaryHtml_->selectionInfo();
+        if (selection.hasSelection) {
+            std::string selectedText = trimCopy(selection.text);
+            if (!selectedText.empty()) {
+                commentaryContextQuery_ = selectedText;
+            }
+        }
+    }
+
+    Fl_Menu_Button menu(screenX, screenY, 0, 0);
+    ui_font::applyCurrentAppMenuFont(&menu);
+
+    if (!commentaryContextQuery_.empty()) {
+        std::string searchLabel = "Search for word: " + commentaryContextQuery_;
+        menu.add(searchLabel.c_str(), 0, onCommentarySearchWord, this);
+
+        std::string dictLabel = "Look up in Dictionary: " + commentaryContextQuery_;
+        menu.add(dictLabel.c_str(), 0, onCommentaryLookupDictionary, this);
+    } else if (!commentaryContextWord_.empty()) {
+        std::string dictLabel = "Look up in Dictionary: " + commentaryContextWord_;
+        menu.add(dictLabel.c_str(), 0, onCommentaryLookupDictionary, this);
+    }
+
+    menu.add("Add Tag...", 0, onCommentaryAddTag, this);
+
+    (void)href;
+    (void)strong;
+    (void)morph;
+    (void)module;
+    menu.popup();
+}
+
+void RightPane::onGeneralBookHover(const std::string& word,
+                                   const std::string& href,
+                                   const std::string& strong,
+                                   const std::string& morph,
+                                   const std::string& /*module*/,
+                                   int x, int y) {
+    if (!app_ || !app_->mainWindow()) return;
+
+    if (href.rfind("tags:", 0) == 0) {
+        app_->mainWindow()->hideWordInfo();
+        return;
+    }
+
+    if (!strong.empty() || !morph.empty() || !href.empty()) {
+        app_->mainWindow()->showWordInfo(word, href, strong, morph, x, y);
+    } else {
+        app_->mainWindow()->hideWordInfo();
+    }
+}
+
+void RightPane::onGeneralBookContextMenu(const std::string& word,
+                                         const std::string& href,
+                                         const std::string& strong,
+                                         const std::string& morph,
+                                         const std::string& module,
+                                         int screenX, int screenY) {
+    if (!app_ || !app_->mainWindow()) return;
+
+    generalBookContextWord_ = trimCopy(word);
+    generalBookContextQuery_ = generalBookContextWord_;
+
+    if (generalBookHtml_) {
+        HtmlWidget::SelectionInfo selection = generalBookHtml_->selectionInfo();
+        if (selection.hasSelection) {
+            std::string selectedText = trimCopy(selection.text);
+            if (!selectedText.empty()) {
+                generalBookContextQuery_ = selectedText;
+            }
+        }
+    }
+
+    Fl_Menu_Button menu(screenX, screenY, 0, 0);
+    ui_font::applyCurrentAppMenuFont(&menu);
+
+    if (!generalBookContextQuery_.empty()) {
+        std::string searchLabel = "Search for word: " + generalBookContextQuery_;
+        menu.add(searchLabel.c_str(), 0, onGeneralBookSearchWord, this);
+
+        std::string dictLabel = "Look up in Dictionary: " + generalBookContextQuery_;
+        menu.add(dictLabel.c_str(), 0, onGeneralBookLookupDictionary, this);
+    } else if (!generalBookContextWord_.empty()) {
+        std::string dictLabel = "Look up in Dictionary: " + generalBookContextWord_;
+        menu.add(dictLabel.c_str(), 0, onGeneralBookLookupDictionary, this);
+    }
+
+    if (!currentGeneralBookKey_.empty()) {
+        menu.add("Add Tag...", 0, onGeneralBookAddTag, this);
+    }
+
+    (void)href;
+    (void)strong;
+    (void)morph;
+    (void)module;
+    menu.popup();
+}
+
 void RightPane::onCommentaryModuleChange(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self || !self->commentaryChoice_) return;
@@ -5498,6 +5820,102 @@ void RightPane::onCommentaryCancel(Fl_Widget* /*w*/, void* data) {
     auto* self = static_cast<RightPane*>(data);
     if (!self) return;
     self->cancelCommentaryEdit();
+}
+
+void RightPane::onCommentarySearchWord(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self || !self->app_ || !self->app_->mainWindow()) return;
+
+    std::string query = trimCopy(self->commentaryContextQuery_);
+    if (query.empty()) return;
+    self->app_->mainWindow()->showSearchResults(query, self->currentCommentary_);
+}
+
+void RightPane::onCommentaryLookupDictionary(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self || !self->app_ || !self->app_->mainWindow()) return;
+
+    std::string key = trimCopy(self->commentaryContextQuery_);
+    if (key.empty()) {
+        key = trimCopy(self->commentaryContextWord_);
+    }
+    if (key.empty()) return;
+
+    self->app_->mainWindow()->showDictionary(key, self->currentCommentary_);
+}
+
+void RightPane::onCommentaryAddTag(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self || !self->app_ || !self->app_->mainWindow() ||
+        !self->app_->mainWindow()->leftPane() ||
+        !self->app_->mainWindow()->leftPane()->tagPanel()) {
+        return;
+    }
+
+    std::string selectionText;
+    if (self->commentaryHtml_) {
+        HtmlWidget::SelectionInfo selection = self->commentaryHtml_->selectionInfo();
+        selectionText = trimCopy(selection.text);
+    }
+    if (selectionText.empty()) {
+        selectionText = trimCopy(self->commentaryContextQuery_);
+    }
+    if (selectionText.empty()) {
+        selectionText = trimCopy(self->commentaryContextWord_);
+    }
+
+    TagTarget target = TagTarget::commentary(self->currentCommentary_,
+                                             self->currentCommentaryRef_,
+                                             selectionText);
+    self->app_->mainWindow()->leftPane()->tagPanel()->showAddTagDialog(target);
+}
+
+void RightPane::onGeneralBookSearchWord(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self || !self->app_ || !self->app_->mainWindow()) return;
+
+    std::string query = trimCopy(self->generalBookContextQuery_);
+    if (query.empty()) return;
+    self->app_->mainWindow()->showSearchResults(query, self->currentGeneralBook_);
+}
+
+void RightPane::onGeneralBookLookupDictionary(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self || !self->app_ || !self->app_->mainWindow()) return;
+
+    std::string key = trimCopy(self->generalBookContextQuery_);
+    if (key.empty()) {
+        key = trimCopy(self->generalBookContextWord_);
+    }
+    if (key.empty()) return;
+
+    self->app_->mainWindow()->showDictionary(key, self->currentGeneralBook_);
+}
+
+void RightPane::onGeneralBookAddTag(Fl_Widget* /*w*/, void* data) {
+    auto* self = static_cast<RightPane*>(data);
+    if (!self || !self->app_ || !self->app_->mainWindow() ||
+        !self->app_->mainWindow()->leftPane() ||
+        !self->app_->mainWindow()->leftPane()->tagPanel()) {
+        return;
+    }
+
+    std::string selectionText;
+    if (self->generalBookHtml_) {
+        HtmlWidget::SelectionInfo selection = self->generalBookHtml_->selectionInfo();
+        selectionText = trimCopy(selection.text);
+    }
+    if (selectionText.empty()) {
+        selectionText = trimCopy(self->generalBookContextQuery_);
+    }
+    if (selectionText.empty()) {
+        selectionText = trimCopy(self->generalBookContextWord_);
+    }
+
+    TagTarget target = TagTarget::generalBook(self->currentGeneralBook_,
+                                              self->currentGeneralBookKey_,
+                                              selectionText);
+    self->app_->mainWindow()->leftPane()->tagPanel()->showAddTagDialog(target);
 }
 
 void RightPane::onDictionaryModuleChange(Fl_Widget* /*w*/, void* data) {
@@ -5614,7 +6032,8 @@ void RightPane::onTopTabChange(Fl_Widget* /*w*/, void* data) {
             self->generalBookHtml_->currentHtml().empty() &&
             !self->currentGeneralBook_.empty()) {
             self->showGeneralBookEntry(self->currentGeneralBook_,
-                                       self->currentGeneralBookKey_);
+                                       self->currentGeneralBookKey_,
+                                       self->searchHighlight_);
         }
     } else if (active == self->commentaryGroup_) {
         self->showGeneralBookTocOverlay(false);
@@ -5627,7 +6046,8 @@ void RightPane::onTopTabChange(Fl_Widget* /*w*/, void* data) {
             !self->currentCommentary_.empty() &&
             !self->currentCommentaryRef_.empty()) {
             self->showCommentary(self->currentCommentary_,
-                                 self->currentCommentaryRef_);
+                                 self->currentCommentaryRef_,
+                                 self->searchHighlight_);
         }
     }
 }
@@ -5640,7 +6060,8 @@ void RightPane::onGeneralBookModuleChange(Fl_Widget* /*w*/, void* data) {
     if (self->currentGeneralBook_.empty()) return;
     self->populateGeneralBookToc();
     self->showGeneralBookEntry(self->currentGeneralBook_,
-                               self->currentGeneralBookKey_);
+                               self->currentGeneralBookKey_,
+                               self->searchHighlight_);
 }
 
 void RightPane::onGeneralBookBack(Fl_Widget* /*w*/, void* data) {
@@ -5682,7 +6103,8 @@ void RightPane::onGeneralBookTreeSelect(Fl_Widget* /*w*/, void* data) {
 
     self->showGeneralBookTocOverlay(false);
     self->showGeneralBookEntry(self->currentGeneralBook_,
-                               self->generalBookToc_[static_cast<size_t>(index)].key);
+                               self->generalBookToc_[static_cast<size_t>(index)].key,
+                               self->searchHighlight_);
 }
 
 void RightPane::onDailyModeChange(Fl_Widget* /*w*/, void* data) {

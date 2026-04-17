@@ -3,6 +3,7 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -12,6 +13,22 @@ namespace verdad {
 namespace {
 
 constexpr const char* kDefaultTagColor = "#4a86c8";
+
+std::string trimCopy(const std::string& text) {
+    size_t start = 0;
+    while (start < text.size() &&
+           std::isspace(static_cast<unsigned char>(text[start]))) {
+        ++start;
+    }
+
+    size_t end = text.size();
+    while (end > start &&
+           std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+        --end;
+    }
+
+    return text.substr(start, end - start);
+}
 
 bool execSql(sqlite3* db, const char* sql) {
     char* err = nullptr;
@@ -29,6 +46,46 @@ bool bindText(sqlite3_stmt* stmt, int index, const std::string& value) {
     return sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK;
 }
 
+std::string kindToken(TagTarget::Kind kind) {
+    switch (kind) {
+    case TagTarget::Kind::Verse:
+        return "verse";
+    case TagTarget::Kind::Commentary:
+        return "commentary";
+    case TagTarget::Kind::GeneralBook:
+        return "general_book";
+    }
+    return "verse";
+}
+
+TagTarget::Kind kindFromToken(const std::string& token) {
+    if (token == "commentary") return TagTarget::Kind::Commentary;
+    if (token == "general_book") return TagTarget::Kind::GeneralBook;
+    return TagTarget::Kind::Verse;
+}
+
+std::string encodeSizedField(const std::string& value) {
+    return std::to_string(value.size()) + ":" + value;
+}
+
+bool decodeSizedField(const std::string& text, size_t& pos, std::string& out) {
+    size_t colon = text.find(':', pos);
+    if (colon == std::string::npos) return false;
+
+    size_t len = 0;
+    try {
+        len = static_cast<size_t>(std::stoul(text.substr(pos, colon - pos)));
+    } catch (...) {
+        return false;
+    }
+
+    size_t valuePos = colon + 1;
+    if (valuePos + len > text.size()) return false;
+    out = text.substr(valuePos, len);
+    pos = valuePos + len;
+    return true;
+}
+
 bool ensureSchema(sqlite3* db) {
     static const char* kSchemaSql = R"SQL(
         CREATE TABLE IF NOT EXISTS tags (
@@ -36,19 +93,31 @@ bool ensureSchema(sqlite3* db) {
             color TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS verse_tags (
-            verse_key TEXT NOT NULL,
+        CREATE TABLE IF NOT EXISTS tag_items (
+            resource_kind TEXT NOT NULL,
+            module_name TEXT NOT NULL,
+            source_key TEXT NOT NULL,
+            selection_text TEXT NOT NULL,
             tag_name TEXT NOT NULL,
-            PRIMARY KEY (verse_key, tag_name),
+            PRIMARY KEY (resource_kind, module_name, source_key, selection_text, tag_name),
             FOREIGN KEY (tag_name) REFERENCES tags(name)
                 ON DELETE CASCADE
                 ON UPDATE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS verse_tags (
+            verse_key TEXT NOT NULL,
+            tag_name TEXT NOT NULL,
+            PRIMARY KEY (verse_key, tag_name)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_tag_items_tag_name
+            ON tag_items(tag_name, resource_kind, module_name, source_key, selection_text);
+
         CREATE INDEX IF NOT EXISTS idx_verse_tags_tag_name
             ON verse_tags(tag_name, verse_key);
 
-        PRAGMA user_version = 1;
+        PRAGMA user_version = 2;
     )SQL";
 
     return execSql(db, kSchemaSql);
@@ -68,7 +137,59 @@ bool fileExists(const std::string& path) {
     return std::filesystem::exists(path, ec);
 }
 
+std::string displayLabelForTarget(const TagTarget& target) {
+    if (target.kind == TagTarget::Kind::Verse) {
+        return trimCopy(target.sourceKey);
+    }
+
+    std::ostringstream label;
+    label << (target.kind == TagTarget::Kind::Commentary ? "Commentary" : "General Book");
+    if (!trimCopy(target.moduleName).empty()) {
+        label << ": " << target.moduleName;
+    }
+    if (!trimCopy(target.sourceKey).empty()) {
+        label << " / " << target.sourceKey;
+    }
+    if (!trimCopy(target.selectionText).empty()) {
+        label << " - " << target.selectionText;
+    }
+    return label.str();
+}
+
 } // namespace
+
+TagTarget TagTarget::verse(const std::string& verseKey) {
+    TagTarget target;
+    target.kind = Kind::Verse;
+    target.sourceKey = trimCopy(verseKey);
+    return target;
+}
+
+TagTarget TagTarget::commentary(const std::string& moduleName,
+                                const std::string& sourceKey,
+                                const std::string& selectionText) {
+    TagTarget target;
+    target.kind = Kind::Commentary;
+    target.moduleName = trimCopy(moduleName);
+    target.sourceKey = trimCopy(sourceKey);
+    target.selectionText = trimCopy(selectionText);
+    return target;
+}
+
+TagTarget TagTarget::generalBook(const std::string& moduleName,
+                                 const std::string& sourceKey,
+                                 const std::string& selectionText) {
+    TagTarget target;
+    target.kind = Kind::GeneralBook;
+    target.moduleName = trimCopy(moduleName);
+    target.sourceKey = trimCopy(sourceKey);
+    target.selectionText = trimCopy(selectionText);
+    return target;
+}
+
+std::string TagTarget::displayLabel() const {
+    return displayLabelForTarget(*this);
+}
 
 TagManager::TagManager() = default;
 
@@ -81,8 +202,9 @@ TagManager::~TagManager() {
 
 bool TagManager::load(const std::string& filepath) {
     tags_.clear();
-    verseTags_.clear();
-    tagVerses_.clear();
+    targetTags_.clear();
+    tagTargets_.clear();
+    targets_.clear();
     dirty_ = false;
 
     if (!openDatabase(filepath)) {
@@ -136,17 +258,19 @@ bool TagManager::deleteTag(const std::string& name) {
 
     tags_.erase(it);
 
-    // Remove from inverted index and verseTags_
-    auto tvIt = tagVerses_.find(name);
-    if (tvIt != tagVerses_.end()) {
-        for (const auto& verseKey : tvIt->second) {
-            auto vtIt = verseTags_.find(verseKey);
-            if (vtIt != verseTags_.end()) {
-                vtIt->second.erase(name);
-                if (vtIt->second.empty()) verseTags_.erase(vtIt);
+    auto ttIt = tagTargets_.find(name);
+    if (ttIt != tagTargets_.end()) {
+        for (const auto& targetKey : ttIt->second) {
+            auto targetTagsIt = targetTags_.find(targetKey);
+            if (targetTagsIt != targetTags_.end()) {
+                targetTagsIt->second.erase(name);
+                if (targetTagsIt->second.empty()) {
+                    targetTags_.erase(targetTagsIt);
+                    targets_.erase(targetKey);
+                }
             }
         }
-        tagVerses_.erase(tvIt);
+        tagTargets_.erase(ttIt);
     }
 
     dirty_ = true;
@@ -163,18 +287,17 @@ bool TagManager::renameTag(const std::string& oldName, const std::string& newNam
     tags_.erase(it);
     tags_[newName] = tag;
 
-    // Update inverted index
-    auto tvIt = tagVerses_.find(oldName);
-    std::set<std::string> verses;
-    if (tvIt != tagVerses_.end()) {
-        verses = std::move(tvIt->second);
-        tagVerses_.erase(tvIt);
+    auto ttIt = tagTargets_.find(oldName);
+    std::set<std::string> targets;
+    if (ttIt != tagTargets_.end()) {
+        targets = std::move(ttIt->second);
+        tagTargets_.erase(ttIt);
     }
-    if (!verses.empty()) {
-        tagVerses_[newName] = std::move(verses);
+    if (!targets.empty()) {
+        tagTargets_[newName] = std::move(targets);
     }
 
-    for (auto& pair : verseTags_) {
+    for (auto& pair : targetTags_) {
         if (pair.second.erase(oldName) > 0) {
             pair.second.insert(newName);
         }
@@ -193,25 +316,45 @@ void TagManager::setTagColor(const std::string& name, const std::string& color) 
 }
 
 void TagManager::tagVerse(const std::string& verseKey, const std::string& tagName) {
+    tagTarget(TagTarget::verse(verseKey), tagName);
+}
+
+void TagManager::tagTarget(const TagTarget& target, const std::string& tagName) {
     if (tags_.find(tagName) == tags_.end()) {
         createTag(tagName);
     }
-    if (verseTags_[verseKey].insert(tagName).second) {
-        addToInvertedIndex(tagName, verseKey);
+
+    const std::string key = targetKey(target);
+    targets_[key] = target;
+    if (targetTags_[key].insert(tagName).second) {
+        tagTargets_[tagName].insert(key);
         dirty_ = true;
     }
 }
 
 void TagManager::untagVerse(const std::string& verseKey, const std::string& tagName) {
-    auto it = verseTags_.find(verseKey);
-    if (it != verseTags_.end()) {
-        if (it->second.erase(tagName) > 0) {
-            removeFromInvertedIndex(tagName, verseKey);
-            dirty_ = true;
+    untagTarget(TagTarget::verse(verseKey), tagName);
+}
+
+void TagManager::untagTarget(const TagTarget& target, const std::string& tagName) {
+    const std::string key = targetKey(target);
+    auto it = targetTags_.find(key);
+    if (it == targetTags_.end()) return;
+
+    if (it->second.erase(tagName) > 0) {
+        auto ttIt = tagTargets_.find(tagName);
+        if (ttIt != tagTargets_.end()) {
+            ttIt->second.erase(key);
+            if (ttIt->second.empty()) {
+                tagTargets_.erase(ttIt);
+            }
         }
-        if (it->second.empty()) {
-            verseTags_.erase(it);
-        }
+        dirty_ = true;
+    }
+
+    if (it->second.empty()) {
+        targetTags_.erase(it);
+        targets_.erase(key);
     }
 }
 
@@ -226,9 +369,13 @@ std::vector<Tag> TagManager::getAllTags() const {
 }
 
 std::vector<Tag> TagManager::getTagsForVerse(const std::string& verseKey) const {
+    return getTagsForTarget(TagTarget::verse(verseKey));
+}
+
+std::vector<Tag> TagManager::getTagsForTarget(const TagTarget& target) const {
     std::vector<Tag> result;
-    auto it = verseTags_.find(verseKey);
-    if (it != verseTags_.end()) {
+    auto it = targetTags_.find(targetKey(target));
+    if (it != targetTags_.end()) {
         for (const auto& tagName : it->second) {
             auto tagIt = tags_.find(tagName);
             if (tagIt != tags_.end()) {
@@ -242,25 +389,52 @@ std::vector<Tag> TagManager::getTagsForVerse(const std::string& verseKey) const 
 }
 
 std::vector<std::string> TagManager::getVersesWithTag(const std::string& tagName) const {
-    auto it = tagVerses_.find(tagName);
-    if (it == tagVerses_.end()) return {};
-    std::vector<std::string> result(it->second.begin(), it->second.end());
+    std::vector<std::string> result;
+    auto it = tagTargets_.find(tagName);
+    if (it == tagTargets_.end()) return result;
+
+    for (const auto& key : it->second) {
+        auto targetIt = targets_.find(key);
+        if (targetIt != targets_.end() &&
+            targetIt->second.kind == TagTarget::Kind::Verse) {
+            result.push_back(targetIt->second.sourceKey);
+        }
+    }
+
     std::sort(result.begin(), result.end());
+    return result;
+}
+
+std::vector<TagTarget> TagManager::getTargetsWithTag(const std::string& tagName) const {
+    std::vector<TagTarget> result;
+    auto it = tagTargets_.find(tagName);
+    if (it == tagTargets_.end()) return result;
+
+    for (const auto& key : it->second) {
+        auto targetIt = targets_.find(key);
+        if (targetIt != targets_.end()) {
+            result.push_back(targetIt->second);
+        }
+    }
     return result;
 }
 
 bool TagManager::verseHasTag(const std::string& verseKey,
                              const std::string& tagName) const {
-    auto it = verseTags_.find(verseKey);
-    if (it != verseTags_.end()) {
+    return targetHasTag(TagTarget::verse(verseKey), tagName);
+}
+
+bool TagManager::targetHasTag(const TagTarget& target, const std::string& tagName) const {
+    auto it = targetTags_.find(targetKey(target));
+    if (it != targetTags_.end()) {
         return it->second.count(tagName) > 0;
     }
     return false;
 }
 
 int TagManager::getTagCount(const std::string& tagName) const {
-    auto it = tagVerses_.find(tagName);
-    if (it == tagVerses_.end()) return 0;
+    auto it = tagTargets_.find(tagName);
+    if (it == tagTargets_.end()) return 0;
     return static_cast<int>(it->second.size());
 }
 
@@ -304,10 +478,12 @@ bool TagManager::loadFromDatabase() {
     if (!db_) return false;
 
     tags_.clear();
-    verseTags_.clear();
-    tagVerses_.clear();
+    targetTags_.clear();
+    tagTargets_.clear();
+    targets_.clear();
 
     sqlite3_stmt* tagStmt = nullptr;
+    sqlite3_stmt* itemStmt = nullptr;
     sqlite3_stmt* verseStmt = nullptr;
     bool ok = true;
 
@@ -331,27 +507,62 @@ bool TagManager::loadFromDatabase() {
         ok = false;
     }
 
+    bool loadedAnyItem = false;
     if (ok &&
         sqlite3_prepare_v2(
-            db_, "SELECT verse_key, tag_name FROM verse_tags ORDER BY verse_key, tag_name;",
-            -1, &verseStmt, nullptr) != SQLITE_OK) {
-        ok = false;
+            db_,
+            "SELECT resource_kind, module_name, source_key, selection_text, tag_name "
+            "FROM tag_items ORDER BY resource_kind, module_name, source_key, selection_text, tag_name;",
+            -1, &itemStmt, nullptr) == SQLITE_OK) {
+        while (ok && (rc = sqlite3_step(itemStmt)) == SQLITE_ROW) {
+            const char* kind = reinterpret_cast<const char*>(sqlite3_column_text(itemStmt, 0));
+            const char* module = reinterpret_cast<const char*>(sqlite3_column_text(itemStmt, 1));
+            const char* sourceKey = reinterpret_cast<const char*>(sqlite3_column_text(itemStmt, 2));
+            const char* selection = reinterpret_cast<const char*>(sqlite3_column_text(itemStmt, 3));
+            const char* tagName = reinterpret_cast<const char*>(sqlite3_column_text(itemStmt, 4));
+            if (!kind || !sourceKey || !tagName) continue;
+            if (tags_.find(tagName) == tags_.end()) continue;
+
+            TagTarget target;
+            target.kind = kindFromToken(kind);
+            target.moduleName = module ? module : "";
+            target.sourceKey = sourceKey;
+            target.selectionText = selection ? selection : "";
+            const std::string key = targetKey(target);
+            targets_[key] = target;
+            targetTags_[key].insert(tagName);
+            tagTargets_[tagName].insert(key);
+            loadedAnyItem = true;
+        }
+        if (rc != SQLITE_DONE) {
+            ok = false;
+        }
     }
 
-    rc = SQLITE_OK;
-    while (ok && (rc = sqlite3_step(verseStmt)) == SQLITE_ROW) {
-        const char* verseKey = reinterpret_cast<const char*>(sqlite3_column_text(verseStmt, 0));
-        const char* tagName = reinterpret_cast<const char*>(sqlite3_column_text(verseStmt, 1));
-        if (!verseKey || !tagName) continue;
-        if (tags_.find(tagName) == tags_.end()) continue;
-        verseTags_[verseKey].insert(tagName);
-        tagVerses_[tagName].insert(verseKey);
-    }
-    if (ok && rc != SQLITE_DONE) {
-        ok = false;
+    if (!loadedAnyItem &&
+        ok &&
+        sqlite3_prepare_v2(
+            db_, "SELECT verse_key, tag_name FROM verse_tags ORDER BY verse_key, tag_name;",
+            -1, &verseStmt, nullptr) == SQLITE_OK) {
+        while (ok && (rc = sqlite3_step(verseStmt)) == SQLITE_ROW) {
+            const char* verseKey = reinterpret_cast<const char*>(sqlite3_column_text(verseStmt, 0));
+            const char* tagName = reinterpret_cast<const char*>(sqlite3_column_text(verseStmt, 1));
+            if (!verseKey || !tagName) continue;
+            if (tags_.find(tagName) == tags_.end()) continue;
+
+            TagTarget target = TagTarget::verse(verseKey);
+            const std::string key = targetKey(target);
+            targets_[key] = target;
+            targetTags_[key].insert(tagName);
+            tagTargets_[tagName].insert(key);
+        }
+        if (rc != SQLITE_DONE) {
+            ok = false;
+        }
     }
 
     if (tagStmt) sqlite3_finalize(tagStmt);
+    if (itemStmt) sqlite3_finalize(itemStmt);
     if (verseStmt) sqlite3_finalize(verseStmt);
 
     if (!ok) {
@@ -363,15 +574,16 @@ bool TagManager::loadFromDatabase() {
     return true;
 }
 
-void TagManager::addToInvertedIndex(const std::string& tagName, const std::string& verseKey) {
-    tagVerses_[tagName].insert(verseKey);
+void TagManager::addToInvertedIndex(const std::string& tagName, const TagTarget& target) {
+    tagTargets_[tagName].insert(targetKey(target));
 }
 
-void TagManager::removeFromInvertedIndex(const std::string& tagName, const std::string& verseKey) {
-    auto it = tagVerses_.find(tagName);
-    if (it != tagVerses_.end()) {
-        it->second.erase(verseKey);
-        if (it->second.empty()) tagVerses_.erase(it);
+void TagManager::removeFromInvertedIndex(const std::string& tagName, const TagTarget& target) {
+    const std::string key = targetKey(target);
+    auto it = tagTargets_.find(tagName);
+    if (it != tagTargets_.end()) {
+        it->second.erase(key);
+        if (it->second.empty()) tagTargets_.erase(it);
     }
 }
 
@@ -384,20 +596,29 @@ bool TagManager::persistToDatabase() {
     }
 
     sqlite3_stmt* insertTag = nullptr;
+    sqlite3_stmt* insertItem = nullptr;
     sqlite3_stmt* insertVerseTag = nullptr;
     bool ok = true;
 
-    // Use a temp-table swap strategy so that a crash never loses data:
-    // 1. Write new data into temp tables
-    // 2. DROP + rename in the same transaction (atomic swap)
     if (!execSql(db_, "CREATE TABLE IF NOT EXISTS tags_new(name TEXT PRIMARY KEY, color TEXT);")) ok = false;
+    if (ok && !execSql(db_, "CREATE TABLE IF NOT EXISTS tag_items_new("
+                             "resource_kind TEXT, module_name TEXT, source_key TEXT, "
+                             "selection_text TEXT, tag_name TEXT);")) ok = false;
     if (ok && !execSql(db_, "CREATE TABLE IF NOT EXISTS verse_tags_new(verse_key TEXT, tag_name TEXT);")) ok = false;
     if (ok && !execSql(db_, "DELETE FROM tags_new;")) ok = false;
+    if (ok && !execSql(db_, "DELETE FROM tag_items_new;")) ok = false;
     if (ok && !execSql(db_, "DELETE FROM verse_tags_new;")) ok = false;
 
     if (ok &&
         sqlite3_prepare_v2(
             db_, "INSERT INTO tags_new(name, color) VALUES(?, ?);", -1, &insertTag, nullptr) != SQLITE_OK) {
+        ok = false;
+    }
+    if (ok &&
+        sqlite3_prepare_v2(
+            db_, "INSERT INTO tag_items_new(resource_kind, module_name, source_key, selection_text, tag_name) "
+                 "VALUES(?, ?, ?, ?, ?);",
+            -1, &insertItem, nullptr) != SQLITE_OK) {
         ok = false;
     }
     if (ok &&
@@ -416,32 +637,51 @@ bool TagManager::persistToDatabase() {
              sqlite3_step(insertTag) == SQLITE_DONE;
     }
 
-    for (const auto& pair : verseTags_) {
+    for (const auto& pair : targetTags_) {
         if (!ok) break;
+        auto targetIt = targets_.find(pair.first);
+        if (targetIt == targets_.end()) continue;
+        const TagTarget& target = targetIt->second;
+
         for (const auto& tagName : pair.second) {
             if (tags_.find(tagName) == tags_.end()) continue;
-            sqlite3_reset(insertVerseTag);
-            sqlite3_clear_bindings(insertVerseTag);
-            ok = bindText(insertVerseTag, 1, pair.first) &&
-                 bindText(insertVerseTag, 2, tagName) &&
-                 sqlite3_step(insertVerseTag) == SQLITE_DONE;
+
+            sqlite3_reset(insertItem);
+            sqlite3_clear_bindings(insertItem);
+            ok = bindText(insertItem, 1, kindToken(target.kind)) &&
+                 bindText(insertItem, 2, target.moduleName) &&
+                 bindText(insertItem, 3, target.sourceKey) &&
+                 bindText(insertItem, 4, target.selectionText) &&
+                 bindText(insertItem, 5, tagName) &&
+                 sqlite3_step(insertItem) == SQLITE_DONE;
             if (!ok) break;
+
+            if (target.kind == TagTarget::Kind::Verse) {
+                sqlite3_reset(insertVerseTag);
+                sqlite3_clear_bindings(insertVerseTag);
+                ok = bindText(insertVerseTag, 1, target.sourceKey) &&
+                     bindText(insertVerseTag, 2, tagName) &&
+                     sqlite3_step(insertVerseTag) == SQLITE_DONE;
+                if (!ok) break;
+            }
         }
     }
 
     if (insertTag) sqlite3_finalize(insertTag);
+    if (insertItem) sqlite3_finalize(insertItem);
     if (insertVerseTag) sqlite3_finalize(insertVerseTag);
 
-    // Atomic swap: drop old tables, rename new ones
     if (ok) ok = execSql(db_, "DROP TABLE IF EXISTS verse_tags;");
+    if (ok) ok = execSql(db_, "DROP TABLE IF EXISTS tag_items;");
     if (ok) ok = execSql(db_, "DROP TABLE IF EXISTS tags;");
     if (ok) ok = execSql(db_, "ALTER TABLE tags_new RENAME TO tags;");
+    if (ok) ok = execSql(db_, "ALTER TABLE tag_items_new RENAME TO tag_items;");
     if (ok) ok = execSql(db_, "ALTER TABLE verse_tags_new RENAME TO verse_tags;");
 
     if (!ok) {
         execSql(db_, "ROLLBACK;");
-        // Clean up temp tables if they still exist
         execSql(db_, "DROP TABLE IF EXISTS tags_new;");
+        execSql(db_, "DROP TABLE IF EXISTS tag_items_new;");
         execSql(db_, "DROP TABLE IF EXISTS verse_tags_new;");
         std::cerr << "Failed to save tag data to database.\n";
         return false;
@@ -450,6 +690,7 @@ bool TagManager::persistToDatabase() {
     if (!execSql(db_, "COMMIT;")) {
         execSql(db_, "ROLLBACK;");
         execSql(db_, "DROP TABLE IF EXISTS tags_new;");
+        execSql(db_, "DROP TABLE IF EXISTS tag_items_new;");
         execSql(db_, "DROP TABLE IF EXISTS verse_tags_new;");
         return false;
     }
@@ -467,6 +708,7 @@ bool TagManager::hasStoredData() const {
     if (sqlite3_prepare_v2(
             db_,
             "SELECT EXISTS(SELECT 1 FROM tags LIMIT 1) "
+            "OR EXISTS(SELECT 1 FROM tag_items LIMIT 1) "
             "OR EXISTS(SELECT 1 FROM verse_tags LIMIT 1);",
             -1, &stmt, nullptr) != SQLITE_OK) {
         return false;
@@ -485,8 +727,9 @@ bool TagManager::importLegacyFile(const std::string& legacyPath) {
     if (!file.is_open()) return false;
 
     tags_.clear();
-    verseTags_.clear();
-    tagVerses_.clear();
+    targetTags_.clear();
+    tagTargets_.clear();
+    targets_.clear();
 
     std::string line;
     std::string section;
@@ -527,6 +770,10 @@ bool TagManager::importLegacyFile(const std::string& legacyPath) {
             std::string tagList = line.substr(sep + 1);
             if (verseKey.empty()) continue;
 
+            TagTarget target = TagTarget::verse(verseKey);
+            const std::string key = targetKey(target);
+            targets_[key] = target;
+
             std::istringstream iss(tagList);
             std::string tagName;
             while (std::getline(iss, tagName, ',')) {
@@ -534,14 +781,48 @@ bool TagManager::importLegacyFile(const std::string& legacyPath) {
                 if (tags_.find(tagName) == tags_.end()) {
                     tags_[tagName] = Tag{tagName, kDefaultTagColor};
                 }
-                verseTags_[verseKey].insert(tagName);
-                tagVerses_[tagName].insert(verseKey);
+                targetTags_[key].insert(tagName);
+                tagTargets_[tagName].insert(key);
             }
         }
     }
 
     dirty_ = true;
     return persistToDatabase();
+}
+
+std::string TagManager::targetKey(const TagTarget& target) {
+    std::ostringstream out;
+    out << kindToken(target.kind) << '|'
+        << encodeSizedField(trimCopy(target.moduleName)) << '|'
+        << encodeSizedField(trimCopy(target.sourceKey)) << '|'
+        << encodeSizedField(trimCopy(target.selectionText));
+    return out.str();
+}
+
+bool TagManager::parseTargetKey(const std::string& key, TagTarget& targetOut) {
+    size_t pos = 0;
+    size_t kindSep = key.find('|', pos);
+    if (kindSep == std::string::npos) return false;
+    targetOut.kind = kindFromToken(key.substr(pos, kindSep - pos));
+    pos = kindSep + 1;
+
+    std::string module;
+    std::string sourceKey;
+    std::string selectionText;
+    if (!decodeSizedField(key, pos, module)) return false;
+    if (pos >= key.size() || key[pos] != '|') return false;
+    ++pos;
+    if (!decodeSizedField(key, pos, sourceKey)) return false;
+    if (pos >= key.size() || key[pos] != '|') return false;
+    ++pos;
+    if (!decodeSizedField(key, pos, selectionText)) return false;
+    if (pos != key.size()) return false;
+
+    targetOut.moduleName = std::move(module);
+    targetOut.sourceKey = std::move(sourceKey);
+    targetOut.selectionText = std::move(selectionText);
+    return true;
 }
 
 } // namespace verdad
