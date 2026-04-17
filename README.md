@@ -15,7 +15,6 @@ NOTE: This progra mwas made using AI and is in active development. There may (wi
 - Synced right pane. Commentary follows the selected verse, the dictionary pane stays available at the bottom, and general books use the module table of contents directly.
 - General books support. Pick a table of contents entry from the chooser, load one page at a time, and follow internal links without leaving the pane.
 - NEW: Supports file import (PDF, MD, TXT) and automatic reference detection
-- Automatic reference detection. Verse references hyperlink to source
 - Verse tagging. Create tags, rename or delete them, filter tags by name or verse reference, browse all tagged verses, and jump from a tag entry back into the Bible.
 - Notes and editable content. The Studypad tab opens and saves HTML study notes with lightweight rich-text editing, saved scripture links in a Studypad can be right-clicked to insert verse text, and writable commentary modules can be edited in place.
 - Session persistence. Verdad remembers window geometry, splitter sizes, active study tab, Bible state, right-pane selections, the open Studypad path, and scroll positions.
