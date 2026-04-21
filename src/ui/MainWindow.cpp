@@ -2083,6 +2083,9 @@ void MainWindow::applyAppearanceSettings(Fl_Font appFont,
             app_->appearanceSettings().textFontSize);
     }
     if (biblePane_) biblePane_->syncOptionButtons();
+    if (leftPane_) leftPane_->redrawChrome();
+    if (biblePane_) biblePane_->redrawChrome();
+    if (rightPane_) rightPane_->redrawChrome();
 
     // Only drop inactive tab buffers when text rendering style actually changed.
     if (cssChanged) {

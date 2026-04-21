@@ -175,6 +175,8 @@ private:
     std::vector<std::string> bibleChoiceLabels_;
     std::string populatedBookModule_;
     int populatedChapterCount_ = 0;
+    bool toolbarIconsInitialized_ = false;
+    bool toolbarIconsForDarkTheme_ = false;
 
     // Content
     HtmlWidget* htmlWidget_;
@@ -224,6 +226,7 @@ private:
     void populateChapters(bool force = false);
     void layoutDailyReadingBar();
     void layoutNavBarControls();
+    void syncToolbarIcons();
     void openDailyReadingPlanWorkspace();
     void onDailyReadingBarLink(const std::string& url);
     void updateDailyReadingPlanCompleted(bool completed);

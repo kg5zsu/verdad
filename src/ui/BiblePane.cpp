@@ -16,6 +16,7 @@
 #include "app/PerfTrace.h"
 
 #include <FL/Fl.H>
+#include <FL/Fl_SVG_Image.H>
 #include <FL/fl_draw.H>
 
 #include <algorithm>
@@ -23,6 +24,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <sstream>
 
 namespace verdad {
@@ -35,10 +37,13 @@ constexpr int kParallelHeaderSpacing = 6;
 constexpr int kDailyReadingBarH = 30;
 constexpr int kDailyReadingCompleteW = 92;
 constexpr int kDailyReadingPlanButtonW = 30;
+constexpr int kToolbarIconSize = 16;
+constexpr int kDisplayOptionsIconSize = 18;
+constexpr int kStrongsIconSize = 20;
 constexpr int kHistoryChoiceWidth = 150; // Fits most refs while leaving room for history buttons.
 constexpr int kParagraphButtonW = 25;
 constexpr int kParallelButtonW = 25;
-constexpr int kDisplayOptionsMenuButtonW = 30;
+constexpr int kDisplayOptionsMenuButtonW = 40;
 constexpr int kRedWordsButtonW = 34;
 constexpr int kStrongsButtonW = 34;
 constexpr int kMorphButtonW = 52;
@@ -54,6 +59,12 @@ enum DisplayOptionMenuIndex {
     kDisplayOptionCrossRefs,
 };
 
+enum class BibleToolbarIcon {
+    DisplayOptions,
+    Strongs,
+    DailyReadingPlan,
+};
+
 WrappingInputChoice* historyInputChoice(Fl_Input_Choice* choice) {
     return static_cast<WrappingInputChoice*>(choice);
 }
@@ -62,6 +73,137 @@ const VerdadApp::ThemePalette& currentThemePalette() {
     static const VerdadApp::ThemePalette fallback;
     if (auto* app = VerdadApp::instance()) return app->themePalette();
     return fallback;
+}
+
+std::string colorHex(Fl_Color color) {
+    uchar red = 0;
+    uchar green = 0;
+    uchar blue = 0;
+    Fl::get_color(color, red, green, blue);
+
+    std::ostringstream out;
+    out << '#'
+        << std::hex << std::setfill('0')
+        << std::setw(2) << static_cast<int>(red)
+        << std::setw(2) << static_cast<int>(green)
+        << std::setw(2) << static_cast<int>(blue);
+    return out.str();
+}
+
+class CenteredIconMenuButton : public Fl_Menu_Button {
+public:
+    using Fl_Menu_Button::Fl_Menu_Button;
+
+    void draw() override {
+        Fl_Color bg = active_r() ? color() : fl_inactive(color());
+        draw_box(box(), bg);
+
+        Fl_Image* icon = active_r() || !deimage() ? image() : deimage();
+        if (icon) {
+            const int iconX = x() + ((w() - icon->w()) / 2);
+            const int iconY = y() + ((h() - icon->h()) / 2);
+            icon->draw(iconX, iconY);
+        }
+
+        if (Fl::focus() == this) {
+            draw_focus();
+        }
+    }
+};
+
+int bibleToolbarIconSize(BibleToolbarIcon icon) {
+    switch (icon) {
+    case BibleToolbarIcon::DisplayOptions:
+        return kDisplayOptionsIconSize;
+    case BibleToolbarIcon::Strongs:
+        return kStrongsIconSize;
+    case BibleToolbarIcon::DailyReadingPlan:
+        return kToolbarIconSize;
+    }
+
+    return kToolbarIconSize;
+}
+
+std::string bibleToolbarIconSvg(BibleToolbarIcon icon) {
+    const auto& palette = currentThemePalette();
+    const std::string foreground = colorHex(palette.foreground);
+    const std::string success = colorHex(palette.success);
+
+    switch (icon) {
+    case BibleToolbarIcon::DisplayOptions:
+        return R"SVG(
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <path d="M2.4 4.4h11.2M2.4 8h11.2M2.4 11.6h11.2"
+        fill="none"
+        stroke=")SVG" + foreground + R"SVG("
+        stroke-width="1.8"
+        stroke-linecap="round"/>
+  <circle cx="5.5" cy="4.4" r="1.6" fill=")SVG" + foreground + R"SVG("/>
+  <circle cx="10.5" cy="8" r="1.6" fill=")SVG" + foreground + R"SVG("/>
+  <circle cx="7.1" cy="11.6" r="1.6" fill=")SVG" + foreground + R"SVG("/>
+</svg>
+)SVG";
+    case BibleToolbarIcon::Strongs:
+        return R"SVG(
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 350 2250 1300">
+  <path fill=")SVG" + foreground + R"SVG("
+        d="M673 857q20 -72 35 -122t26.5 -80.5t20.5 -44.5t17 -14q14 0 36 11t43 26.5t36 31t15 24.5q0 25 -11.5 62.5t-30.5 82t-43 93t-48.5 94.5t-48.5 87t-42 70q-2 5 -3.5 22t-1.5 37q0 36 10.5 63t28.5 44.5t42.5 26.5t52.5 9q40 0 83.5 -18.5t74.5 -65.5l9 4q7 20 7 53q0 39 -15 73.5t-41 60t-62.5 40t-79.5 14.5q-39 0 -72 -14t-58 -45t-39 -80t-14 -118l-3 -1q-82 129 -165.5 197.5t-158.5 68.5q-39 0 -67.5 -16.5t-49 -43.5t-34 -61.5t-21 -71.5t-10.5 -72.5t-3 -63.5q0 -65 9 -136.5t27.5 -140t47 -130.5t67 -109t87 -74.5t107.5 -27.5q45 0 81 22.5t65.5 58.5t52.5 81.5t41 92.5zM649 950q-16 -40 -34 -75.5t-40 -62.5t-48 -43t-58 -16q-42 0 -79.5 21.5t-69.5 57.5t-58 83.5t-44 99t-27.5 103.5t-9.5 97q0 30 5.5 58.5t18 51t34.5 36.5t55 14q44 0 87.5 -20t84.5 -55t80 -84t74 -106q5 -35 12 -76t17 -84z"/>
+  <path fill=")SVG" + foreground + R"SVG("
+        d="M1409 1535q-23 -17 -44.5 -26.5t-51.5 -9.5q-32 0 -74.5 11.5t-108.5 34.5q-7 -7 -14.5 -19t-10.5 -25q31 -24 69.5 -51t83.5 -55q-35 -38 -59 -70t-39 -59.5t-21.5 -53.5t-6.5 -52q0 -32 9.5 -66.5t30 -75t52.5 -88t77 -106.5q-28 -30 -52.5 -55t-43 -48t-29 -44.5t-10.5 -45.5q0 -29 13 -56q23 -48 48.5 -91.5t51.5 -88.5q11 -3 25 -1.5t25 6.5q-1 8 -1 17v16q0 21 3 40.5t11 39.5t22 42t37 48q42 45 89.5 92.5t96.5 94t98 91t94 85.5q32 -34 54.5 -60.5t37 -46.5t21 -36t6.5 -31q0 -23 -15.5 -43.5t-52.5 -52.5q-30 -26 -49 -44t-29.5 -32.5t-14 -26.5t-3.5 -26q0 -24 29.5 -67.5t101.5 -109.5q8 -2 21 2t23 9q-1 10 -1.5 17t-0.5 13q0 11 3 20t12 19.5t25 25.5t42 38q58 52 81 82.5t23 55.5q0 19 -8.5 47t-35.5 69.5t-76.5 99.5t-131.5 137q43 39 73.5 67.5t52.5 49.5t37.5 36t28.5 27q39 36 60 65t21 52q0 18 -8 37q-20 46 -38 90t-37 93q-25 2 -44 -3q-15 -40 -35.5 -74t-44 -64t-49.5 -57t-52 -53q-53 -52 -114.5 -110t-121.5 -113t-113.5 -103t-91.5 -81q-44 58 -58.5 99.5t-14.5 78.5q0 30 13.5 61t43 68t76.5 82t115 105q2 5 0 10z"/>
+</svg>
+)SVG";
+    case BibleToolbarIcon::DailyReadingPlan:
+        return R"SVG(
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <rect x="2.5" y="4.1" width="11" height="9.4" rx="1.6"
+        fill="none"
+        stroke=")SVG" + foreground + R"SVG("
+        stroke-width="1.4"/>
+  <path d="M5 3.1v2.2M11 3.1v2.2M2.5 6.8h11"
+        fill="none"
+        stroke=")SVG" + foreground + R"SVG("
+        stroke-width="1.4"
+        stroke-linecap="round"/>
+  <path d="M5.2 9.8l1.4 1.4 3.3-3.3"
+        fill="none"
+        stroke=")SVG" + success + R"SVG("
+        stroke-width="1.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"/>
+</svg>
+)SVG";
+    }
+
+    return "";
+}
+
+Fl_SVG_Image* makeBibleToolbarIcon(BibleToolbarIcon icon) {
+    std::string svg = bibleToolbarIconSvg(icon);
+    const int iconSize = bibleToolbarIconSize(icon);
+    auto* image = new Fl_SVG_Image(nullptr, svg.c_str());
+    if (image->fail()) {
+        delete image;
+        return nullptr;
+    }
+    image->scale(iconSize, iconSize, 1, 1);
+    return image;
+}
+
+void configureBibleToolbarIcon(Fl_Widget* widget, BibleToolbarIcon icon) {
+    if (!widget) return;
+
+    Fl_SVG_Image* image = makeBibleToolbarIcon(icon);
+    if (!image) return;
+
+    widget->label(nullptr);
+    widget->bind_image(image);
+
+    const int iconSize = bibleToolbarIconSize(icon);
+    Fl_Image* inactiveImage = image->copy(iconSize, iconSize);
+    if (inactiveImage) {
+        inactiveImage->inactive();
+        widget->bind_deimage(inactiveImage);
+    }
 }
 
 void setToggleMenuItemValue(Fl_Menu_Button* button, int index, bool enabled) {
@@ -512,6 +654,8 @@ BiblePane::BiblePane(VerdadApp* app, int X, int Y, int W, int H)
     , dailyReadingBarWidget_(nullptr)
     , dailyReadingCompleteButton_(nullptr)
     , dailyReadingPlanButton_(nullptr)
+    , toolbarIconsInitialized_(false)
+    , toolbarIconsForDarkTheme_(false)
     , htmlWidget_(nullptr)
     , currentBook_("Genesis")
     , currentChapter_(1) {
@@ -558,7 +702,8 @@ BiblePane::BiblePane(VerdadApp* app, int X, int Y, int W, int H)
                                             dailyReadingBar_->y() + 3,
                                             kDailyReadingPlanButtonW,
                                             std::max(20, kDailyReadingBarH - 6),
-                                            u8"☰");
+                                            nullptr);
+    configureBibleToolbarIcon(dailyReadingPlanButton_, BibleToolbarIcon::DailyReadingPlan);
     dailyReadingPlanButton_->callback(onDailyReadingPlanButton, this);
     dailyReadingPlanButton_->tooltip("Reading Plan");
     dailyReadingBar_->end();
@@ -596,6 +741,7 @@ BiblePane::BiblePane(VerdadApp* app, int X, int Y, int W, int H)
     if (parallelAddButton_) {
         parallelAddButton_->hide();
     }
+    syncToolbarIcons();
     syncOptionButtons();
     layoutNavBarControls();
     refreshDailyReadingPlanBar();
@@ -1064,6 +1210,7 @@ void BiblePane::setNavigationHistory(const std::vector<std::string>& labels,
 }
 
 void BiblePane::redrawChrome() {
+    syncToolbarIcons();
     damage(FL_DAMAGE_ALL);
     if (navBar_) {
         navBar_->damage(FL_DAMAGE_ALL);
@@ -1130,7 +1277,6 @@ void BiblePane::refreshDailyReadingPlanBar() {
         chunks.push_back({"No reading plan selected.", ""});
     }
 
-    dailyReadingPlanButton_->copy_label(u8"☰");
     dailyReadingPlanButton_->tooltip("Reading Plan");
 
     bool canComplete = false;
@@ -1196,6 +1342,26 @@ void BiblePane::selectVerse(int verse) {
                           ":" + std::to_string(currentVerse_);
         app_->mainWindow()->showCommentary(ref);
     }
+}
+
+void BiblePane::syncToolbarIcons() {
+    const bool darkTheme = app_ && app_->isDarkTheme();
+    if (toolbarIconsInitialized_ && toolbarIconsForDarkTheme_ == darkTheme) {
+        return;
+    }
+
+    if (displayOptionsMenuButton_) {
+        configureBibleToolbarIcon(displayOptionsMenuButton_, BibleToolbarIcon::DisplayOptions);
+    }
+    if (strongsToggleButton_) {
+        configureBibleToolbarIcon(strongsToggleButton_, BibleToolbarIcon::Strongs);
+    }
+    if (dailyReadingPlanButton_) {
+        configureBibleToolbarIcon(dailyReadingPlanButton_, BibleToolbarIcon::DailyReadingPlan);
+    }
+
+    toolbarIconsInitialized_ = true;
+    toolbarIconsForDarkTheme_ = darkTheme;
 }
 
 void BiblePane::setStudyState(const std::string& module,
@@ -1422,7 +1588,8 @@ void BiblePane::buildNavBar() {
     moduleRightSeparator_->box(FL_THIN_DOWN_BOX);
     cx += moduleRightSeparator_->w() + 2;
 
-    displayOptionsMenuButton_ = new Fl_Menu_Button(cx, cy, kDisplayOptionsMenuButtonW, nh, u8"☰");
+    displayOptionsMenuButton_ = new CenteredIconMenuButton(cx, cy, kDisplayOptionsMenuButtonW, nh, nullptr);
+    configureBibleToolbarIcon(displayOptionsMenuButton_, BibleToolbarIcon::DisplayOptions);
     displayOptionsMenuButton_->tooltip("Display options");
     displayOptionsMenuButton_->add("Paragraph mode", 0, onParagraphToggle, this, FL_MENU_TOGGLE);
     displayOptionsMenuButton_->add("Words of Jesus in red", 0, onRedWordsToggle, this, FL_MENU_TOGGLE);
@@ -1445,7 +1612,8 @@ void BiblePane::buildNavBar() {
     redWordsToggleButton_->labelcolor(fl_rgb_color(170, 0, 0));
     cx += redWordsToggleButton_->w() + 2;
 
-    strongsToggleButton_ = new Fl_Button(cx, cy, kStrongsButtonW, nh, u8"αא");
+    strongsToggleButton_ = new Fl_Button(cx, cy, kStrongsButtonW, nh, nullptr);
+    configureBibleToolbarIcon(strongsToggleButton_, BibleToolbarIcon::Strongs);
     strongsToggleButton_->callback(onStrongsToggle, this);
     strongsToggleButton_->tooltip("Show or hide inline Strong's markers");
     strongsToggleButton_->type(FL_TOGGLE_BUTTON);
