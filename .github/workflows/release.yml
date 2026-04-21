@@ -8,8 +8,9 @@ on:
         required: true
         type: string
       build_run_id:
-        description: Workflow run ID from the Build workflow that produced the artifacts
-        required: true
+        description: Optional Build workflow run ID; leave blank to use the latest successful Build run
+        required: false
+        default: ""
         type: string
       title:
         description: Release title; defaults to the tag when left blank
@@ -52,28 +53,35 @@ jobs:
       RELEASE_TAG: ${{ inputs.tag }}
       RELEASE_TITLE: ${{ inputs.title }}
     steps:
-      - name: Find latest Build workflow run
-        id: find-run
+      - name: Resolve Build workflow run
+        id: resolve-run
         shell: bash
         run: |
           set -euo pipefail
-          
-          # Get the latest successful Build workflow run.
-          # Older gh versions do not support: --conclusion success
-          run_id=$(gh run list \
-            --repo "$GH_REPO" \
-            --workflow build.yml \
-            --status completed \
-            --limit 20 \
-            --json databaseId,conclusion \
-            --jq 'map(select(.conclusion == "success")) | .[0].databaseId // empty')
-          
-          if [ -z "$run_id" ]; then
-            echo "No successful Build workflow run found." >&2
-            exit 1
+
+          requested_run_id="$(printf '%s' "${{ inputs.build_run_id }}" | tr -d '[:space:]')"
+          if [ -n "$requested_run_id" ]; then
+            run_id="$requested_run_id"
+            echo "Using user-provided Build workflow run ID: $run_id"
+          else
+            # Get the latest successful Build workflow run.
+            # Older gh versions do not support: --conclusion success
+            run_id=$(gh run list \
+              --repo "$GH_REPO" \
+              --workflow build.yml \
+              --status completed \
+              --limit 20 \
+              --json databaseId,conclusion \
+              --jq 'map(select(.conclusion == "success")) | .[0].databaseId // empty')
+
+            if [ -z "$run_id" ]; then
+              echo "No successful Build workflow run found." >&2
+              exit 1
+            fi
+
+            echo "Using latest successful Build workflow run ID: $run_id"
           fi
-          
-          echo "Found build run ID: $run_id"
+
           echo "build_run_id=$run_id" >> "$GITHUB_OUTPUT"
 
       - name: Download build artifacts
@@ -81,7 +89,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          gh run download "${{ steps.find-run.outputs.build_run_id }}" \
+          gh run download "${{ steps.resolve-run.outputs.build_run_id }}" \
             --repo "$GH_REPO" \
             --dir release-assets
 
@@ -102,7 +110,7 @@ jobs:
               | sort
           )
           if [ "${#files[@]}" -eq 0 ]; then
-            echo "No release package files were downloaded from build run ${{ steps.find-run.outputs.build_run_id }}." >&2
+            echo "No release package files were downloaded from build run ${{ steps.resolve-run.outputs.build_run_id }}." >&2
             exit 1
           fi
 
@@ -158,5 +166,5 @@ jobs:
           {
             echo "Release: $release_url"
             echo
-            echo "Assets uploaded from build run: ${{ steps.find-run.outputs.build_run_id }}"
+            echo "Assets uploaded from build run: ${{ steps.resolve-run.outputs.build_run_id }}"
           } >> "$GITHUB_STEP_SUMMARY"

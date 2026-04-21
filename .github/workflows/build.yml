@@ -18,7 +18,7 @@ jobs:
       CCACHE_NOHASHDIR: "true"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -40,16 +40,17 @@ jobs:
           hash="$(printf '%s\n' "$tool_url_blocks" | sha256sum | cut -d' ' -f1)"
           echo "hash=${hash}" >> "$GITHUB_OUTPUT"
 
-      - name: Cache apt archives
-        uses: actions/cache@v4
+      - name: Restore apt archives
+        id: cache-apt
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.APT_CACHE_DIR }}
-          key: apt-linux-ubuntu-22.04-${{ hashFiles('.github/workflows/build.yml') }}
+          key: apt-linux-ubuntu-22.04-v2-${{ hashFiles('.github/workflows/build.yml') }}
           restore-keys: |
-            apt-linux-ubuntu-22.04-
+            apt-linux-ubuntu-22.04-v2-
 
       - name: Cache AppImage tools
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: tools/appimage-tools
           key: appimage-tools-${{ runner.os }}-${{ github.job }}-${{ steps.appimage-tool-urls.outputs.hash }}
@@ -57,7 +58,7 @@ jobs:
             appimage-tools-${{ runner.os }}-${{ github.job }}-
 
       - name: Restore ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-linux-${{ github.job }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', '.github/workflows/build.yml') }}-${{ github.sha }}
@@ -75,6 +76,22 @@ jobs:
             libxinerama-dev libxcursor-dev libxfixes-dev \
             libpng-dev libjpeg-dev zlib1g-dev \
             ccache cmake g++ pkg-config
+
+      - name: Prepare apt cache for save
+        if: always() && steps.cache-apt.outputs.cache-hit != 'true'
+        run: |
+          if [ -d "${APT_CACHE_DIR}" ]; then
+            sudo chown -R "$(id -u):$(id -g)" "${APT_CACHE_DIR}"
+            rm -f "${APT_CACHE_DIR}/lock"
+            rm -rf "${APT_CACHE_DIR}/partial"
+          fi
+
+      - name: Save apt archives
+        if: always() && steps.cache-apt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.APT_CACHE_DIR }}
+          key: ${{ steps.cache-apt.outputs.cache-primary-key }}
 
       - name: Initialize ccache
         run: |
@@ -102,7 +119,7 @@ jobs:
         run: cmake --build build --target appimage
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: verdad-linux-x86_64
           path: |
@@ -124,12 +141,12 @@ jobs:
       HOMEBREW_NO_INSTALL_CLEANUP: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
       - name: Cache Homebrew downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/Library/Caches/Homebrew
           key: homebrew-macos-arm64-${{ hashFiles('.github/workflows/build.yml') }}
@@ -137,7 +154,7 @@ jobs:
             homebrew-macos-arm64-
 
       - name: Restore ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-macos-${{ github.job }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', '.github/workflows/build.yml') }}-${{ github.sha }}
@@ -146,7 +163,9 @@ jobs:
             ccache-macos-${{ github.job }}-
 
       - name: Install system dependencies
-        run: brew install pkg-config ccache
+        run: |
+          brew list --versions pkgconf >/dev/null 2>&1 || brew install pkgconf
+          brew list --versions ccache >/dev/null 2>&1 || brew install ccache
 
       - name: Initialize ccache
         run: |
@@ -159,7 +178,7 @@ jobs:
 
       - name: Cache SWORD install
         id: cache-sword
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: deps/sword
           key: sword-macos-arm64-${{ steps.sword-sha.outputs.sha }}
@@ -229,7 +248,7 @@ jobs:
         run: cmake --build build --target dmg
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: verdad-macos-arm64
           path: build/verdad-*.dmg
@@ -249,12 +268,12 @@ jobs:
       HOMEBREW_NO_INSTALL_CLEANUP: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
       - name: Cache Homebrew downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/Library/Caches/Homebrew
           key: homebrew-macos-x86_64-${{ hashFiles('.github/workflows/build.yml') }}
@@ -262,7 +281,7 @@ jobs:
             homebrew-macos-x86_64-
 
       - name: Restore ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-macos-${{ github.job }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', '.github/workflows/build.yml') }}-${{ github.sha }}
@@ -271,7 +290,9 @@ jobs:
             ccache-macos-${{ github.job }}-
 
       - name: Install system dependencies
-        run: brew install pkg-config ccache
+        run: |
+          brew list --versions pkgconf >/dev/null 2>&1 || brew install pkgconf
+          brew list --versions ccache >/dev/null 2>&1 || brew install ccache
 
       - name: Initialize ccache
         run: |
@@ -284,7 +305,7 @@ jobs:
 
       - name: Cache SWORD install
         id: cache-sword
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: deps/sword
           key: sword-macos-x86_64-${{ steps.sword-sha.outputs.sha }}
@@ -354,7 +375,7 @@ jobs:
         run: cmake --build build --target dmg
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: verdad-macos-x86_64
           path: build/verdad-*.dmg
@@ -368,12 +389,12 @@ jobs:
       VCPKG_DEFAULT_TRIPLET: x64-windows-static
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
       - name: Cache vcpkg artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             C:\vcpkg\downloads
@@ -396,7 +417,7 @@ jobs:
 
       - name: Cache SWORD install
         id: cache-sword
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: deps/sword
           key: sword-windows-x64-static-v3-${{ steps.sword-sha.outputs.sha }}
@@ -480,7 +501,7 @@ jobs:
         run: cmake --build build --config Release --target msi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: verdad-windows-x64
           path: |
