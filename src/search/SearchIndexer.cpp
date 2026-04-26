@@ -1148,7 +1148,7 @@ bool SearchIndexer::ensureSchema(sqlite3* db) {
         sqlite3_exec(db, "DROP TABLE IF EXISTS module_index_errors;", nullptr, nullptr, nullptr);
     }
 
-    const char* sql = R"SQL(
+    const char* tableSql = R"SQL(
         CREATE TABLE IF NOT EXISTS indexed_modules (
             module_name TEXT PRIMARY KEY,
             resource_type TEXT NOT NULL,
@@ -1162,7 +1162,19 @@ bool SearchIndexer::ensureSchema(sqlite3* db) {
             last_error TEXT NOT NULL,
             updated_at TEXT DEFAULT (datetime('now'))
         );
+    )SQL";
 
+    char* err = nullptr;
+    int rc = sqlite3_exec(db, tableSql, nullptr, nullptr, &err);
+    if (rc != SQLITE_OK) {
+        std::cerr << "SearchIndexer schema error: "
+                  << (err ? err : "unknown") << "\n";
+        if (err) sqlite3_free(err);
+        return false;
+    }
+    if (err) sqlite3_free(err);
+
+    const char* preferredFtsSql = R"SQL(
         CREATE VIRTUAL TABLE IF NOT EXISTS library_index USING fts5(
             resource_type,
             module_token,
@@ -1175,14 +1187,40 @@ bool SearchIndexer::ensureSchema(sqlite3* db) {
             tokenize='unicode61 remove_diacritics 2'
         );
     )SQL";
+    const char* fallbackFtsSql = R"SQL(
+        CREATE VIRTUAL TABLE IF NOT EXISTS library_index USING fts5(
+            resource_type,
+            module_token,
+            scope_token,
+            title,
+            content,
+            strongs_text,
+            module_name UNINDEXED,
+            key_text UNINDEXED
+        );
+    )SQL";
 
-    char* err = nullptr;
-    int rc = sqlite3_exec(db, sql, nullptr, nullptr, &err);
+    err = nullptr;
+    rc = sqlite3_exec(db, preferredFtsSql, nullptr, nullptr, &err);
     if (rc != SQLITE_OK) {
-        std::cerr << "SearchIndexer schema error: "
-                  << (err ? err : "unknown") << "\n";
-        if (err) sqlite3_free(err);
-        return false;
+        std::string preferredError = err ? err : "unknown";
+        if (err) {
+            sqlite3_free(err);
+            err = nullptr;
+        }
+
+        std::cerr << "SearchIndexer preferred FTS tokenizer unavailable, "
+                  << "retrying with default tokenizer: "
+                  << preferredError << "\n";
+        sqlite3_exec(db, "DROP TABLE IF EXISTS library_index;", nullptr, nullptr, nullptr);
+
+        rc = sqlite3_exec(db, fallbackFtsSql, nullptr, nullptr, &err);
+        if (rc != SQLITE_OK) {
+            std::cerr << "SearchIndexer schema error: "
+                      << (err ? err : preferredError.c_str()) << "\n";
+            if (err) sqlite3_free(err);
+            return false;
+        }
     }
     if (err) sqlite3_free(err);
 
