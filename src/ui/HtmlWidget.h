@@ -292,13 +292,15 @@ private:
 
     struct TextFragment {
         std::string text;
+        // Document-space position. Convert to/from widget coordinates at the
+        // call site by applying the current scroll offset.
         litehtml::position pos;
         std::vector<int> byteOffsets;
         std::vector<int> xOffsets;
         int parallelColumn = -1;
     };
 
-    // Precomputed parallel column boundaries for the current draw pass
+    // Precomputed parallel column boundaries for the current layout.
     struct ParallelColumnBoundary {
         int xStart;   // inclusive, document-space
         int xEnd;     // exclusive, document-space
@@ -350,6 +352,10 @@ private:
     static void dispatchDeferredReflow(void* data);
 
     void notifyScrollChanged(int oldScrollY);
+    void populateTextFragmentMetrics(TextFragment& fragment,
+                                     litehtml::uint_ptr hFont);
+    void rebuildTextFragments();
+    int findTextFragmentForDrawRun(const TextFragment& fragment) const;
 
     /// Map an FLTK font from a face name
     Fl_Font mapFont(const char* faceName, int weight, bool italic);
